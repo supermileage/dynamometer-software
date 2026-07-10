@@ -18,7 +18,6 @@ SessionController::SessionController(session_controller_os_task_queues* task_que
                 _fsm(task_queues->lumex_lcd),
                 _task_queues(task_queues),
                 _usart1Mutex(usart1Mutex),
-                _prevUSBLoggingEnabled(false),
                 _prevSDLoggingEnabled(false),
                 _prevPIDEnabled(false),
                 _prevInSession(false)
@@ -115,24 +114,24 @@ void SessionController::Run()
     bool pidAckReceived = false;
     osMessageQueuePut(_task_queues->pid_controller, &pid_msg, 0, osWaitForever);
 
+    // Sensor sampling and USB streaming run continuously, independent of session state, so the
+    // dyno host receives live data the moment it connects -- no session required. Enable them
+    // once here and never disable them; only actuation (driving the BPM / throttle) stays gated
+    // behind an active session in the loop below.
+    bool alwaysEnabled = true;
+    #if USB_CONTROLLER_TASK_ENABLE
+    osMessageQueuePut(_task_queues->usb_controller, &alwaysEnabled, 0, osWaitForever);
+    #endif
+    osMessageQueuePut(_task_queues->optical_sensor, &alwaysEnabled, 0, osWaitForever);
+    osMessageQueuePut(_task_queues->force_sensor, &alwaysEnabled, 0, osWaitForever);
+
     while(1)
     {
-        
+
         // First Handle Any User Inputs
         _fsm.HandleUserInputs();
 
-        
-        // Get USB Enabled Status and enable USB Controller
-        bool usbLoggingEnabled = _fsm.GetUSBLoggingEnabledStatus();
-        // Only if the status has changed
-        if (usbLoggingEnabled ^ _prevUSBLoggingEnabled)
-        {
-            #if USB_CONTROLLER_TASK_ENABLE
-            osMessageQueuePut(_task_queues->usb_controller, &usbLoggingEnabled, 0, osWaitForever);
-            #endif
-            _prevUSBLoggingEnabled = usbLoggingEnabled;
-        }
-        
+
 
         
         // Get SD Card Enabled Status and enable SD Card Controller
@@ -156,18 +155,14 @@ void SessionController::Run()
         bool PIDEnabled = _fsm.GetPIDEnabledModeStatus();
         bool PIDOptionToggleableEnabled = _fsm.GetPIDOptionToggleableEnabledStatus();
 
-        // only run this code if the 'InSession' status has changed
+        // Run only on an in-session transition. Sensor sampling and USB streaming stay on
+        // continuously (enabled once at startup), so a transition just resets the display on
+        // entry and -- critically -- stops driving the BPM on exit. The brake must never be
+        // actuated outside a session.
         if (InSessionRisingEdge || InSessionFallingEdge)
         {
-            bool opticalEncoderEnable;
-            bool forceSensorEnable;
-
-            // enable things
             if (InSessionRisingEdge)
             {
-                opticalEncoderEnable = true;
-                forceSensorEnable = true;
-
                 _fsm.DisplayRpm(0);
 
                 _fsm.DisplayTorque(0);
@@ -178,28 +173,16 @@ void SessionController::Run()
                 else _fsm.DisplayManualThrottleDutyCycle();
 
             }
-            
-            // disable things
+
+            // Leaving the session: stop the BPM PWM so nothing is driven while idle.
             else if (InSessionFallingEdge)
             {
-                
-                opticalEncoderEnable = false;
-                forceSensorEnable = false;
-
-                
                 session_controller_to_bpm bpmSettings;
                 bpmSettings.op = STOP_PWM;
                 bpmSettings.new_duty_cycle_percent = static_cast<float>(0);
 
                 osMessageQueuePut(_task_queues->bpm_controller, &bpmSettings, 0, osWaitForever);
-                
             }
-             
-            // Send enable or disable messages
-            osMessageQueuePut(_task_queues->optical_sensor, &opticalEncoderEnable, 0, osWaitForever);
-
-            osMessageQueuePut(_task_queues->force_sensor, &forceSensorEnable, 0, osWaitForever);
-            
 
             _prevInSession = InSessionStatus;
 

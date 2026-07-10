@@ -44,7 +44,6 @@ class SessionController
         session_controller_os_task_queues* _task_queues;
         osMutexId_t _usart1Mutex;
 
-        bool _prevUSBLoggingEnabled;
         bool _prevSDLoggingEnabled;
         bool _prevPIDEnabled;
         bool _prevInSession;
