@@ -215,6 +215,24 @@ void USBController::AnnounceReadyIfDue()
     SendDeviceReady();
 }
 
+void USBController::HandleHostDetach()
+{
+    if (!usb_host_detached())
+    {
+        return;
+    }
+
+    // The session is over. Un-ack the link so we announce ourselves to whoever connects next
+    // (AnnounceReadyIfDue only runs while !_appReady) and stop streaming into a port nobody is
+    // reading. Both buffers are dropped rather than kept: a half-sent frame in _txBuffer and a
+    // half-received one in the RX ring belong to the old session, and replaying either into the
+    // new one is exactly how a parser ends up straddling two streams.
+    _appReady = false;
+    _lastAnnounceTick = 0;  // 0 means "announce immediately", not up to 200ms from now
+    _txBufferIndex = 0;
+    usb_rx_flush();
+}
+
 void USBController::WaitForHandshake()
 {
     // Block until the host completes the USB_CMD_ACK handshake, announcing device-ready
@@ -307,6 +325,13 @@ void USBController::Run()
 
     while (1)
     {
+        // 0. Notice the host closing the port. USB CDC keeps the cable enumerated across a
+        //    host-side close, so without the DTR edge from CDC_SET_CONTROL_LINE_STATE we would
+        //    go on believing the host we acked long ago is still listening: _appReady would
+        //    stay set, the device-ready announcement would stay silenced, and the *next*
+        //    connect would find a device that never introduces itself and so never handshakes.
+        HandleHostDetach();
+
         // 1. Always service inbound commands first, regardless of logging state, so
         //    the host can handshake and configure before or after a session runs.
         ProcessIncomingFrames();

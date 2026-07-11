@@ -69,6 +69,10 @@ class USBController
         // DEVICE_READY_ANNOUNCE_MS so a host that connects late still sees one. No-op once ready.
         void AnnounceReadyIfDue();
 
+        // Un-ack the link when the host closes the port (CDC DTR drops), so the device announces
+        // itself to the next host instead of staying silent forever. No-op while a host is attached.
+        void HandleHostDetach();
+
         // Block until the host completes the USB_CMD_ACK handshake (mock/debug path).
         void WaitForHandshake();
 

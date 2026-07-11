@@ -119,6 +119,11 @@ size_t usb_rx_read(uint8_t *dst, size_t n); /* copy and consume up to n bytes */
 void   usb_rx_skip(size_t n);               /* discard up to n bytes */
 int    usb_rx_overflowed(void);             /* read-and-clear the overflow flag */
 void   usb_rx_flush(void);                   /* discard all buffered bytes (resync after overflow) */
+
+/* Read-and-clear: the host closed the port (CDC DTR deasserted) since this was last called.
+   A CDC device is never told a session ended -- the cable stays enumerated -- so this is the
+   only signal that the host we handshaked with has gone away. */
+int    usb_host_detached(void);
 /* USER CODE END EXPORTED_FUNCTIONS */
 
 /**

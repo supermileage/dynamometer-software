@@ -103,6 +103,13 @@ static uint8_t usb_rx_ring[USB_CONTROLLER_RX_BUFFER_SIZE];
 static volatile size_t usb_rx_write_index = 0;
 static volatile size_t usb_rx_read_index  = 0;
 static volatile uint8_t usb_rx_overflow   = 0;  /* set by the ISR when a write would lap the reader */
+
+/* Host presence, tracked from the CDC control line (DTR). A USB CDC device is not told when
+   the host closes the port -- the cable stays enumerated -- so without this the firmware has
+   no way to know a session ended, and would keep believing the host it acked long ago is
+   still listening. Set/cleared in CDC_Control_FS (USB ISR context), read by the USB task. */
+static volatile uint8_t usb_host_attached = 0;  /* 1 while the host holds DTR asserted */
+static volatile uint8_t usb_host_detach   = 0;  /* latched when DTR drops; read-and-clear */
 /* USER CODE END PRIVATE_VARIABLES */
 
 /**
@@ -236,7 +243,24 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
     break;
 
     case CDC_SET_CONTROL_LINE_STATE:
+    {
+      /* This request carries no data stage (wLength == 0), so the CDC class hands us the setup
+         packet itself in pbuf rather than a payload -- see usbd_cdc.c, which calls
+         Control(req->bRequest, (uint8_t *)req, 0U). The line state lives in wValue: bit 0 is
+         DTR, which a host asserts when it opens the port and drops when it closes it (or dies).
+         Reading pbuf as if it were data would decode garbage. */
+      USBD_SetupReqTypedef *req = (USBD_SetupReqTypedef *)(void *)pbuf;
+      uint8_t dtr = (uint8_t)(req->wValue & 0x0001U);
 
+      /* Only a *transition* from attached to detached ends a session. Hosts that never assert
+         DTR (a plain terminal, or .NET's SerialPort with DtrEnable left off) send DTR=0 on open
+         as well; latching on the level rather than the edge would read that as a disconnect. */
+      if (dtr == 0U && usb_host_attached != 0U)
+      {
+        usb_host_detach = 1;
+      }
+      usb_host_attached = dtr;
+    }
     break;
 
     case CDC_SEND_BREAK:
@@ -403,6 +427,15 @@ int usb_rx_overflowed(void)
 void usb_rx_flush(void)
 {
   usb_rx_read_index = usb_rx_write_index;
+}
+
+/* Read-and-clear: did the host close the port since we last asked? Reported as an edge (not a
+   level) so the USB task sees exactly one detach per session, whenever it next gets to look. */
+int usb_host_detached(void)
+{
+  int d = usb_host_detach;
+  usb_host_detach = 0;
+  return d;
 }
 /* USER CODE END PRIVATE_FUNCTIONS_IMPLEMENTATION */
 
