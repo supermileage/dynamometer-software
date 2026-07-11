@@ -10,8 +10,9 @@ debug/
 Release/
 release/
 
-# CMake build output
+# CMake build output (build/ = native/IDE, build-docker/ = Scripts/build-docker.sh)
 build/
+build-docker/
 
 # build log
 build_log.txt

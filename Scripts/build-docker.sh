@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Scripts/build-docker.sh
 # Build inside the pinned Docker toolchain image — byte-for-byte the same
-# environment CI uses. The repo is bind-mounted; output lands in build/<CONFIG>/
-# on the host just like a native build.
+# environment CI uses. The repo is bind-mounted; output lands in
+# build-docker/<CONFIG>/ on the host.
 #
 # Usage: ./Scripts/build-docker.sh [Debug|Release] [--rebuild]
 #   Debug|Release  build configuration (default: Debug)
@@ -54,12 +54,23 @@ if [[ "$(uname)" == "Linux" ]]; then
     USER_FLAGS=(--user "$(id -u):$(id -g)" -e HOME=/tmp)
 fi
 
+# Docker builds get their own tree, overriding the preset's binaryDir (build/).
+# A CMake cache records the absolute source dir it was configured with: the
+# container sees the repo at /work, a native/IDE build sees its real host path.
+# Sharing one tree makes whichever build runs second abort with "the current
+# CMakeCache.txt directory ... is different than the directory ... where
+# CMakeCache.txt was created". Separate trees let both stay warm side by side.
+#
+# -B overrides binaryDir for the configure step; the build step then takes the
+# directory directly, since --build --preset would resolve back to build/.
+BUILD_DIR="build-docker/$CONFIG"
+
 echo "Building firmware ($CONFIG)..."
 docker run --rm \
     -v "$MOUNT" -w /work \
     "${USER_FLAGS[@]}" \
     "$IMAGE" \
-    bash -lc "python3 tools/message_gen/generate.py && cmake --preset $CONFIG && cmake --build --preset $CONFIG"
+    bash -lc "python3 tools/message_gen/generate.py && cmake --preset $CONFIG -B /work/$BUILD_DIR && cmake --build /work/$BUILD_DIR"
 
 echo
-echo "Build succeeded! Artifacts in build/$CONFIG/"
+echo "Build succeeded! Artifacts in $BUILD_DIR/"

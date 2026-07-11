@@ -84,7 +84,7 @@ Build once, then flash the generated binary — **no rebuild needed**. Three met
 and tool explicitly.
 
 ```bash
-./Scripts/build-docker.sh Debug                 # build → build/Debug/*.elf,*.bin
+./Scripts/build-docker.sh Debug                 # build → build-docker/Debug/*.elf,*.bin
 ./Scripts/flash.sh Debug swd --tool st-flash    # flash that image (no rebuild)
 ```
 ```powershell

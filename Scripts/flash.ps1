@@ -92,9 +92,23 @@ $exe = Resolve-Tool $Tool
 
 $ProjectPath = Split-Path -Parent $PSScriptRoot
 $Name = 'stm32_dyno_firmware_v2'
-$Elf = Join-Path $ProjectPath "build/$Config/$Name.elf"
-$Bin = Join-Path $ProjectPath "build/$Config/$Name.bin"
-if (-not (Test-Path $Elf)) { throw "$Elf not found. Build first: cmake --build --preset $Config" }
+
+# The firmware may come from either tree: build-docker/ (Scripts/build-docker.sh)
+# or build/ (native or IDE build). Flash whichever image is newer, so "build,
+# then flash" does the obvious thing no matter which builder produced it.
+$BuildDir = @("build-docker/$Config", "build/$Config") |
+    ForEach-Object { Join-Path $ProjectPath $_ } |
+    Where-Object { Test-Path (Join-Path $_ "$Name.elf") } |
+    Sort-Object { (Get-Item (Join-Path $_ "$Name.elf")).LastWriteTime } -Descending |
+    Select-Object -First 1
+
+if (-not $BuildDir) {
+    throw "No $Config firmware found in build-docker/$Config/ or build/$Config/. Build first: ./Scripts/build-docker.sh $Config"
+}
+
+$Elf = Join-Path $BuildDir "$Name.elf"
+$Bin = Join-Path $BuildDir "$Name.bin"
+Write-Host "Using $Elf"
 
 if ($Method -ne 'swd') {
     Write-Host "$Method`: ensure the board is in bootloader mode (BOOT0 high, then reset)."

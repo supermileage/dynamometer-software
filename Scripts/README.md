@@ -104,12 +104,14 @@ These targets just delegate to `flash.sh`/`flash.ps1`, so the tool matrix above
 applies unchanged.
 
 ### Manual (no scripts)
+Paths below assume a Docker build (`build-docker/Debug/`); for a native or IDE
+build, substitute `build/Debug/`. `flash.sh`/`flash.ps1` pick the right one for you.
 ```bash
-st-flash --reset write build/Debug/stm32_dyno_firmware_v2.bin 0x08000000        # SWD
-STM32_Programmer_CLI -c port=SWD  -d build/Debug/stm32_dyno_firmware_v2.elf -rst # SWD
-STM32_Programmer_CLI -c port=USB1 -d build/Debug/stm32_dyno_firmware_v2.elf -rst # USB DFU
-dfu-util -a 0 -s 0x08000000:leave -D build/Debug/stm32_dyno_firmware_v2.bin      # USB DFU
-stm32flash -b 115200 -w build/Debug/stm32_dyno_firmware_v2.bin -v -g 0x08000000 /dev/ttyUSB0  # UART
+st-flash --reset write build-docker/Debug/stm32_dyno_firmware_v2.bin 0x08000000        # SWD
+STM32_Programmer_CLI -c port=SWD  -d build-docker/Debug/stm32_dyno_firmware_v2.elf -rst # SWD
+STM32_Programmer_CLI -c port=USB1 -d build-docker/Debug/stm32_dyno_firmware_v2.elf -rst # USB DFU
+dfu-util -a 0 -s 0x08000000:leave -D build-docker/Debug/stm32_dyno_firmware_v2.bin      # USB DFU
+stm32flash -b 115200 -w build-docker/Debug/stm32_dyno_firmware_v2.bin -v -g 0x08000000 /dev/ttyUSB0  # UART
 ```
 
 ---

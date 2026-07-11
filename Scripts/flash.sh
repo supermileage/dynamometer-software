@@ -107,9 +107,26 @@ require "$TOOL"
 
 PROJECT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NAME="stm32_dyno_firmware_v2"
-ELF="$PROJECT_PATH/build/$CONFIG/$NAME.elf"
-BIN="$PROJECT_PATH/build/$CONFIG/$NAME.bin"
-[[ -f "$ELF" ]] || { echo "ERROR: $ELF not found. Build first: cmake --build --preset $CONFIG"; exit 1; }
+
+# The firmware may come from either tree: build-docker/ (Scripts/build-docker.sh)
+# or build/ (native or IDE build). Flash whichever image is newer, so "build,
+# then flash" does the obvious thing no matter which builder produced it.
+BUILD_DIR=""
+for candidate in "$PROJECT_PATH/build-docker/$CONFIG" "$PROJECT_PATH/build/$CONFIG"; do
+    [[ -f "$candidate/$NAME.elf" ]] || continue
+    if [[ -z "$BUILD_DIR" || "$candidate/$NAME.elf" -nt "$BUILD_DIR/$NAME.elf" ]]; then
+        BUILD_DIR="$candidate"
+    fi
+done
+[[ -n "$BUILD_DIR" ]] || {
+    echo "ERROR: no $CONFIG firmware found in build-docker/$CONFIG/ or build/$CONFIG/."
+    echo "       Build first: ./Scripts/build-docker.sh $CONFIG"
+    exit 1
+}
+
+ELF="$BUILD_DIR/$NAME.elf"
+BIN="$BUILD_DIR/$NAME.bin"
+echo "Using ${ELF#"$PROJECT_PATH"/}"
 
 [[ "$METHOD" == swd ]] || echo "$METHOD: ensure the board is in bootloader mode (BOOT0 high, then reset)."
 
