@@ -105,12 +105,29 @@ void ForceSensorADS1115::Run(void)
             continue;
         }
 
-        // --- Wait for alert GPIO to indicate conversion complete ---
-        while (!ads1115_alert_status)
+        // --- Wait for alert GPIO to indicate conversion complete (bounded) ---
+        uint32_t alertWaitStart = osKernelGetTickCount();
+        while (!ads1115_alert_status &&
+               (osKernelGetTickCount() - alertWaitStart) < FORCESENSOR_CONVERSION_TIMEOUT_MS)
         {
             osDelay(1); // yield to other tasks
         }
-    
+
+        // Conversion-ready alert never arrived within the timeout. Record a warning and restart
+        // the loop -- crucially, this returns to ProcessCommands() so queued host commands keep
+        // getting applied and acked, instead of the task spinning here forever on a stuck sensor.
+        if (!ads1115_alert_status)
+        {
+            task_error_data error_data = PopulateTaskErrorDataStruct(
+                get_timestamp(),
+                TASK_OFFSET_FORCE_SENSOR_ADS1115,
+                static_cast<uint32_t>(WARNING_FORCE_SENSOR_ADS1115_GET_CONVERSION_FAILURE)
+            );
+            _task_error_buffer_writer.WriteElementAndIncrementIndex(error_data);
+            osDelay(TASK_WARNING_RETRY_OSDELAY);
+            continue;
+        }
+
         // --- Read conversion and populate output ---
         int16_t rawVal;
         if (!_ads1115.getConversion(rawVal, false)) 

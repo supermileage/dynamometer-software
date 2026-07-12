@@ -215,6 +215,34 @@ void USBController::AnnounceReadyIfDue()
     SendDeviceReady();
 }
 
+void USBController::SkipBufferedSensorData()
+{
+    // Catch each reader up to its writer: everything currently buffered predates the session and
+    // is not part of it. Safe under the single-consumer contract -- only this task moves these
+    // reader indices.
+    _buffer_reader_optical_encoder.SetIndex(optical_encoder_circular_buffer_index_writer);
+    _buffer_reader_forcesensor.SetIndex(forcesensor_circular_buffer_index_writer);
+    _buffer_reader_bpm.SetIndex(bpm_circular_buffer_index_writer);
+}
+
+void USBController::HandleHostDetach()
+{
+    if (!usb_host_detached())
+    {
+        return;
+    }
+
+    // The session is over. Un-ack the link so we announce ourselves to whoever connects next
+    // (AnnounceReadyIfDue only runs while !_appReady) and stop streaming into a port nobody is
+    // reading. Both buffers are dropped rather than kept: a half-sent frame in _txBuffer and a
+    // half-received one in the RX ring belong to the old session, and replaying either into the
+    // new one is exactly how a parser ends up straddling two streams.
+    _appReady = false;
+    _lastAnnounceTick = 0;  // 0 means "announce immediately", not up to 200ms from now
+    _txBufferIndex = 0;
+    usb_rx_flush();
+}
+
 void USBController::WaitForHandshake()
 {
     // Block until the host completes the USB_CMD_ACK handshake, announcing device-ready
@@ -303,30 +331,50 @@ bool USBController::TryReadFrame(usb_msg_header_t& header, uint8_t* payload, siz
 
 void USBController::Run()
 {
-    bool enableUSB = false;
+    bool inSession = false;
+    bool prevInSession = false;
 
     while (1)
     {
-        // 1. Always service inbound commands first, regardless of logging state, so
-        //    the host can handshake and configure before or after a session runs.
+        // 0. Notice the host closing the port. USB CDC keeps the cable enumerated across a
+        //    host-side close, so without the DTR edge from CDC_SET_CONTROL_LINE_STATE we would
+        //    go on believing the host we acked long ago is still listening: _appReady would
+        //    stay set, the device-ready announcement would stay silenced, and the *next*
+        //    connect would find a device that never introduces itself and so never handshakes.
+        HandleHostDetach();
+
+        // 1. Always service inbound commands first, so the host can handshake and
+        //    configure before or after a session runs.
         ProcessIncomingFrames();
 
         // 2. Relay any applied-command acks the owning tasks have posted back.
         ProcessCompletions();
 
-        // 3. Pick up the latest logging enable/disable from the SessionController.
-        GetLatestFromQueue(_sessionControllerToUsbController, &enableUSB, sizeof(enableUSB), 0);
-
-        // 3b. Until the host handshakes, periodically announce that the device is ready so
-        //     the host knows to reply USB_CMD_ACK. Self-throttled; stops once _appReady.
+        // 3. Until the host handshakes, periodically announce that the device is ready so
+        //    the host knows to reply USB_CMD_ACK. Self-throttled; stops once _appReady.
         if (!_appReady)
         {
             AnnounceReadyIfDue();
         }
 
-        // 4. Stream sensor/error data only once the host has handshaked (USB_CMD_ACK)
-        //    and logging is enabled.
-        if (_appReady && enableUSB)
+        // 4. Pick up the SessionController's in-session flag. Sensor data is streamed only while
+        //    a session runs; there is no separate on/off switch for the link, so a connected host
+        //    always sees the data a running session produces.
+        GetLatestFromQueue(_sessionControllerToUsbController, &inSession, sizeof(inSession), 0);
+
+        // 5. Entering a session: skip the readers past everything the sensor tasks buffered while
+        //    we were idle. They sample continuously (SessionController enables them once, at
+        //    startup) and their circular buffers keep filling whether or not we drain them, so
+        //    without this the first moments of a session would flush a backlog of stale samples
+        //    -- data from before the session, timestamped before it, ahead of the live stream.
+        if (inSession && !prevInSession)
+        {
+            SkipBufferedSensorData();
+        }
+        prevInSession = inSession;
+
+        // 6. Stream sensor data once the host has handshaked *and* a session is running.
+        if (_appReady && inSession)
         {
             #if !defined(OPTICAL_ENCODER_TASK_ENABLE)
             #error "OPTICAL_ENCODER_TASK_ENABLE must be defined"
@@ -348,7 +396,14 @@ void USBController::Run()
             // Process BPM data
             ProcessTaskData(_buffer_reader_bpm, TASK_OFFSET_BPM_CONTROLLER);
             #endif
+        }
 
+        // 7. Health and faults are *not* sensor data: they are streamed to any handshaked host,
+        //    session or not. A task dying, or a stack running out, is most worth seeing while the
+        //    dyno sits idle -- and draining the task-monitor queue regardless also stops it from
+        //    filling up and dropping samples between sessions.
+        if (_appReady)
+        {
             #if !defined(TASK_MONITOR_TASK_ENABLE)
             #error "TASK_MONITOR_TASK_ENABLE must be defined"
             #elif (TASK_MONITOR_TASK_ENABLE == 1)

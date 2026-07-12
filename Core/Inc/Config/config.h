@@ -39,6 +39,11 @@
 // Bounded wait (ms) on the enable queue while disabled, so USB setting commands
 // are still serviced when the sensor is idle (instead of blocking forever).
 #define FORCESENSOR_COMMAND_POLL_OSDELAY 50
+// Bounded wait (ms) for the ADS1115 conversion-ready alert GPIO. Comfortably longer
+// than one conversion even at the slowest rate (8 SPS ~= 125 ms); if it elapses the
+// alert never fired, so the task abandons the sample rather than spinning forever --
+// which would otherwise starve host command servicing/acks.
+#define FORCESENSOR_CONVERSION_TIMEOUT_MS 250
 
 // ADS1115 I2C Config
 #define ADS1115_SAMPLE_SPEED ADS1115_RATE_475

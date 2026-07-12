@@ -18,7 +18,6 @@ SessionController::SessionController(session_controller_os_task_queues* task_que
                 _fsm(task_queues->lumex_lcd),
                 _task_queues(task_queues),
                 _usart1Mutex(usart1Mutex),
-                _prevUSBLoggingEnabled(false),
                 _prevSDLoggingEnabled(false),
                 _prevPIDEnabled(false),
                 _prevInSession(false)
@@ -115,24 +114,29 @@ void SessionController::Run()
     bool pidAckReceived = false;
     osMessageQueuePut(_task_queues->pid_controller, &pid_msg, 0, osWaitForever);
 
+    // Sensor sampling runs continuously, independent of session state: enable it once here and
+    // never disable it, so a session starts against sensors that are already warm. Only what
+    // leaves the board (USB streaming, below) and what the board drives (BPM / throttle) is gated
+    // behind an active session.
+    bool alwaysEnabled = true;
+    osMessageQueuePut(_task_queues->optical_sensor, &alwaysEnabled, 0, osWaitForever);
+    osMessageQueuePut(_task_queues->force_sensor, &alwaysEnabled, 0, osWaitForever);
+
+    // The USB task streams sensor data only while a session runs, so it needs the session state.
+    // There is no separate "USB logging" switch -- a host that is connected during a session
+    // always receives that session's data. Post the starting state so it does not have to assume.
+    #if USB_CONTROLLER_TASK_ENABLE
+    bool sessionStreaming = false;
+    osMessageQueuePut(_task_queues->usb_controller, &sessionStreaming, 0, osWaitForever);
+    #endif
+
     while(1)
     {
-        
+
         // First Handle Any User Inputs
         _fsm.HandleUserInputs();
 
-        
-        // Get USB Enabled Status and enable USB Controller
-        bool usbLoggingEnabled = _fsm.GetUSBLoggingEnabledStatus();
-        // Only if the status has changed
-        if (usbLoggingEnabled ^ _prevUSBLoggingEnabled)
-        {
-            #if USB_CONTROLLER_TASK_ENABLE
-            osMessageQueuePut(_task_queues->usb_controller, &usbLoggingEnabled, 0, osWaitForever);
-            #endif
-            _prevUSBLoggingEnabled = usbLoggingEnabled;
-        }
-        
+
 
         
         // Get SD Card Enabled Status and enable SD Card Controller
@@ -156,18 +160,20 @@ void SessionController::Run()
         bool PIDEnabled = _fsm.GetPIDEnabledModeStatus();
         bool PIDOptionToggleableEnabled = _fsm.GetPIDOptionToggleableEnabledStatus();
 
-        // only run this code if the 'InSession' status has changed
+        // Run only on an in-session transition. Sensor sampling stays on continuously (enabled
+        // once at startup), so a transition starts/stops the USB stream, resets the display on
+        // entry and -- critically -- stops driving the BPM on exit. The brake must never be
+        // actuated outside a session.
         if (InSessionRisingEdge || InSessionFallingEdge)
         {
-            bool opticalEncoderEnable;
-            bool forceSensorEnable;
+            // Tell the USB task whether a session is running: it streams sensor data only then.
+            #if USB_CONTROLLER_TASK_ENABLE
+            sessionStreaming = InSessionStatus;
+            osMessageQueuePut(_task_queues->usb_controller, &sessionStreaming, 0, osWaitForever);
+            #endif
 
-            // enable things
             if (InSessionRisingEdge)
             {
-                opticalEncoderEnable = true;
-                forceSensorEnable = true;
-
                 _fsm.DisplayRpm(0);
 
                 _fsm.DisplayTorque(0);
@@ -178,28 +184,16 @@ void SessionController::Run()
                 else _fsm.DisplayManualThrottleDutyCycle();
 
             }
-            
-            // disable things
+
+            // Leaving the session: stop the BPM PWM so nothing is driven while idle.
             else if (InSessionFallingEdge)
             {
-                
-                opticalEncoderEnable = false;
-                forceSensorEnable = false;
-
-                
                 session_controller_to_bpm bpmSettings;
                 bpmSettings.op = STOP_PWM;
                 bpmSettings.new_duty_cycle_percent = static_cast<float>(0);
 
                 osMessageQueuePut(_task_queues->bpm_controller, &bpmSettings, 0, osWaitForever);
-                
             }
-             
-            // Send enable or disable messages
-            osMessageQueuePut(_task_queues->optical_sensor, &opticalEncoderEnable, 0, osWaitForever);
-
-            osMessageQueuePut(_task_queues->force_sensor, &forceSensorEnable, 0, osWaitForever);
-            
 
             _prevInSession = InSessionStatus;
 

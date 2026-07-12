@@ -31,9 +31,7 @@ struct State
     enum class SettingsState
     {
         INIT_STATE = 0,
-        USB_LOGGING_OPTION_DISPLAYED = 0,
-        USB_LOGGING_OPTION_EDIT,
-        SD_LOGGING_OPTION_DISPLAYED,
+        SD_LOGGING_OPTION_DISPLAYED = 0,
         SD_LOGGING_OPTION_EDIT,
         PID_ENABLE_DISPLAYED,
         PID_ENABLE_EDIT,
@@ -70,7 +68,6 @@ public:
     
     // Getters
     State GetState() const;
-    bool GetUSBLoggingEnabledStatus() const;
     bool GetSDLoggingEnabledStatus() const;
     bool GetPIDEnabledModeStatus() const;
     bool GetPIDOptionToggleableEnabledStatus() const;
@@ -95,8 +92,6 @@ public:
 private:
     // Methods which are called when a state change is done
     void IdleState();
-    void USBLoggingOptionDisplayedSettingsState(); 
-    void USBLoggingOptionEditSettingsState();
     void SDLoggingOptionDisplayedSettingsState();
     void SDLoggingOptionEditSettingsState();   
     void PIDOptionDisplayedSettingsState();
@@ -120,7 +115,6 @@ private:
     State _state;
     
     
-    bool _usbLoggingEnabled;
     bool _sdLoggingEnabled;
     bool _pidOptionToggleableEnabled;
     bool _pidEnabled;
