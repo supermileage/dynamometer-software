@@ -23,6 +23,7 @@ end box
 
 == Handshake — device-announced, version-checked ==
 
+App -> USB : opens the port → CDC **DTR asserted** (SET_CONTROL_LINE_STATE)
 note over USB
   _appReady = false
   → the device streams nothing yet
@@ -40,6 +41,47 @@ alt versions match
 else mismatch
     USB -> App : **USB_MSG_RESPONSE**  USB_RSP_VERSION_MISMATCH\n(stays not-ready, keeps announcing)
 end
+
+note over App
+  The host bounds this wait: no handshake within HandshakeTimeout (5 s)
+  and it reports the device unresponsive — an open port proves nothing,
+  since one opens against any board that enumerates. It keeps listening.
+end note
+
+== Keep-alive — the host polls a link that has gone quiet ==
+
+loop every HeartbeatInterval (5 s), once handshaked
+    App -> USB : **USB_MSG_COMMAND**  USB_CMD_ACK  (re-sent as a ping)
+    USB -> App : **USB_MSG_RESPONSE**  USB_RSP_OK
+end
+note over App, USB
+  USB_CMD_ACK doubles as the ping: the USB controller answers it itself, in any
+  state, and re-applying it is a no-op — so no dedicated opcode is needed.
+  Two unanswered pings ⇒ the host declares the link lost, but keeps polling, so a
+  device that comes back is picked up without a reconnect.
+end note
+
+== Host closes the port — the session ends ==
+
+App -> USB : CDC **DTR deasserted** (SET_CONTROL_LINE_STATE)
+note over USB
+  HandleHostDetach()
+  _appReady = false; TX buffer + RX ring dropped
+  → stops streaming into a port nobody reads,
+    and starts announcing again for the next host
+end note
+
+== Reconnect — the host asks when nothing announces ==
+
+note over App, USB
+  Without the DTR signal above (an older build, or a host that never asserts DTR)
+  a still-powered board stays _appReady and so never announces again — nothing is
+  coming, and a purely announce-driven handshake would wait forever. So if no
+  announcement arrives within HandshakeProbeInterval (1 s), the host asks directly.
+end note
+
+App -> USB : **USB_MSG_COMMAND**  USB_CMD_ACK  (unsolicited probe)
+USB -> App : **USB_MSG_RESPONSE**  USB_RSP_OK\n(sets _appReady = true → streaming re-armed)
 
 == Streaming — only while _appReady && SessionController enabled ==
 

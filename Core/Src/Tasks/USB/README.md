@@ -22,6 +22,7 @@ routed "non-posted" ack) — is in [`usb_message_flow.puml`](usb_message_flow.pu
 
 ## Flow (`Run()`)
 Each iteration:
+0. `HandleHostDetach()` — if the host closed the port (CDC DTR dropped), un-ack the link.
 1. `ProcessIncomingFrames()` — pull + route CRC-validated host frames (always, so the host can
    handshake/configure regardless of logging state).
 2. `ProcessCompletions()` — relay applied-command acks as `USB_MSG_RESPONSE`.
@@ -43,6 +44,32 @@ sets `_appReady` and replies `USB_RSP_OK` when the versions match, or `USB_RSP_V
 (and keeps announcing) when they differ — so a host built against a stale schema is rejected at
 the link instead of silently mis-decoding the stream. `MockMessages()` gates on the same
 handshake via `WaitForHandshake()`.
+
+`USB_CMD_ACK` is answered **in any state**, and applying it twice is a no-op. That is deliberate:
+it lets the host re-send it as a keep-alive (below) and as a probe, without a dedicated opcode.
+
+## Ending a session (`HandleHostDetach`)
+USB CDC keeps the cable enumerated when the host closes the port, so nothing tells the firmware a
+session ended. Left to itself it would hold `_appReady` forever — still streaming into a port
+nobody reads, and (since `AnnounceReadyIfDue()` only runs while `!_appReady`) never announcing
+itself again, so the *next* connect would find a device that never introduces itself and so never
+handshakes. The one signal available is the CDC control line: `CDC_SET_CONTROL_LINE_STATE`
+(`usbd_cdc_if.c`) tracks **DTR**, which a host asserts while it holds the port open, and latches an
+edge when it drops. `HandleHostDetach()` consumes that edge via `usb_host_detached()`, clears
+`_appReady`, and drops the TX buffer and RX ring — a half-written frame belongs to the dead
+session, and replaying it into the next one desyncs the parser.
+
+This requires the host to actually hold DTR (`SerialPort.DtrEnable`); a host that never asserts it
+simply never produces the edge, and the link falls back on the host-side probe below.
+
+## Keep-alive and probe (host side)
+Complementary halves of the same idea, both in `DeviceClient` (see `src/Dyno.Core/README.md`):
+- **Keep-alive** — once handshaked, the host re-sends `USB_CMD_ACK` every 5 s. An open port does
+  not mean a live device, and an idle one streams nothing, so silence is otherwise
+  indistinguishable from health. Two unanswered pings and the host reports the link lost.
+- **Probe** — if no announcement arrives within 1 s of connecting, the host sends an unsolicited
+  `USB_CMD_ACK` rather than waiting. This is what rescues a reconnect to a board running firmware
+  *without* the detach fix above (which is still silently `_appReady` and so never announces).
 
 ## Error/warning framing
 `ProcessErrorsAndWarnings()` reads `task_error_data` from `task_error_circular_buffer` and sets
