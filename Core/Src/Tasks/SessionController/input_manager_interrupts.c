@@ -9,26 +9,31 @@ volatile button_press_data button_press_circular_buffer[USER_INPUT_CIRCULAR_BUFF
 
 void register_rotary_encoder_input()
 {
+    // Called on a ROT_EN_A edge; the level of ROT_EN_B gives the rotation direction.
+    bool positive = (HAL_GPIO_ReadPin(ROT_EN_B_GPIO_Port, ROT_EN_B_Pin) == GPIO_PIN_SET);
 
-	// This function would be called on ROT_EN_A
-    bool positive;
-    // The state of ROT_EN_B would tell us the direction
-    if (HAL_GPIO_ReadPin(ROT_EN_B_GPIO_Port, ROT_EN_B_Pin))
+    add_to_circular_buffer(ROT_EN_TICKS, positive);
+}
+
+// Shared handler for momentary push-buttons (back, select): LED lights while held,
+// and the press is queued on release. LEDs are active-low (RESET = on).
+static void handle_momentary_button(GPIO_TypeDef* btn_port, uint16_t btn_pin,
+                                    GPIO_TypeDef* led_port, uint16_t led_pin,
+                                    button_opcode opcode)
+{
+    if (HAL_GPIO_ReadPin(btn_port, btn_pin) == GPIO_PIN_RESET)
     {
-        positive = true;
+        // Pressed: turn LED on.
+        HAL_GPIO_WritePin(led_port, led_pin, GPIO_PIN_RESET);
     }
     else
     {
-        positive = false;
+        // Released: turn LED off and queue the event for the session controller.
+        // POSITIVE is unused for these opcodes; see input_manager_interrupts.h.
+        HAL_GPIO_WritePin(led_port, led_pin, GPIO_PIN_SET);
+        add_to_circular_buffer(opcode, false);
     }
-
-    // Add the number of changed ticks to the buffer
-    add_to_circular_buffer(ROT_EN_TICKS, positive);
-
-
 }
-
-
 
 void register_rotary_encoder_sw_input()
 {
@@ -52,45 +57,14 @@ void register_rotary_encoder_sw_input()
 
 void register_button_back_input()
 {
-
-	// Get the current pin state of the back button
-    GPIO_PinState pin_state = HAL_GPIO_ReadPin(BTN_BACK_GPIO_Port, BTN_BACK_Pin);
-    if (pin_state == GPIO_PIN_RESET)
-    {
-        // Turn on LED
-        HAL_GPIO_WritePin(LED_BACK_GPIO_Port, LED_BACK_Pin, GPIO_PIN_RESET);
-    }
-    else
-    {
-        // Turn off LED
-        HAL_GPIO_WritePin(LED_BACK_GPIO_Port, LED_BACK_Pin, GPIO_PIN_SET);
-
-        // Add to the circular buffer for the session controller to read later
-        // POSITIVE parameter does not matter here for the SELECT_INPUT. Read input_manager_interrupts.h file for explanation
-        add_to_circular_buffer(BTN_BACK, false);
-
-    }
+    handle_momentary_button(BTN_BACK_GPIO_Port, BTN_BACK_Pin,
+                            LED_BACK_GPIO_Port, LED_BACK_Pin, BTN_BACK);
 }
 
 void register_button_select_input()
 {
-    // Get the current pin state of the select button
-    GPIO_PinState pin_state = HAL_GPIO_ReadPin(BTN_SELECT_GPIO_Port, BTN_SELECT_Pin);
-    if (pin_state == GPIO_PIN_RESET)
-    {
-        // Turn on LED
-        HAL_GPIO_WritePin(LED_SELECT_GPIO_Port, LED_SELECT_Pin, GPIO_PIN_RESET);
-    }
-    else
-    {
-        // Turn off LED
-        HAL_GPIO_WritePin(LED_SELECT_GPIO_Port, LED_SELECT_Pin, GPIO_PIN_SET);
-
-        // Add to the circular buffer for the session controller to read later
-        // POSITIVE parameter does not matter here for the SELECT_INPUT. Read input_manager_interrupts.h file for explanation
-        add_to_circular_buffer(BTN_SELECT, false);
-
-    }
+    handle_momentary_button(BTN_SELECT_GPIO_Port, BTN_SELECT_Pin,
+                            LED_SELECT_GPIO_Port, LED_SELECT_Pin, BTN_SELECT);
 }
 
 void register_button_brake_input()
@@ -119,25 +93,20 @@ void register_button_brake_input()
 
 void add_to_circular_buffer(button_opcode opcode, bool positive)
 {
-    // Create the data struct to add
     button_press_data data_to_add;
     data_to_add.opcode = opcode;
     data_to_add.positive = positive;
 
-    // Disable all button interrupts. Due to the nature of interrupts, they can interrupt each other
-    // We cannot allow an interrupt to interrupt another while writing to the input_data buffer
-//    HAL_NVIC_DisableIRQ(EXTI3_IRQn);
-//    HAL_NVIC_DisableIRQ(EXTI4_IRQn);
-//    HAL_NVIC_DisableIRQ(EXTI9_5_IRQn);
+    // These handlers run in EXTI ISRs that can preempt one another, so the buffer write and
+    // index increment must be atomic. Mask all interrupts for the (very short) critical section,
+    // saving/restoring PRIMASK so we behave correctly even if called with interrupts already off.
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
 
-    // Critical section: write to the circular buffer
     button_press_circular_buffer[interrupt_input_data_index] = data_to_add;
     interrupt_input_data_index = (interrupt_input_data_index + 1) % USER_INPUT_CIRCULAR_BUFFER_SIZE;
 
-    // renable the IRQs
-//    HAL_NVIC_EnableIRQ(EXTI3_IRQn);
-//    HAL_NVIC_EnableIRQ(EXTI4_IRQn);
-//    HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
+    __set_PRIMASK(primask);
 }
 
 volatile button_press_data* get_circular_buffer_data(uint32_t index)

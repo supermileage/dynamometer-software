@@ -32,11 +32,8 @@ struct State
     {
         INIT_STATE = 0,
         USB_LOGGING_OPTION_DISPLAYED = 0,
-        USB_LOGGING_OPTION_EDIT,
         SD_LOGGING_OPTION_DISPLAYED,
-        SD_LOGGING_OPTION_EDIT,
         PID_ENABLE_DISPLAYED,
-        PID_ENABLE_EDIT,
         PID_DESIRED_RPM_DISPLAYED,
         PID_DESIRED_RPM_EDIT
     };
@@ -95,15 +92,18 @@ public:
 private:
     // Methods which are called when a state change is done
     void IdleState();
-    void USBLoggingOptionDisplayedSettingsState(); 
-    void USBLoggingOptionEditSettingsState();
+    void USBLoggingOptionDisplayedSettingsState();
     void SDLoggingOptionDisplayedSettingsState();
-    void SDLoggingOptionEditSettingsState();   
     void PIDOptionDisplayedSettingsState();
-    void PIDOptionEditSettingsState();
     void PIDDesiredRPMOptionDisplayedSettingsState();
     void PIDDesiredRPMOptionEditSettingsState(bool clearDisplay);
     void InSessionState();
+
+    // Renders an on/off settings option: title on row 0, ENABLED/DISABLED on row 1.
+    void ShowToggleOption(State::SettingsState settingsState, const char* title, uint8_t titleColumn, bool enabled);
+
+    // Writes a null-terminated string to the LCD (length derived from the string).
+    void WriteLine(uint8_t row, uint8_t column, const char* str);
     
     // user input handlers
     void HandleRotaryEncoderInput(bool positiveTick);

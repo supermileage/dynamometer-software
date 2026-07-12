@@ -9,7 +9,6 @@
 #include "FiniteStateMachine.hpp"
 
 #include "MessagePassing/messages_public.h"
-#include "MessagePassing/messages_public.h"
 #include "MessagePassing/osqueue_helpers.h"
 
 #include "CircularBufferReader.hpp"
@@ -44,16 +43,33 @@ class SessionController
         session_controller_os_task_queues* _task_queues;
         osMutexId_t _usart1Mutex;
 
+        // Latest sensor readings (drained from the circular buffers each loop iteration).
+        forcesensor_output_data _force_data;
+        optical_encoder_output_data _optical_encoder_data;
+
+        // Previous values, used for change-detection so we only act/transmit on a change.
         bool _prevUSBLoggingEnabled;
         bool _prevSDLoggingEnabled;
         bool _prevPIDEnabled;
         bool _prevInSession;
+        bool _pidAckReceived;
+        float _prevThrottleDutyCycle;
+        float _prevBpmDutyCycle;
+        float _prevForce;
+        float _prevAngularVelocity;
 
         bool CheckTaskQueuesValid();
 
-        inline float CalculateTorque(float angularAcceleration, float force, float angularVelocity);
-        inline float CalculatePower(float torque, float angularVelocity);
-        inline float CalculateMechanicalLosses(float angularAcceleration, float angularVelocity);
+        // Run() loop steps (see Run() for ordering).
+        void SyncLoggingState();    // notify USB/SD controllers when logging enable changes
+        void HandleSessionEdge();   // enable/disable sensors + BPM on session start/stop
+        void SyncPidState();        // push PID enable/target changes and handle the ack
+        void HandleManualControl(); // push manual throttle/BPM duty cycle while in session
+        void UpdateMetrics();       // drain sensors, compute torque/power, refresh the display
+
+        float CalculateTorque(float angularAcceleration, float force, float angularVelocity);
+        float CalculatePower(float torque, float angularVelocity);
+        float CalculateMechanicalLosses(float angularAcceleration, float angularVelocity);
 
 };
 

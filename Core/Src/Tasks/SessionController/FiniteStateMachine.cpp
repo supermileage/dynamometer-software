@@ -76,25 +76,13 @@ void FSM::HandleRotaryEncoderInput(bool positiveTick)
                     if (positiveTick) SDLoggingOptionDisplayedSettingsState();
                     else PIDDesiredRPMOptionDisplayedSettingsState();
                     break;
-                case State::SettingsState::USB_LOGGING_OPTION_EDIT:
-                    // _usbLoggingEnabled = positiveTick;
-                    // USBLoggingOptionEditSettingsState();
-                    break;
                 case State::SettingsState::SD_LOGGING_OPTION_DISPLAYED:
                     if (positiveTick) PIDOptionDisplayedSettingsState();
                     else USBLoggingOptionDisplayedSettingsState();
                     break;
-                case State::SettingsState::SD_LOGGING_OPTION_EDIT:
-                    // _sdLoggingEnabled = positiveTick;
-                    // SDLoggingOptionEditSettingsState();
-                    break; 
                 case State::SettingsState::PID_ENABLE_DISPLAYED:
                     if (positiveTick) PIDDesiredRPMOptionDisplayedSettingsState();
                     else SDLoggingOptionDisplayedSettingsState();
-                    break;
-                case State::SettingsState::PID_ENABLE_EDIT:
-                    // _pidOptionToggleableEnabled = positiveTick;
-                    // PIDOptionEditSettingsState();
                     break;
                 case State::SettingsState::PID_DESIRED_RPM_DISPLAYED:
                     if (positiveTick) USBLoggingOptionDisplayedSettingsState();
@@ -129,30 +117,7 @@ void FSM::HandleRotaryEncoderInput(bool positiveTick)
 }
 void FSM::HandleRotaryEncoderSwInput(void)
 {
-//  Was not working, will debug later
-//    _inSession = true;
-//    InSessionState();
-    
-    
-//      switch(_state.mainState)
-//      {
-//          case State::MainDynoState::IDLE:
-// //             InSessionState();
-//              break;
-//          case State::MainDynoState::SETTINGS_MENU:
-// //             InSessionState();
-//               switch(_state.settingsState)
-//               {
-//                   case State::SettingsState::PID_DESIRED_RPM_EDIT:
-//                       break;
-//                   default:
-//                       break;
-//               }
-//              break;
-//          case State::MainDynoState::IN_SESSION:
-//              break;
-//      }
-
+    // Rotary-encoder switch press is currently unused. Brake button drives session start/stop.
 }
 void FSM::HandleButtonBackInput(void)
 {
@@ -166,20 +131,11 @@ void FSM::HandleButtonBackInput(void)
                 case State::SettingsState::USB_LOGGING_OPTION_DISPLAYED:
                     IdleState();
                     break;
-                case State::SettingsState::USB_LOGGING_OPTION_EDIT:
-                    USBLoggingOptionDisplayedSettingsState();
-                    break;
                 case State::SettingsState::SD_LOGGING_OPTION_DISPLAYED:
                     IdleState();
                     break;
-                case State::SettingsState::SD_LOGGING_OPTION_EDIT:
-                    SDLoggingOptionDisplayedSettingsState();
-                    break; 
                 case State::SettingsState::PID_ENABLE_DISPLAYED:
                     IdleState();
-                    break;
-                case State::SettingsState::PID_ENABLE_EDIT:
-                    PIDOptionDisplayedSettingsState();
                     break;
                 case State::SettingsState::PID_DESIRED_RPM_DISPLAYED:
                     IdleState();
@@ -218,30 +174,15 @@ void FSM::HandleButtonSelectInput(void)
             {
                 case State::SettingsState::USB_LOGGING_OPTION_DISPLAYED:
                     _usbLoggingEnabled = !_usbLoggingEnabled;
-                    USBLoggingOptionEditSettingsState();
-                    // We don't actually want to change state, should remove the USB_LOGGING_OPTION_EDIT state later
-                    _state.settingsState = State::SettingsState::USB_LOGGING_OPTION_DISPLAYED;
-                    break;
-                case State::SettingsState::USB_LOGGING_OPTION_EDIT:
-                    // USBLoggingOptionEditSettingsState();
+                    USBLoggingOptionDisplayedSettingsState();
                     break;
                 case State::SettingsState::SD_LOGGING_OPTION_DISPLAYED:
                     _sdLoggingEnabled = !_sdLoggingEnabled;
-                    SDLoggingOptionEditSettingsState();
-                    // We don't actually want to change state, should remove the SD_LOGGING_OPTION_EDIT state later
-                    _state.settingsState = State::SettingsState::SD_LOGGING_OPTION_DISPLAYED;
+                    SDLoggingOptionDisplayedSettingsState();
                     break;
-                case State::SettingsState::SD_LOGGING_OPTION_EDIT:
-                    // SDLoggingOptionEditSettingsState();
-                    break; 
                 case State::SettingsState::PID_ENABLE_DISPLAYED:
                     _pidOptionToggleableEnabled = !_pidOptionToggleableEnabled;
-                    PIDOptionEditSettingsState();
-                    // We don't actually want to change state, should remove the PID_ENABLE_EDIT state later
-                    _state.settingsState = State::SettingsState::PID_ENABLE_DISPLAYED;
-                    break;
-                case State::SettingsState::PID_ENABLE_EDIT:
-                    // PIDOptionEditSettingsState();
+                    PIDOptionDisplayedSettingsState();
                     break;
                 case State::SettingsState::PID_DESIRED_RPM_DISPLAYED:
                     PIDDesiredRPMOptionEditSettingsState(true);
@@ -278,29 +219,16 @@ void FSM::HandleButtonSelectInput(void)
 
 void FSM::HandleButtonBrakeInput(bool isEnabled)
 {
-     if (isEnabled)
-     {
-         _inSession = true;
-         InSessionState();
-     }
-     else
-     {
-         _inSession = false;
-         IdleState();
-     }
-    
-    // switch(_state.mainState)
-    // {
-    //     case State::MainDynoState::IDLE:
-    //         break;
-    //     case State::MainDynoState::SETTINGS_MENU:
-    //         _inSession = true;
-    //         DisplayInSessionScreen();
-    //         break;
-    //     case State::MainDynoState::IN_SESSION:
-    //         break;
-    // }
-    
+    if (isEnabled)
+    {
+        _inSession = true;
+        InSessionState();
+    }
+    else
+    {
+        _inSession = false;
+        IdleState();
+    }
 }
 
 int FSM::ConvertDesiredRpmUnitsStateToIncrement()
@@ -352,94 +280,35 @@ void FSM::IdleState()
     AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 2, "PRESS SELECT", sizeof("PRESS SELECT") - 1);
 }
 
+void FSM::WriteLine(uint8_t row, uint8_t column, const char* str)
+{
+    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, row, column, str, strlen(str));
+}
+
+void FSM::ShowToggleOption(State::SettingsState settingsState, const char* title, uint8_t titleColumn, bool enabled)
+{
+    _state.mainState = State::MainDynoState::SETTINGS_MENU;
+    _state.settingsState = settingsState;
+
+    ClearDisplay();
+
+    WriteLine(0, titleColumn, title);
+    WriteLine(1, 4, enabled ? "ENABLED" : "DISABLED");
+}
+
 void FSM::USBLoggingOptionDisplayedSettingsState()
 {
-    _state.mainState = State::MainDynoState::SETTINGS_MENU;
-    _state.settingsState = State::SettingsState::USB_LOGGING_OPTION_DISPLAYED;
-
-    ClearDisplay();
-    
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 0, 2, "USB LOGGING", sizeof("USB LOGGING") - 1);
-
-    if (_usbLoggingEnabled)
-        AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 4, "ENABLED", sizeof("ENABLED") - 1);
-    else
-        AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 4, "DISABLED", sizeof("DISABLED") - 1);
-}   
-
-void FSM::USBLoggingOptionEditSettingsState()
-{
-    _state.mainState = State::MainDynoState::SETTINGS_MENU;
-    _state.settingsState = State::SettingsState::USB_LOGGING_OPTION_EDIT;
-
-    ClearDisplay();
-    
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 0, 2, "USB LOGGING", sizeof("USB LOGGING") - 1);
-
-    if (_usbLoggingEnabled)
-        AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 4, "ENABLED", sizeof("ENABLED") - 1);
-    else
-        AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 4, "DISABLED", sizeof("DISABLED") - 1);
+    ShowToggleOption(State::SettingsState::USB_LOGGING_OPTION_DISPLAYED, "USB LOGGING", 2, _usbLoggingEnabled);
 }
 
 void FSM::SDLoggingOptionDisplayedSettingsState()
 {
-    _state.mainState = State::MainDynoState::SETTINGS_MENU;
-    _state.settingsState = State::SettingsState::SD_LOGGING_OPTION_DISPLAYED;
-
-    ClearDisplay();
-
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 0, 3, "SD LOGGING", sizeof("SD LOGGING") - 1);
-    
-    if (_sdLoggingEnabled)
-        AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 4, "ENABLED", sizeof("ENABLED") - 1);
-    else
-        AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 4, "DISABLED", sizeof("DISABLED") - 1);
-}
-
-void FSM::SDLoggingOptionEditSettingsState()
-{
-    _state.mainState = State::MainDynoState::SETTINGS_MENU;
-    _state.settingsState = State::SettingsState::SD_LOGGING_OPTION_EDIT;
-
-    ClearDisplay();
-    
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 0, 3, "SD LOGGING", sizeof("SD LOGGING") - 1);
-
-    if (_sdLoggingEnabled)
-        AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 4, "ENABLED", sizeof("ENABLED") - 1);
-    else
-        AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 4, "DISABLED", sizeof("DISABLED") - 1);
+    ShowToggleOption(State::SettingsState::SD_LOGGING_OPTION_DISPLAYED, "SD LOGGING", 3, _sdLoggingEnabled);
 }
 
 void FSM::PIDOptionDisplayedSettingsState()
 {
-    _state.mainState = State::MainDynoState::SETTINGS_MENU;
-    _state.settingsState = State::SettingsState::PID_ENABLE_DISPLAYED;
-
-    ClearDisplay();
-    
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 0, 2, "PID LOGGING", sizeof("PID LOGGING") - 1);
-
-    if (_pidOptionToggleableEnabled)
-        AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 4, "ENABLED", sizeof("ENABLED") - 1);
-    else
-        AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 4, "DISABLED", sizeof("DISABLED") - 1);
-}
-
-void FSM::PIDOptionEditSettingsState()
-{
-    _state.mainState = State::MainDynoState::SETTINGS_MENU;
-    _state.settingsState = State::SettingsState::PID_ENABLE_EDIT;
-
-    ClearDisplay();
-    
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 0, 2, "PID LOGGING", sizeof("PID LOGGING") - 1);
-
-    if (_pidOptionToggleableEnabled)
-        AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 4, "ENABLED", sizeof("ENABLED") - 1);
-    else
-        AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 4, "DISABLED", sizeof("DISABLED") - 1);
+    ShowToggleOption(State::SettingsState::PID_ENABLE_DISPLAYED, "PID LOGGING", 2, _pidOptionToggleableEnabled);
 }
 
 void FSM::PIDDesiredRPMOptionDisplayedSettingsState()
