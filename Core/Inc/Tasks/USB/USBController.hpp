@@ -73,6 +73,11 @@ class USBController
         // itself to the next host instead of staying silent forever. No-op while a host is attached.
         void HandleHostDetach();
 
+        // Catch the sensor readers up to their writers, dropping whatever the (continuously
+        // sampling) sensor tasks buffered while no session was running. Called on session entry so
+        // a session opens with live data rather than a backlog from before it started.
+        void SkipBufferedSensorData();
+
         // Block until the host completes the USB_CMD_ACK handshake (mock/debug path).
         void WaitForHandshake();
 
@@ -130,7 +135,7 @@ class USBController
         CircularBufferReader<bpm_output_data> _buffer_reader_bpm;
 
         osMessageQueueId_t _taskMonitorToUsbControllerHandle;
-        osMessageQueueId_t _sessionControllerToUsbController;
+        osMessageQueueId_t _sessionControllerToUsbController;  // carries the in-session flag
         osMessageQueueId_t _forceSensorCommandQueue;   // route target for force-sensor settings
         osMessageQueueId_t _taskCompletionQueue;       // shared: tasks post applied-command acks here
 

@@ -61,7 +61,7 @@ note over App, USB
   device that comes back is picked up without a reconnect.
 end note
 
-== Host closes the port — the session ends ==
+== Host closes the port — the link ends (not to be confused with a dyno session) ==
 
 App -> USB : CDC **DTR deasserted** (SET_CONTROL_LINE_STATE)
 note over USB
@@ -83,18 +83,42 @@ end note
 App -> USB : **USB_MSG_COMMAND**  USB_CMD_ACK  (unsolicited probe)
 USB -> App : **USB_MSG_RESPONSE**  USB_RSP_OK\n(sets _appReady = true → streaming re-armed)
 
-== Streaming — only while _appReady && SessionController enabled ==
+== Health & faults — whenever handshaked, session or not ==
 
-Session -> USB : enable USB logging
-note over USB, Task : sensor tasks fill circular buffers / the task-monitor queue
+note over USB, Task : sensor tasks sample continuously and fill their circular buffers,\nwhether or not a session is running
+
+loop each Run() iteration, while _appReady
+    USB -> App : USB_MSG_STREAM  task_monitor_output_data      (TASK_OFFSET_TASK_MONITOR)
+    USB -> App : USB_MSG_ERROR / USB_MSG_WARNING  task_error_data\n(task_offset + number packed in error_code)
+end
+note over App, USB
+  Not sensor data, so not session-gated: a task dying or a stack running out
+  is most worth seeing while the dyno sits idle. Draining the task-monitor
+  queue unconditionally also stops it filling up between sessions.
+end note
+
+== Sensor data — only while _appReady && a session is running ==
+
+Session -> USB : in-session = true  (session started)
+note over USB
+  SkipBufferedSensorData()
+  catch each reader up to its writer: what the sensor
+  tasks buffered while idle predates the session, and
+  would otherwise flush ahead of the live stream
+end note
 
 loop each Run() iteration (drain & frame)
     USB -> App : USB_MSG_STREAM  optical_encoder_output_data   (TASK_OFFSET_OPTICAL_ENCODER)
     USB -> App : USB_MSG_STREAM  forcesensor_output_data       (active force-sensor offset)
     USB -> App : USB_MSG_STREAM  bpm_output_data               (TASK_OFFSET_BPM_CONTROLLER)
-    USB -> App : USB_MSG_STREAM  task_monitor_output_data      (TASK_OFFSET_TASK_MONITOR)
-    USB -> App : USB_MSG_ERROR / USB_MSG_WARNING  task_error_data\n(task_offset + number packed in error_code)
 end
+
+Session -> USB : in-session = false  (session ended)
+note over App, Session
+  The session is the **only** gate on sensor data — there is no USB-logging
+  on/off switch to get left in the wrong position. A host connected during a
+  session always receives that session's data.
+end note
 
 == Host command — USB-controller-local (handled in place) ==
 

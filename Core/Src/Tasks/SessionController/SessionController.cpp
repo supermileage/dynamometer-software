@@ -114,16 +114,21 @@ void SessionController::Run()
     bool pidAckReceived = false;
     osMessageQueuePut(_task_queues->pid_controller, &pid_msg, 0, osWaitForever);
 
-    // Sensor sampling and USB streaming run continuously, independent of session state, so the
-    // dyno host receives live data the moment it connects -- no session required. Enable them
-    // once here and never disable them; only actuation (driving the BPM / throttle) stays gated
-    // behind an active session in the loop below.
+    // Sensor sampling runs continuously, independent of session state: enable it once here and
+    // never disable it, so a session starts against sensors that are already warm. Only what
+    // leaves the board (USB streaming, below) and what the board drives (BPM / throttle) is gated
+    // behind an active session.
     bool alwaysEnabled = true;
-    #if USB_CONTROLLER_TASK_ENABLE
-    osMessageQueuePut(_task_queues->usb_controller, &alwaysEnabled, 0, osWaitForever);
-    #endif
     osMessageQueuePut(_task_queues->optical_sensor, &alwaysEnabled, 0, osWaitForever);
     osMessageQueuePut(_task_queues->force_sensor, &alwaysEnabled, 0, osWaitForever);
+
+    // The USB task streams sensor data only while a session runs, so it needs the session state.
+    // There is no separate "USB logging" switch -- a host that is connected during a session
+    // always receives that session's data. Post the starting state so it does not have to assume.
+    #if USB_CONTROLLER_TASK_ENABLE
+    bool sessionStreaming = false;
+    osMessageQueuePut(_task_queues->usb_controller, &sessionStreaming, 0, osWaitForever);
+    #endif
 
     while(1)
     {
@@ -155,12 +160,18 @@ void SessionController::Run()
         bool PIDEnabled = _fsm.GetPIDEnabledModeStatus();
         bool PIDOptionToggleableEnabled = _fsm.GetPIDOptionToggleableEnabledStatus();
 
-        // Run only on an in-session transition. Sensor sampling and USB streaming stay on
-        // continuously (enabled once at startup), so a transition just resets the display on
+        // Run only on an in-session transition. Sensor sampling stays on continuously (enabled
+        // once at startup), so a transition starts/stops the USB stream, resets the display on
         // entry and -- critically -- stops driving the BPM on exit. The brake must never be
         // actuated outside a session.
         if (InSessionRisingEdge || InSessionFallingEdge)
         {
+            // Tell the USB task whether a session is running: it streams sensor data only then.
+            #if USB_CONTROLLER_TASK_ENABLE
+            sessionStreaming = InSessionStatus;
+            osMessageQueuePut(_task_queues->usb_controller, &sessionStreaming, 0, osWaitForever);
+            #endif
+
             if (InSessionRisingEdge)
             {
                 _fsm.DisplayRpm(0);

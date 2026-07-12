@@ -7,7 +7,7 @@ code:
   - Core/Inc/Tasks/USB/usbcontroller_main.h
 entry_point: usbcontroller_main()
 task_offset: TASK_OFFSET_USB_CONTROLLER
-consumes: [optical_encoder/forcesensor/bpm/task_error circular buffers, taskMonitor queue, SessionController enable]
+consumes: [optical_encoder/forcesensor/bpm/task_error circular buffers, taskMonitor queue, SessionController in-session flag]
 produces: [USB CDC stream to PC (CDC_Transmit_FS)]
 related: [MessagePassing, TaskMonitor, SessionController]
 ---
@@ -24,17 +24,34 @@ routed "non-posted" ack) — is in [`usb_message_flow.puml`](usb_message_flow.pu
 Each iteration:
 0. `HandleHostDetach()` — if the host closed the port (CDC DTR dropped), un-ack the link.
 1. `ProcessIncomingFrames()` — pull + route CRC-validated host frames (always, so the host can
-   handshake/configure regardless of logging state).
+   handshake/configure whether or not a session is running).
 2. `ProcessCompletions()` — relay applied-command acks as `USB_MSG_RESPONSE`.
-3. Pick up the SessionController's USB logging enable/disable.
-4. **Handshake gate:** while `!_appReady`, `AnnounceReadyIfDue()` emits a `usb_device_ready_event`
+3. **Handshake gate:** while `!_appReady`, `AnnounceReadyIfDue()` emits a `usb_device_ready_event`
    (`USB_MSG_EVENT`, `TASK_OFFSET_USB_CONTROLLER`) about every `DEVICE_READY_ANNOUNCE_MS`.
-5. Once `_appReady && enableUSB`, frame and append the streams:
+4. Pick up the SessionController's in-session flag; on session entry, `SkipBufferedSensorData()`.
+5. **Sensor data** — only while `_appReady && inSession`:
    - `optical_encoder_output_data` (`USB_MSG_STREAM`, `TASK_OFFSET_OPTICAL_ENCODER`)
    - `forcesensor_output_data` (`USB_MSG_STREAM`, active force-sensor offset)
-   - `bpm_output_data`, `task_monitor_output_data`
-   - errors via `ProcessErrorsAndWarnings()`.
-6. `CDC_Transmit_FS(_txBuffer, …)`; delay `USB_TASK_OSDELAY`.
+   - `bpm_output_data`
+6. **Health + faults** — whenever `_appReady`, session or not: `task_monitor_output_data` and
+   errors via `ProcessErrorsAndWarnings()`.
+7. `CDC_Transmit_FS(_txBuffer, …)`; delay `USB_TASK_OSDELAY`.
+
+## What is gated on a session (and what is not)
+Sensor data is streamed **only while a session runs** — that is the only gate, and it is the
+session, not a setting: there is no USB-logging on/off switch, so a host connected during a session
+always receives that session's data.
+
+Everything else the link carries is *not* session-gated, because it is not sensor data: the
+device-ready announcement, command RESPONSEs, task-monitor health and faults all flow to any
+handshaked host. A task dying or a stack running out is most worth seeing while the dyno sits
+idle, and draining the task-monitor queue unconditionally also stops it filling up between
+sessions.
+
+Because the sensor tasks sample continuously (SessionController enables them once, at startup),
+their circular buffers keep filling while no session runs. `SkipBufferedSensorData()` catches each
+reader up to its writer on session entry, so a session opens with live data instead of flushing a
+backlog of samples recorded — and timestamped — before it began.
 
 ## Handshake (device-announced)
 The firmware streams nothing until the host acknowledges it. While `_appReady` is false the
@@ -48,9 +65,9 @@ handshake via `WaitForHandshake()`.
 `USB_CMD_ACK` is answered **in any state**, and applying it twice is a no-op. That is deliberate:
 it lets the host re-send it as a keep-alive (below) and as a probe, without a dedicated opcode.
 
-## Ending a session (`HandleHostDetach`)
-USB CDC keeps the cable enumerated when the host closes the port, so nothing tells the firmware a
-session ended. Left to itself it would hold `_appReady` forever — still streaming into a port
+## Host disconnect (`HandleHostDetach`)
+USB CDC keeps the cable enumerated when the host closes the port, so nothing tells the firmware the
+host is gone. Left to itself it would hold `_appReady` forever — still streaming into a port
 nobody reads, and (since `AnnounceReadyIfDue()` only runs while `!_appReady`) never announcing
 itself again, so the *next* connect would find a device that never introduces itself and so never
 handshakes. The one signal available is the CDC control line: `CDC_SET_CONTROL_LINE_STATE`

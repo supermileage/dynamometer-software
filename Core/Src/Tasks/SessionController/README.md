@@ -29,9 +29,14 @@ UI/FSM, dispatches commands to all other tasks, and turns sensor data into torqu
 
 ## Run() loop (per iteration)
 1. `_fsm.HandleUserInputs()` — process pending button/encoder events.
-2. Edge-detect USB-/SD-logging enable → notify [[USB]] / SD queues only on change.
-3. Session start/stop edge (`GetInSessionStatus`): enable/disable `force_sensor` + `optical_sensor`,
-   reset the display, and command [[BPM]] (`START_PWM` / `STOP_PWM`).
+2. Edge-detect SD-logging enable → notify the SD queue only on change.
+3. Session start/stop edge (`GetInSessionStatus`): tell [[USB]] whether a session is running (it
+   streams sensor data only then), reset the display, and command [[BPM]] (`START_PWM` /
+   `STOP_PWM`). Sensor sampling itself is enabled once at startup and never gated, so a session
+   starts against sensors that are already warm.
+
+   There is **no USB-logging option**: USB streaming follows the session, and nothing can turn it
+   off. (SD logging remains a togglable setting in the menu.)
 4. On PID enable change: send `session_controller_to_pid_controller` (enable + desired ω); await `pid_controller_ack`.
 5. Manual mode: push throttle/BPM duty cycle to the BPM queue.
 6. Drain latest `forcesensor_output_data` + `optical_encoder_output_data` (via `GetLatestFromQueue`-style buffer reads).
