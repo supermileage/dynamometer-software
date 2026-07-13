@@ -38,6 +38,13 @@ note over USB : HandleUsbLocalCommand()\ncompare host vs firmware version
 
 alt versions match
     USB -> App : **USB_MSG_RESPONSE**  USB_RSP_OK\n(sets _appReady = true)
+    USB -> App : **USB_MSG_EVENT** / TASK_OFFSET_SESSION_CONTROLLER\nsession_state_event{ in_session }  (state as it stands)
+    note over App, USB
+      Announced after **every** ack, changed or not. Sensor data only flows during a
+      session, so a host connecting to a steady board — idle, or already mid-session —
+      would otherwise wait on an edge that may never come, unable to tell an idle dyno
+      from a dead one.
+    end note
 else mismatch
     USB -> App : **USB_MSG_RESPONSE**  USB_RSP_VERSION_MISMATCH\n(stays not-ready, keeps announcing)
 end
@@ -53,12 +60,18 @@ end note
 loop every HeartbeatInterval (5 s), once handshaked
     App -> USB : **USB_MSG_COMMAND**  USB_CMD_ACK  (re-sent as a ping)
     USB -> App : **USB_MSG_RESPONSE**  USB_RSP_OK
+    USB -> App : **USB_MSG_EVENT**  session_state_event{ in_session }\n(re-stated; the host raises a change event only if it moved)
 end
 note over App, USB
   USB_CMD_ACK doubles as the ping: the USB controller answers it itself, in any
   state, and re-applying it is a no-op — so no dedicated opcode is needed.
   Two unanswered pings ⇒ the host declares the link lost, but keeps polling, so a
   device that comes back is picked up without a reconnect.
+
+  Re-stating the session state on each ack is what makes it self-healing: a host that
+  declared the link lost drops its session state, while _appReady here stays set — so an
+  edge-only announcement would never reach it again and a running session would look
+  idle forever.
 end note
 
 == Host closes the port — the link ends (not to be confused with a dyno session) ==
@@ -107,6 +120,14 @@ note over USB
   would otherwise flush ahead of the live stream
 end note
 
+USB -> App : **USB_MSG_EVENT**  session_state_event{ in_session = 1 }
+note right of App
+  Framed **before** the samples below, so the start always
+  reaches the host ahead of the data it explains: the app
+  shows sensor readings only while a session is running, and
+  would discard samples that arrived before the start event.
+end note
+
 loop each Run() iteration (drain & frame)
     USB -> App : USB_MSG_STREAM  optical_encoder_output_data   (TASK_OFFSET_OPTICAL_ENCODER)
     USB -> App : USB_MSG_STREAM  forcesensor_output_data       (active force-sensor offset)
@@ -114,10 +135,14 @@ loop each Run() iteration (drain & frame)
 end
 
 Session -> USB : in-session = false  (session ended)
+USB -> App : **USB_MSG_EVENT**  session_state_event{ in_session = 0 }\n(app clears the readouts — a stale number reads as a live one)
 note over App, Session
   The session is the **only** gate on sensor data — there is no USB-logging
   on/off switch to get left in the wrong position. A host connected during a
   session always receives that session's data.
+
+  An edge that falls while no host is acked is not lost: the next ack sets
+  _sessionStateDue and the current state goes out then.
 end note
 
 == Host command — USB-controller-local (handled in place) ==

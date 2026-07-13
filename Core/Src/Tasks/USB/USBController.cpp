@@ -38,7 +38,8 @@ USBController::USBController(osMessageQueueId_t sessionControllerToUsbController
       _txBuffer{},
       _txBufferIndex(0),
       _appReady(false),
-      _lastAnnounceTick(0)
+      _lastAnnounceTick(0),
+      _sessionStateDue(false)
 {}
 
 bool USBController::Init()
@@ -145,7 +146,16 @@ void USBController::HandleUsbLocalCommand(const usb_cmd_header_t& cmd, const uin
                 SendResponse(TASK_OFFSET_USB_CONTROLLER, cmd.opcode, cmd.msg_id, USB_RSP_VERSION_MISMATCH);
                 break;
             }
-            // Versions match: unblock streaming and acknowledge.
+            // Versions match: unblock streaming and acknowledge. Announce the session state after
+            // every ack, even when nothing changed. The first ack is what a host connecting to a
+            // *steady* board (idle, or already mid-session) needs -- it would otherwise wait for an
+            // edge that may never come. The rest make the state self-healing: the host reuses
+            // USB_CMD_ACK as its 5s keep-alive, and a host that missed enough beats to declare the
+            // link lost forgets the session state while _appReady here stays set, so an edge-only
+            // announcement would never reach it again and a running session would look idle
+            // forever. Re-stating it every beat costs 20 bytes and closes that hole; the host
+            // raises a change event only when the value actually moves, so this is silent.
+            _sessionStateDue = true;
             _appReady = true;
             SendResponse(TASK_OFFSET_USB_CONTROLLER, cmd.opcode, cmd.msg_id, USB_RSP_OK);
             break;
@@ -200,6 +210,26 @@ void USBController::SendDeviceReady()
     };
     AddToBuffer<usb_msg_header_t>(&header, sizeof(header));
     AddToBuffer<usb_device_ready_event>(&evt, sizeof(evt));
+}
+
+void USBController::SendSessionState(bool inSession)
+{
+    session_state_event evt =
+    {
+        .timestamp = get_timestamp(),
+        .in_session = inSession ? 1u : 0u
+    };
+
+    StallIfIsBufferFull(IsBufferFull(sizeof(evt)));
+
+    usb_msg_header_t header =
+    {
+        .msg_type = USB_MSG_EVENT,
+        .task_offset = TASK_OFFSET_SESSION_CONTROLLER,
+        .payload_len = sizeof(evt)
+    };
+    AddToBuffer<usb_msg_header_t>(&header, sizeof(header));
+    AddToBuffer<session_state_event>(&evt, sizeof(evt));
 }
 
 void USBController::AnnounceReadyIfDue()
@@ -371,9 +401,22 @@ void USBController::Run()
         {
             SkipBufferedSensorData();
         }
+
+        // 6. Announce the session state: on every start/stop, and once more to a host that has just
+        //    handshaked (_sessionStateDue) even though nothing changed. Framed *before* this
+        //    iteration's samples below, so a start always reaches the host ahead of the data it
+        //    explains -- the host shows sensor readings only while it believes a session is running,
+        //    and samples that landed before the start event would be dropped as belonging to no
+        //    session. An edge that falls while no host is acked is not lost: the ack that follows
+        //    sets _sessionStateDue and the current state goes out then.
+        if (_appReady && (inSession != prevInSession || _sessionStateDue))
+        {
+            SendSessionState(inSession);
+            _sessionStateDue = false;
+        }
         prevInSession = inSession;
 
-        // 6. Stream sensor data once the host has handshaked *and* a session is running.
+        // 7. Stream sensor data once the host has handshaked *and* a session is running.
         if (_appReady && inSession)
         {
             #if !defined(OPTICAL_ENCODER_TASK_ENABLE)
@@ -398,7 +441,7 @@ void USBController::Run()
             #endif
         }
 
-        // 7. Health and faults are *not* sensor data: they are streamed to any handshaked host,
+        // 8. Health and faults are *not* sensor data: they are streamed to any handshaked host,
         //    session or not. A task dying, or a stack running out, is most worth seeing while the
         //    dyno sits idle -- and draining the task-monitor queue regardless also stops it from
         //    filling up and dropping samples between sessions.
@@ -414,7 +457,7 @@ void USBController::Run()
             ProcessErrorsAndWarnings();
         }
 
-        // 5. Flush whatever accumulated this iteration: command responses and/or
+        // 9. Flush whatever accumulated this iteration: command responses, session events and/or
         //    stream records. Nothing is transmitted when the buffer is empty.
         if (_txBufferIndex > 0)
         {
@@ -463,6 +506,10 @@ void USBController::MockMessages(const bool forever)
 
     // Wait for the host handshake before starting data transmission
     WaitForHandshake();
+
+    // There is no SessionController in the mock path, but the host only displays sensor data for a
+    // running session -- so say one is running, or the mock stream below arrives and is discarded.
+    SendSessionState(true);
 
     while(forever)
     {

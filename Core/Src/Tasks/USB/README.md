@@ -29,13 +29,20 @@ Each iteration:
 3. **Handshake gate:** while `!_appReady`, `AnnounceReadyIfDue()` emits a `usb_device_ready_event`
    (`USB_MSG_EVENT`, `TASK_OFFSET_USB_CONTROLLER`) about every `DEVICE_READY_ANNOUNCE_MS`.
 4. Pick up the SessionController's in-session flag; on session entry, `SkipBufferedSensorData()`.
-5. **Sensor data** — only while `_appReady && inSession`:
+5. **Session state** — `SendSessionState()` emits a `session_state_event` (`USB_MSG_EVENT`,
+   `TASK_OFFSET_SESSION_CONTROLLER`) on every start/stop, and again after any host ack
+   (`_sessionStateDue`) even when nothing changed. See *Session announcements* below.
+6. **Sensor data** — only while `_appReady && inSession`:
    - `optical_encoder_output_data` (`USB_MSG_STREAM`, `TASK_OFFSET_OPTICAL_ENCODER`)
    - `forcesensor_output_data` (`USB_MSG_STREAM`, active force-sensor offset)
    - `bpm_output_data`
-6. **Health + faults** — whenever `_appReady`, session or not: `task_monitor_output_data` and
+7. **Health + faults** — whenever `_appReady`, session or not: `task_monitor_output_data` and
    errors via `ProcessErrorsAndWarnings()`.
-7. `CDC_Transmit_FS(_txBuffer, …)`; delay `USB_TASK_OSDELAY`.
+8. `CDC_Transmit_FS(_txBuffer, …)`; delay `USB_TASK_OSDELAY`.
+
+Step 5 runs *before* step 6 on purpose: a session-start event is framed ahead of the samples it
+authorizes, so the host — which displays sensor data only while it believes a session is running —
+never receives a sample it would have to discard.
 
 ## What is gated on a session (and what is not)
 Sensor data is streamed **only while a session runs** — that is the only gate, and it is the
@@ -52,6 +59,28 @@ Because the sensor tasks sample continuously (SessionController enables them onc
 their circular buffers keep filling while no session runs. `SkipBufferedSensorData()` catches each
 reader up to its writer on session entry, so a session opens with live data instead of flushing a
 backlog of samples recorded — and timestamped — before it began.
+
+## Session announcements (`session_state_event`)
+Because sensor data only flows during a session, silence on the link is ambiguous: an idle dyno and
+a dead one look identical. So the device *says* which it is — `session_state_event{ timestamp,
+in_session }` as a `USB_MSG_EVENT` with `TASK_OFFSET_SESSION_CONTROLLER`, emitted:
+
+- **on every start and stop**, as the SessionController's in-session flag changes; and
+- **after every host `USB_CMD_ACK`**, even when the state has not changed (`_sessionStateDue`).
+
+The second case is what makes the state knowable rather than merely observable. A host that
+connects to a *steady* board — idle, or already mid-session — would otherwise be waiting on an edge
+that may never come. And since the host reuses `USB_CMD_ACK` as its 5 s keep-alive, re-stating the
+state on each one also makes it self-healing: a host that missed enough beats to declare the link
+lost drops its session state, while `_appReady` here stays set, so an edge-only announcement would
+never reach it again and a running session would look idle forever. The repeat costs 20 bytes; the
+host raises a change event only when the value actually moves, so it is silent.
+
+An edge that falls while no host is acked is not lost either: the ack that follows sets
+`_sessionStateDue`, and the current state goes out then.
+
+`MockMessages()` has no SessionController, so it announces `in_session = 1` once after the
+handshake — otherwise the host would gate away the entire mock stream.
 
 ## Handshake (device-announced)
 The firmware streams nothing until the host acknowledges it. While `_appReady` is false the
