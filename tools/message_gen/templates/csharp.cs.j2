@@ -1,0 +1,72 @@
+{#- C# target for the message_gen schema. Rendered by generate.py with trim_blocks +
+    lstrip_blocks ON, so a line holding only a {% %} tag emits nothing. generate.py has
+    already evaluated every constant expression and mapped every type, so this template
+    only prints. #defines become const fields on MessageConstants; enums and packed
+    structs become top-level types; static_asserts become the MessageContract size table.
+    C-only `code` sections are skipped. -#}
+// AUTO-GENERATED from tools/message_gen/schema/{{ schema_name }} by tools/message_gen/generate.py -- DO NOT EDIT.
+// Edit that schema in the stm32_dyno_firmware_v2 submodule, then run
+// tools/message_gen/generate.py (CI verifies the committed file matches the schema).
+//
+// Only the data contract is emitted: constants, enums and packed structs. The schema's
+// C-only `code` sections (extern "C" guards, the firmware populate helper, the
+// usb_frame_crc16 body) are skipped; the CRC is re-implemented in Dyno.Core/Protocol
+// using the generated USB_FRAME_CRC_* / USB_FRAME_SOF constants below.
+using System;
+using System.Runtime.InteropServices;
+
+namespace Dyno.Core.Messages;
+
+/// <summary>Protocol constants (the schema's #define section).</summary>
+public static class MessageConstants
+{
+{% for d in defines %}
+    public const uint {{ d.name }} = {{ d._csval }};   // {{ d.value }}{{ ("  -- " ~ d.comment) if d.comment else "" }}
+{% endfor %}
+}
+{% for s in sections %}
+{% if s.kind == "comment" %}
+
+{% for line in s.text.rstrip("\n").split("\n") %}
+// {{ line }}
+{% endfor %}
+{% elif s.kind == "enum" %}
+
+{% if s.comment %}
+{% for line in s.comment.rstrip("\n").split("\n") %}
+/// {{ line }}
+{% endfor %}
+{% endif %}
+public enum {{ s.name }} : {{ s._csbase }}
+{
+{% for v in s["values"] %}
+    {{ v.name }} = {{ v._csval }},{{ ("   // " ~ v.comment) if v.comment else "" }}
+{% endfor %}
+}
+{% elif s.kind == "struct" %}
+
+{% if s.comment %}
+{% for line in s.comment.rstrip("\n").split("\n") %}
+/// {{ line }}
+{% endfor %}
+{% endif %}
+[StructLayout(LayoutKind.Sequential{{ ", Pack = 1" if s.packed else "" }})]
+public struct {{ s.name }}
+{
+{% for f in s.fields %}
+    public {{ f._cstype }} {{ f.name }};{{ ("   // " ~ f.comment) if f.comment else "" }}
+{% endfor %}
+}
+{% endif %}
+{% endfor %}
+
+/// <summary>Wire sizes the schema asserts via static_assert; checked by the unit tests.</summary>
+public static class MessageContract
+{
+    public static readonly (Type Type, int Size)[] ExpectedSizes = new (Type, int)[]
+    {
+{% for t, n in sizes %}
+        (typeof({{ t }}), {{ n }}),
+{% endfor %}
+    };
+}

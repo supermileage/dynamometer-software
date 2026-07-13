@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Dyno.App/Dyno.App.csproj" />
+    <Project Path="src/Dyno.Core/Dyno.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Dyno.Core.Tests/Dyno.Core.Tests.csproj" />
+  </Folder>
+</Solution>

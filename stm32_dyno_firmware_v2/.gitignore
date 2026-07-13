@@ -1,0 +1,68 @@
+#settings
+.settings/
+
+#metadata
+.metadata/
+
+#Debug
+Debug/
+debug/
+Release/
+release/
+
+# CMake build output (build/ = native/IDE, build-docker/ = Scripts/build-docker.sh)
+build/
+build-docker/
+
+# build log
+build_log.txt
+
+# Prerequisites
+*.d
+
+# Object files
+*.o
+*.ko
+*.obj
+*.elf
+
+# Linker output
+*.ilk
+*.map
+*.exp
+
+# Libraries
+*.lib
+*.a
+*.la
+*.lo
+
+# Shared objects
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+*.bin
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Freemarker template files
+*.ftl
+
+# STM32CubeIDE temporary files
+MXTmpFiles/
+
+# vscode files
+.vscode/

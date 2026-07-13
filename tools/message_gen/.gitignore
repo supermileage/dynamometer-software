@@ -1,5 +1,4 @@
-# local toolchain + diff sandbox (not part of the build)
+# local toolchain (not part of the build)
 .venv/
-generated/
 __pycache__/
 *.pyc

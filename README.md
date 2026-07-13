@@ -1,110 +1,90 @@
-# STM32 Dyno Firmware v2
+# Dyno Software
 
-## Overview
-This repository contains the firmware for the STM32-based dynamometer project. It
-targets the **STM32H743IITx** microcontroller and uses FreeRTOS for real-time task
-management. The project is built with **CMake + Ninja** and the Arm GNU toolchain
-(`arm-none-eabi-gcc`); code is generated from the `.ioc` with **STM32CubeMX**.
+PC-side companion to [`stm32_dyno_firmware_v2`](https://github.com/supermileage/stm32_dyno_firmware_v2)
+(vendored here as a git submodule). It connects to the dynamometer's STM32 over USB-CDC,
+decodes its telemetry/error streams, and can send framed commands back. The UI is **Avalonia**
+(cross-platform .NET); the device logic lives in a UI-agnostic `Dyno.Core` library.
 
-## Cloning the Repository
-Include all submodules when cloning:
+The USB wire protocol is **not hand-maintained**: the firmware defines it once as a YAML
+schema and the C# message types are generated from that same schema (see
+[Regenerating message types](#regenerating-message-types)), so the host and firmware can't drift.
+
+## Layout
+| Path | What |
+|---|---|
+| `src/Dyno.Core/` | Device layer: serial, protocol parser + frame builder, generated message types. See [README](src/Dyno.Core/README.md). |
+| `src/Dyno.App/` | Avalonia desktop UI. See [README](src/Dyno.App/README.md). |
+| `tests/Dyno.Core.Tests/` | xUnit tests (struct sizes, CRC, error decode, parser). |
+| `tools/message_gen/` | YAML → C# codegen + drift guard. See [README](tools/message_gen/README.md). |
+| `stm32_dyno_firmware_v2/` | Firmware submodule — the wire-protocol **source of truth**. |
+
+## Cloning the repository
+The firmware schema lives in a submodule, so clone with submodules:
 
 ```bash
 git clone --recurse-submodules <repository-url>
 ```
 
-If you forgot the flag, initialize the submodules afterwards:
+If you forgot the flag:
 
 ```bash
 git submodule update --init --recursive
 ```
 
 ## Requirements
-You only need these to **build**:
+| Tool | Purpose | Install (Fedora) | Install (Ubuntu/Debian) | Install (Windows) |
+|------|---------|------------------|--------------------------|-------------------|
+| .NET SDK 10 | Build / run / test | `sudo dnf install dotnet-sdk-10.0` | [packages.microsoft.com](https://learn.microsoft.com/dotnet/core/install/linux) | `winget install Microsoft.DotNet.SDK.10` |
+| Python 3 + venv | Only to **regenerate** message types | `sudo dnf install python3` | `sudo apt install python3 python3-venv` | `winget install Python.Python.3.13` |
 
-| Tool | Purpose | Install (Fedora) | Install (Ubuntu/Debian) |
-|------|---------|------------------|--------------------------|
-| Arm GNU toolchain | Compiler/linker | `sudo dnf install arm-none-eabi-gcc-cs arm-none-eabi-newlib` | `sudo apt install gcc-arm-none-eabi` |
-| CMake (≥ 3.22) | Build system | `sudo dnf install cmake` | `sudo apt install cmake` |
-| Ninja | Build backend | `sudo dnf install ninja-build` | `sudo apt install ninja-build` |
+On **Linux**, opening a serial port needs the user in the `dialout` group:
+`sudo usermod -aG dialout "$USER"` (re-login afterwards).
+On **Windows** no setup is needed: the board's USB-CDC interface enumerates as a
+`COMx` port with the inbox `usbser.sys` driver.
 
-Additional, only if you need them:
-- **STM32CubeMX** — to regenerate code after editing `stm32_dyno_firmware_v2.ioc`
-  ([download](https://www.st.com/en/development-tools/stm32cubemx.html)). Not in
-  apt/dnf; the download requires a free ST (myST) account.
-- A **flashing tool** — to program the board. The open-source options
-  (`stlink`, `openocd`, `dfu-util`, `stm32flash`) install from apt/dnf with no
-  account; **STM32CubeProgrammer is _not_ available via apt/dnf** and requires a
-  free ST account to download. See [Flashing the Firmware](#flashing-the-firmware).
-
-## Building the Project
-
-### Native build (CMake)
+## Building the project
 The same commands work on Linux, macOS and Windows:
 ```bash
-cmake --preset Debug            # configure (use Release for the release build)
-cmake --build --preset Debug    # build
-rm -rf build                    # clean
+dotnet build Dyno.slnx            # build everything (Debug)
+dotnet test  Dyno.slnx            # run the unit tests
+dotnet build Dyno.slnx -c Release # release build
 ```
-Presets (`Debug`, `Release`) are defined in `CMakePresets.json`; the Arm toolchain
-file is `cmake/gcc-arm-none-eabi.cmake`.
 
-Build output is written to `build/<CONFIG>/`:
-- `stm32_dyno_firmware_v2.elf`
-- `stm32_dyno_firmware_v2.hex`
-- `stm32_dyno_firmware_v2.bin`
-- `stm32_dyno_firmware_v2.map`
-
-### Reproducible build (Docker)
-Requires only Docker — no host toolchain. The `Dockerfile` pins the Arm GNU
-toolchain, CMake and Ninja, and CI builds inside this same image:
+## Running the app
 ```bash
-./Scripts/build-docker.sh            # Debug
-./Scripts/build-docker.sh Release
+./Scripts/run.sh                 # Linux/macOS
+Scripts\run.ps1                  # Windows (PowerShell)
 ```
-The repo is bind-mounted, so output still lands in `build/<CONFIG>/` on the host.
-On Windows run it from Git Bash/WSL. (On SELinux hosts the script adds the
-required `:z` mount option automatically.)
-
-## Regenerating Code from the `.ioc`
-The toolchain in the `.ioc` is set to **CMake**. After editing the design in
-STM32CubeMX, click **Generate Code** to refresh the HAL/driver sources and
-`cmake/stm32cubemx/CMakeLists.txt`. Your edits in the top-level `CMakeLists.txt`
-(and inside `USER CODE BEGIN/END` blocks) are preserved.
-
-To regenerate headlessly from the command line, drive STM32CubeMX with a script:
+The GUI needs a display (X11/Wayland on Linux) and a connected board to show live data.
+End users get native, per-RID self-contained builds:
 ```bash
-printf 'config load %s/stm32_dyno_firmware_v2.ioc\nproject generate\nexit\n' "$PWD" > /tmp/gen.txt
-/path/to/STM32CubeMX -q /tmp/gen.txt
+dotnet publish src/Dyno.App/Dyno.App.csproj -c Release -r linux-x64 --self-contained
+dotnet publish src/Dyno.App/Dyno.App.csproj -c Release -r win-x64   --self-contained
 ```
 
-## Flashing the Firmware
-Build once, then flash the generated binary — **no rebuild needed**. Three methods
-(SWD via ST-Link, USB DFU, or UART) work on Linux and Windows; you pick the method
-and tool explicitly.
-
+## Regenerating message types
+The committed `src/Dyno.Core/Messages/Generated/Messages.cs` is generated from the firmware
+submodule's `messages_public.yaml`. After bumping the submodule (or changing the schema):
 ```bash
-./Scripts/build-docker.sh Debug                 # build → build-docker/Debug/*.elf,*.bin
-./Scripts/flash.sh Debug swd --tool st-flash    # flash that image (no rebuild)
+./Scripts/generate.sh            # Linux/macOS
+Scripts\generate.ps1             # Windows (PowerShell)
 ```
-```powershell
-.\Scripts\flash.ps1 -Config Debug -Method swd -Tool st-flash
-```
+CI fails if the committed file is out of sync (`python tools/message_gen/check.py`). Details:
+[tools/message_gen/README.md](tools/message_gen/README.md).
 
-The open-source tools (`st-flash`, `openocd`, `dfu-util`, `stm32flash`) install
-from apt/dnf with no account; **STM32CubeProgrammer is _not_ in apt/dnf and needs
-a free ST account**. On Linux, USB access also needs a one-time udev-rule / group
-setup.
-
-See **[Scripts/README.md](Scripts/README.md)** for the full guide: installing each
-tool, choosing among multiple connected probes, device discovery, the CMake
-`flash` targets, and **Linux USB permissions**.
-
-## Continuous Integration
-`.github/workflows/build.yml` builds both `Debug` and `Release` with CMake on every
-push/PR and uploads the resulting firmware as workflow artifacts.
+## Continuous integration
+`.github/workflows/build.yml`:
+- **codegen** — verifies `Messages.cs` matches the schema (drift guard).
+- **build & test** — `dotnet build`/`test` on **Ubuntu and Windows**, then publishes the app
+  per RID (`linux-x64`, `win-x64`) as workflow artifacts.
 
 ## Notes
-- Ensure all submodules are initialized and updated before building.
-- The build is IDE-independent. The project can still be opened in STM32CubeIDE
-  1.15+ via **File → Import → Import CMake Project**, but that is optional.
+- Initialize the submodule before building or regenerating types.
+- On connect the firmware announces itself and the host replies with a version-checked `USB_CMD_ACK`
+  handshake; no telemetry streams until it completes, and a `USB_PROTOCOL_VERSION` mismatch refuses
+  the link rather than mis-decoding the stream.
+- Sensor data streams **only while the dyno is running a session**. The device announces each
+  session start/stop (and re-states it after every ack), so the app can show whether a session is on
+  and hide the readouts when it is not — an idle board and a dead one otherwise look identical.
+- `Dyno.Core` has no UI dependency, so it can be driven headlessly or from another front-end.
+- Target framework is `net10.0`; the solution uses the `.slnx` (XML) solution format.

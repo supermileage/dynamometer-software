@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Prove a generated C# file matches a reference, ignoring comments + whitespace.
+"""Prove the generated header matches a reference, ignoring comments + whitespace.
 
-Used as a CI drift guard: regenerate to a temp file, then `verify.py committed.cs temp.cs`
-fails the build if someone hand-edited the generated file instead of the schema.
+Used two ways:
+  * one-off faithfulness check against the hand-written header
+  * CI drift guard: regenerate to a temp file, then `verify.py committed.h temp.h`
+    fails the build if someone hand-edited the generated header instead of the schema.
 
-It compares the two files as token streams: comments are stripped, all whitespace
-(including brace placement) is irrelevant, and a trailing comma before `}` is treated as
-optional. An empty diff therefore means the two files declare the same C# -- same types,
-fields, enum values and sizes -- regardless of formatting. C and C# share the `//` and
-`/* */` comment syntax, so the same normalizer serves both the firmware and this repo.
+It compares the two files as C token streams: comments are stripped, all whitespace
+(including brace placement) is irrelevant, and a trailing comma before `}` is treated
+as optional (it is insignificant in C). An empty diff therefore means the two files
+declare the same C -- same types, fields, enum values, sizes and static_asserts --
+regardless of formatting, which the hand-written header is not internally consistent
+about anyway.
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ import sys
 from pathlib import Path
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
-# A token: string literal, identifier/number, or a single punctuation char.
+# A C token: string literal, identifier/number, or a single punctuation char.
 _TOKEN = re.compile(r'"[^"]*"|[A-Za-z_]\w*|\d+|\S')
 
 
@@ -37,7 +40,7 @@ def normalize(src: str) -> list[str]:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
-        print("usage: verify.py <reference.cs> <generated.cs>", file=sys.stderr)
+        print("usage: verify.py <reference.h> <generated.h>", file=sys.stderr)
         return 2
     ref, gen = (normalize(Path(p).read_text()) for p in argv)
     diff = list(difflib.unified_diff(ref, gen, argv[0], argv[1], lineterm=""))
@@ -45,7 +48,7 @@ def main(argv: list[str]) -> int:
         print("\n".join(diff))
         print(f"\nFAIL: {len(diff)} normalized diff lines", file=sys.stderr)
         return 1
-    print(f"OK: semantically identical ({len(ref)} normalized tokens)")
+    print(f"OK: semantically identical ({len(ref)} normalized lines)")
     return 0
 
 

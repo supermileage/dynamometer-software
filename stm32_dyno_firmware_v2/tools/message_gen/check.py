@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""CI drift guard: every committed generated file must match what its schema generates.
+"""CI drift guard: every committed header must match what its schema generates.
 
-For each target it renders from the schema and compares against the committed file as a
-token stream (comments, whitespace and trailing-comma style ignored -- see
-verify.normalize). Exits non-zero on any drift, names the file, prints the diff, and says
-how to fix it. No temp files, no compiler needed.
+For each target it renders the header from the schema and compares it against the
+committed file as a C token stream (comments, whitespace and trailing-comma style are
+ignored -- see verify.normalize). Exits non-zero on any drift, names the file, prints
+the offending diff, and says how to fix it. No temp files, no compiler needed.
 
     python tools/message_gen/check.py
 """
@@ -44,13 +44,13 @@ def main() -> int:
 
     if failed:
         print(
-            f"\n{len(failed)} file(s) out of sync: {', '.join(failed)}\n"
+            f"\n{len(failed)} header(s) out of sync: {', '.join(failed)}\n"
             "Regenerate and commit:  python tools/message_gen/generate.py",
             file=sys.stderr,
         )
         return 1
 
-    print(f"\nAll {len(TARGETS)} generated file(s) are in sync with their schemas.")
+    print(f"\nAll {len(TARGETS)} generated headers are in sync with their schemas.")
     return 0
 
 

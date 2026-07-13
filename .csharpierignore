@@ -1,0 +1,9 @@
+# Build output
+**/bin/
+**/obj/
+
+# Firmware submodule (C/C++, not ours)
+stm32_dyno_firmware_v2/
+
+# Generated code — its format is owned by the message_gen template, not CSharpier.
+src/Dyno.Core/Messages/Generated/
