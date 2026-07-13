@@ -1,5 +1,5 @@
 // AUTO-GENERATED from tools/message_gen/schema/messages_public.yaml by tools/message_gen/generate.py -- DO NOT EDIT.
-// Edit that schema in the stm32_dyno_firmware_v2 submodule, then run
+// Edit that schema in the stm32_dyno_firmware_v2 firmware tree, then run
 // tools/message_gen/generate.py (CI verifies the committed file matches the schema).
 //
 // Only the data contract is emitted: constants, enums and packed structs. The schema's

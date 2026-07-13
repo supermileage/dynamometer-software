@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the C# message-passing / USB wire-protocol types from the firmware's YAML schema.
 
-Single source of truth: the firmware repo's schema, vendored as a git submodule at
+Single source of truth: the firmware's schema, which lives in this repo at
     stm32_dyno_firmware_v2/tools/message_gen/schema/messages_public.yaml
 The firmware renders that same schema to a C header (messages_public.h); this script
 renders it to C# (src/Dyno.Core/Messages/Generated/Messages.cs) so the host and the

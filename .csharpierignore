@@ -2,7 +2,7 @@
 **/bin/
 **/obj/
 
-# Firmware submodule (C/C++, not ours)
+# Firmware tree (C/C++, not CSharpier's concern)
 stm32_dyno_firmware_v2/
 
 # Generated code — its format is owned by the message_gen template, not CSharpier.

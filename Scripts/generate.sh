@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regenerate the C# message types from the firmware's YAML schema (writes
-# src/Dyno.Core/Messages/Generated/Messages.cs). Run after bumping the submodule.
-# Requires the submodule to be initialized. Usage: ./Scripts/generate.sh [generate.py args]
+# src/Dyno.Core/Messages/Generated/Messages.cs). Run after changing the schema.
+# Usage: ./Scripts/generate.sh [generate.py args]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

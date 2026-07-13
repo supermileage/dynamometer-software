@@ -1,6 +1,6 @@
 # Regenerate the C# message types from the firmware's YAML schema (writes
 # src/Dyno.Core/Messages/Generated/Messages.cs). Windows counterpart of generate.sh.
-# Requires the submodule to be initialized. Usage: Scripts\generate.ps1 [generate.py args]
+# Usage: Scripts\generate.ps1 [generate.py args]
 $ErrorActionPreference = 'Stop'
 
 Push-Location (Join-Path $PSScriptRoot '..\tools\message_gen')

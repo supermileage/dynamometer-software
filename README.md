@@ -1,7 +1,7 @@
 # Dyno Software
 
-PC-side companion to [`stm32_dyno_firmware_v2`](https://github.com/supermileage/stm32_dyno_firmware_v2)
-(vendored here as a git submodule). It connects to the dynamometer's STM32 over USB-CDC,
+PC-side companion to the STM32 dynamometer firmware, which lives in this repo under
+[`stm32_dyno_firmware_v2/`](stm32_dyno_firmware_v2/). It connects to the dynamometer's STM32 over USB-CDC,
 decodes its telemetry/error streams, and can send framed commands back. The UI is **Avalonia**
 (cross-platform .NET); the device logic lives in a UI-agnostic `Dyno.Core` library.
 
@@ -16,20 +16,7 @@ schema and the C# message types are generated from that same schema (see
 | `src/Dyno.App/` | Avalonia desktop UI. See [README](src/Dyno.App/README.md). |
 | `tests/Dyno.Core.Tests/` | xUnit tests (struct sizes, CRC, error decode, parser). |
 | `tools/message_gen/` | YAML → C# codegen + drift guard. See [README](tools/message_gen/README.md). |
-| `stm32_dyno_firmware_v2/` | Firmware submodule — the wire-protocol **source of truth**. |
-
-## Cloning the repository
-The firmware schema lives in a submodule, so clone with submodules:
-
-```bash
-git clone --recurse-submodules <repository-url>
-```
-
-If you forgot the flag:
-
-```bash
-git submodule update --init --recursive
-```
+| `stm32_dyno_firmware_v2/` | STM32 firmware — the wire-protocol **source of truth**. See [README](stm32_dyno_firmware_v2/README.md). |
 
 ## Requirements
 | Tool | Purpose | Install (Fedora) | Install (Ubuntu/Debian) | Install (Windows) |
@@ -63,8 +50,8 @@ dotnet publish src/Dyno.App/Dyno.App.csproj -c Release -r win-x64   --self-conta
 ```
 
 ## Regenerating message types
-The committed `src/Dyno.Core/Messages/Generated/Messages.cs` is generated from the firmware
-submodule's `messages_public.yaml`. After bumping the submodule (or changing the schema):
+The committed `src/Dyno.Core/Messages/Generated/Messages.cs` is generated from the firmware's
+`messages_public.yaml`. After changing the schema:
 ```bash
 ./Scripts/generate.sh            # Linux/macOS
 Scripts\generate.ps1             # Windows (PowerShell)
@@ -78,8 +65,11 @@ CI fails if the committed file is out of sync (`python tools/message_gen/check.p
 - **build & test** — `dotnet build`/`test` on **Ubuntu and Windows**, then publishes the app
   per RID (`linux-x64`, `win-x64`) as workflow artifacts.
 
+`.github/workflows/firmware.yml`:
+- **generated-headers** — verifies the firmware's committed headers match the schema.
+- **build** — Docker-toolchain firmware builds (Debug and Release), uploaded as workflow artifacts.
+
 ## Notes
-- Initialize the submodule before building or regenerating types.
 - On connect the firmware announces itself and the host replies with a version-checked `USB_CMD_ACK`
   handshake; no telemetry streams until it completes, and a `USB_PROTOCOL_VERSION` mismatch refuses
   the link rather than mis-decoding the stream.
