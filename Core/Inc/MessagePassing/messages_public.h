@@ -172,8 +172,13 @@ _Static_assert(sizeof(usb_msg_header_t) == 12, "Size of usb_msg_header_t must be
 // so a host built against an older schema is rejected at the handshake instead of
 // silently mis-decoding the stream. Build-time static_asserts guard struct sizes;
 // this guards the live link at runtime.
+// 
+// v2 added session_state_event. The bump matters in the *forward* direction: a v2 host
+// shows sensor data only while it believes a session is running, so against v1 firmware
+// -- which never announces session state -- it would sit blank forever. Refusing the
+// handshake says why, instead of looking like a dead sensor.
 
-#define USB_PROTOCOL_VERSION 1u
+#define USB_PROTOCOL_VERSION 2u
 
 // Shared CRC so firmware and host compute identical checksums over a frame body.
 
@@ -248,6 +253,20 @@ typedef struct {
 } usb_device_ready_event;
 
 _Static_assert(sizeof(usb_device_ready_event) == 4, "Size of usb_device_ready_event must be 4 bytes");
+
+// Session start/stop announcement (STM32 -> PC): emitted as USB_MSG_EVENT with task_offset
+// TASK_OFFSET_SESSION_CONTROLLER whenever the dyno enters or leaves a session, and once more
+// immediately after the host handshakes -- even when nothing changed. Sensor data only flows
+// while a session runs, so without that post-handshake announcement a host connecting to an
+// idle board could not tell "no session" from "board is dead", and one connecting mid-session
+// would discard the samples it is being sent while it waits for a start it already missed.
+
+typedef struct {
+    uint32_t timestamp;
+    uint32_t in_session;   // 1 = session running, 0 = idle
+} session_state_event;
+
+_Static_assert(sizeof(session_state_event) == 4 + 4, "Size of session_state_event must be 8 bytes");
 
 // Force-sensor (ADS1115) commands: frames addressed to TASK_OFFSET_FORCE_SENSOR_ADS1115.
 typedef enum : uint16_t

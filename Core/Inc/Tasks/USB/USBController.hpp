@@ -65,6 +65,11 @@ class USBController
         // host watches for this and replies USB_CMD_ACK to start the link.
         void SendDeviceReady();
 
+        // Frame a USB_MSG_EVENT carrying session_state_event{in_session}. Sensor data only leaves
+        // the board during a session, so this is what tells the host whether the silence it sees is
+        // an idle dyno or a broken one -- and, at a start, that the samples now arriving are live.
+        void SendSessionState(bool inSession);
+
         // While the host has not yet handshaked, re-announce device-ready at most every
         // DEVICE_READY_ANNOUNCE_MS so a host that connects late still sees one. No-op once ready.
         void AnnounceReadyIfDue();
@@ -144,6 +149,11 @@ class USBController
 
         bool _appReady;            // set once the host completes the USB_CMD_ACK handshake
         uint32_t _lastAnnounceTick; // tick of the last device-ready announce (AnnounceReadyIfDue)
+
+        // Set by every host ack: the next loop re-states the session state even though nothing
+        // changed, so a host that just connected (or one that lost and regained the link) is never
+        // left waiting on an edge it cannot see.
+        bool _sessionStateDue;
 };
 
 #endif // INC_TASKS_USB_USBCONTROLLER_HPP_

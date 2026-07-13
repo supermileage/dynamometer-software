@@ -212,7 +212,12 @@ sections:
       silently mis-decoding the stream. Build-time static_asserts guard struct sizes;
       this guards the live link at runtime.
 
-  - { kind: define, name: USB_PROTOCOL_VERSION, value: "1u" }
+      v2 added session_state_event. The bump matters in the *forward* direction: a v2 host
+      shows sensor data only while it believes a session is running, so against v1 firmware
+      -- which never announces session state -- it would sit blank forever. Refusing the
+      handshake says why, instead of looking like a dead sensor.
+
+  - { kind: define, name: USB_PROTOCOL_VERSION, value: "2u" }
 
   - kind: comment
     text: |-
@@ -307,6 +312,23 @@ sections:
       - { type: uint32_t, name: protocol_version, comment: "== USB_PROTOCOL_VERSION" }
 
   - { kind: static_assert, expr: "sizeof(usb_device_ready_event) == 4", message: "Size of usb_device_ready_event must be 4 bytes" }
+
+  - kind: comment
+    text: |-
+      Session start/stop announcement (STM32 -> PC): emitted as USB_MSG_EVENT with task_offset
+      TASK_OFFSET_SESSION_CONTROLLER whenever the dyno enters or leaves a session, and once more
+      immediately after the host handshakes -- even when nothing changed. Sensor data only flows
+      while a session runs, so without that post-handshake announcement a host connecting to an
+      idle board could not tell "no session" from "board is dead", and one connecting mid-session
+      would discard the samples it is being sent while it waits for a start it already missed.
+
+  - kind: struct
+    name: session_state_event
+    fields:
+      - { type: uint32_t, name: timestamp }
+      - { type: uint32_t, name: in_session, comment: "1 = session running, 0 = idle" }
+
+  - { kind: static_assert, expr: "sizeof(session_state_event) == 4 + 4", message: "Size of session_state_event must be 8 bytes" }
 
   - kind: enum
     name: force_sensor_command_opcode
