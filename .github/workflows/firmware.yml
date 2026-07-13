@@ -17,10 +17,10 @@ jobs:
           python-version: '3.x'
 
       - name: Install codegen dependencies
-        run: pip install -r stm32_dyno_firmware_v2/tools/message_gen/requirements.txt
+        run: pip install -r firmware/tools/message_gen/requirements.txt
 
       - name: Verify committed headers match their schema
-        run: python stm32_dyno_firmware_v2/tools/message_gen/check.py
+        run: python firmware/tools/message_gen/check.py
 
   build:
     name: build (${{ matrix.config }})
@@ -38,7 +38,7 @@ jobs:
       - name: Build toolchain image
         uses: docker/build-push-action@v6
         with:
-          context: stm32_dyno_firmware_v2
+          context: firmware
           load: true
           tags: stm32-dyno-builder:latest
           cache-from: type=gha
@@ -47,7 +47,7 @@ jobs:
       - name: Build ${{ matrix.config }}
         run: |
           docker run --rm \
-            -v "${{ github.workspace }}:/repo:z" -w /repo/stm32_dyno_firmware_v2 \
+            -v "${{ github.workspace }}:/repo:z" -w /repo/firmware \
             --user "$(id -u):$(id -g)" -e HOME=/tmp \
             stm32-dyno-builder:latest \
             bash -lc "python3 tools/message_gen/generate.py && cmake --preset ${{ matrix.config }} -B build-docker/${{ matrix.config }} && cmake --build build-docker/${{ matrix.config }}"
@@ -57,8 +57,8 @@ jobs:
         with:
           name: firmware-${{ matrix.config }}
           path: |
-            stm32_dyno_firmware_v2/build-docker/${{ matrix.config }}/*.elf
-            stm32_dyno_firmware_v2/build-docker/${{ matrix.config }}/*.hex
-            stm32_dyno_firmware_v2/build-docker/${{ matrix.config }}/*.bin
-            stm32_dyno_firmware_v2/build-docker/${{ matrix.config }}/*.map
+            firmware/build-docker/${{ matrix.config }}/*.elf
+            firmware/build-docker/${{ matrix.config }}/*.hex
+            firmware/build-docker/${{ matrix.config }}/*.bin
+            firmware/build-docker/${{ matrix.config }}/*.map
           if-no-files-found: error

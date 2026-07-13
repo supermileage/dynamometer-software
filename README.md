@@ -1,7 +1,7 @@
 # Dyno Software
 
 PC-side companion to the STM32 dynamometer firmware, which lives in this repo under
-[`stm32_dyno_firmware_v2/`](stm32_dyno_firmware_v2/). It connects to the dynamometer's STM32 over USB-CDC,
+[`firmware/`](firmware/). It connects to the dynamometer's STM32 over USB-CDC,
 decodes its telemetry/error streams, and can send framed commands back. The UI is **Avalonia**
 (cross-platform .NET); the device logic lives in a UI-agnostic `Dyno.Core` library.
 
@@ -16,7 +16,7 @@ schema and the C# message types are generated from that same schema (see
 | `src/Dyno.App/` | Avalonia desktop UI. See [README](src/Dyno.App/README.md). |
 | `tests/Dyno.Core.Tests/` | xUnit tests (struct sizes, CRC, error decode, parser). |
 | `tools/message_gen/` | YAML → C# codegen + drift guard. See [README](tools/message_gen/README.md). |
-| `stm32_dyno_firmware_v2/` | STM32 firmware — the wire-protocol **source of truth**. See [README](stm32_dyno_firmware_v2/README.md). |
+| `firmware/` | STM32 firmware — the wire-protocol **source of truth**. See [README](firmware/README.md). |
 
 ## Requirements
 | Tool | Purpose | Install (Fedora) | Install (Ubuntu/Debian) | Install (Windows) |

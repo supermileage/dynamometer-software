@@ -17,7 +17,7 @@ renders the **same schema** to C# so the PC software and the firmware can never 
 about the protocol.
 
 ```
-stm32_dyno_firmware_v2/tools/message_gen/schema/messages_public.yaml
+firmware/tools/message_gen/schema/messages_public.yaml
         │  (read from the firmware tree — the single source of truth)
         ▼  templates/csharp.cs.j2
 src/Dyno.Core/Messages/Generated/Messages.cs   (committed, CI-checked)
@@ -34,7 +34,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python check.py                                     # CI drift guard (no temp files)
 ```
 
-The schema lives in the firmware tree at `stm32_dyno_firmware_v2/tools/message_gen/schema/`.
+The schema lives in the firmware tree at `firmware/tools/message_gen/schema/`.
 After a protocol change, rerun `generate.py` and commit the regenerated `Messages.cs`.
 
 ## What it emits
@@ -76,4 +76,4 @@ someone hand-edits `Messages.cs` instead of the schema, the build fails and name
 ## Related
 
 [[Dyno.Core]] consumes `Messages.cs`. The schema and its full reference live in the
-firmware tree under `stm32_dyno_firmware_v2/tools/message_gen/`.
+firmware tree under `firmware/tools/message_gen/`.

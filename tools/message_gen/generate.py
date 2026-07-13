@@ -2,7 +2,7 @@
 """Generate the C# message-passing / USB wire-protocol types from the firmware's YAML schema.
 
 Single source of truth: the firmware's schema, which lives in this repo at
-    stm32_dyno_firmware_v2/tools/message_gen/schema/messages_public.yaml
+    firmware/tools/message_gen/schema/messages_public.yaml
 The firmware renders that same schema to a C header (messages_public.h); this script
 renders it to C# (src/Dyno.Core/Messages/Generated/Messages.cs) so the host and the
 firmware can never drift.
@@ -36,7 +36,7 @@ from jinja2 import Environment, FileSystemLoader
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
-SCHEMA_DIR = REPO / "stm32_dyno_firmware_v2" / "tools" / "message_gen" / "schema"
+SCHEMA_DIR = REPO / "firmware" / "tools" / "message_gen" / "schema"
 OUT_DIR = REPO / "src" / "Dyno.Core" / "Messages" / "Generated"
 
 # target -> (schema file, template file, default output). One generic template drives
