@@ -1,8 +1,18 @@
-# Set all text files to use LF in the repository
-* text=auto
+# Normalize line endings to LF in the repository.
+* text=auto eol=lf
 
-# Optionally, force certain file types to always have LF
-*.c    text eol=lf
-*.h    text eol=lf
-*.mxproject text eol=lf
-*.ioc text eol=lf
+*.cs    text eol=lf
+*.csproj text eol=lf
+*.props text eol=lf
+*.slnx  text eol=lf
+*.axaml text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.sh    text eol=lf
+*.py    text eol=lf
+*.ps1   text eol=lf
+
+# Binary assets
+*.png binary
+*.ico binary

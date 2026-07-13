@@ -1,9 +1,21 @@
 #!/usr/bin/env python3
-"""Generate C headers for the USB / message-passing wire protocol from a YAML schema.
+"""Generate the C# message-passing / USB wire-protocol types from the firmware's YAML schema.
 
-Single source of truth: tools/message_gen/schema/*.yaml. Edit the schema, run this,
-and the C header is regenerated. Later the same schema can also emit the host-side
-parser from a second template, so the two can never drift.
+Single source of truth: the firmware's schema, which lives in this repo at
+    firmware/tools/message_gen/schema/messages_public.yaml
+The firmware renders that same schema to a C header (messages_public.h); this script
+renders it to C# (src/Dyno.Core/Messages/Generated/Messages.cs) so the host and the
+firmware can never drift.
+
+Why the values are evaluated instead of copied verbatim: the schema's #define / enum
+expressions are C (e.g. `0xFFFFu << TASK_OFFSET_SHIFT`). C and C# disagree on integer
+suffixes and shift-operand types, so a verbatim copy would not compile. Each constant
+expression is therefore evaluated here (small, trusted, schema-only inputs) and emitted
+as a concrete C# literal, with the original C expression preserved as a comment.
+
+C-only `code` sections (extern "C" guards, the firmware populate helper, the
+usb_frame_crc16 body) are skipped; the CRC is re-implemented once in Dyno.Core using
+the generated USB_FRAME_CRC_* constants.
 
 Usage:
     generate.py                      # regenerate every target into the tree
@@ -15,6 +27,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -23,33 +36,104 @@ from jinja2 import Environment, FileSystemLoader
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
-MSG_DIR = REPO / "Core" / "Inc" / "MessagePassing"
+SCHEMA_DIR = REPO / "firmware" / "tools" / "message_gen" / "schema"
+OUT_DIR = REPO / "src" / "Dyno.Core" / "Messages" / "Generated"
 
 # target -> (schema file, template file, default output). One generic template drives
-# every header; add the C++ host parser here later as its own (schema, template, out).
+# every header; add messages_private the same way if the host ever needs those types.
 TARGETS = {
     "messages_public": (
-        HERE / "schema" / "messages_public.yaml",
-        "header.h.j2",
-        MSG_DIR / "messages_public.h",
-    ),
-    "messages_private": (
-        HERE / "schema" / "messages_private.yaml",
-        "header.h.j2",
-        MSG_DIR / "messages_private.h",
+        SCHEMA_DIR / "messages_public.yaml",
+        "csharp.cs.j2",
+        OUT_DIR / "Messages.cs",
     ),
 }
+
+# C type -> C# type for struct fields. Names not in the map (e.g. task_offset_t,
+# usb_msg_type_t) are generated enums and pass through unchanged.
+_CS_TYPES = {
+    "uint8_t": "byte", "int8_t": "sbyte",
+    "uint16_t": "ushort", "int16_t": "short",
+    "uint32_t": "uint", "int32_t": "int",
+    "uint64_t": "ulong", "int64_t": "long",
+    "int": "int", "float": "float", "double": "double",
+}
+# C enum base -> C# enum base.
+_CS_BASE = {
+    "uint8_t": "byte", "int8_t": "sbyte",
+    "uint16_t": "ushort", "int16_t": "short",
+    "uint32_t": "uint", "int32_t": "int",
+}
+
+# An integer literal with a C suffix (123u, 0xFFFFUL): drop the suffix so Python can eval it.
+_SUFFIX = re.compile(r"\b(0[xX][0-9a-fA-F]+|\d+)[uUlL]+")
+_SIZEOF = re.compile(r"\s*sizeof\(\s*(\w+)\s*\)\s*==\s*(.+)")
+
+
+def _eval_c(expr: str, symbols: dict[str, int]) -> int:
+    """Evaluate a C constant integer expression against already-defined symbols."""
+    return int(eval(_SUFFIX.sub(r"\1", str(expr)), {"__builtins__": {}}, dict(symbols)))
+
+
+def _fmt(val: int) -> str:
+    """Format an unsigned int as a readable C# literal (hex for mask-sized values)."""
+    return f"0x{val:X}" if val >= 256 else str(val)
+
+
+def prepare(schema: dict) -> tuple[list, list]:
+    """Annotate the schema in place with computed C# literals/types and return
+    (defines, sizes) for the template. `symbols` accumulates every #define and enum
+    value so later expressions can reference earlier ones, exactly as C does."""
+    symbols: dict[str, int] = {}
+    defines: list = []
+
+    for s in schema["sections"]:
+        kind = s.get("kind")
+        if kind == "define":
+            val = _eval_c(s["value"], symbols)
+            symbols[s["name"]] = val
+            s["_csval"] = _fmt(val) + "u"
+            defines.append(s)
+        elif kind == "enum":
+            current = -1
+            for v in s["values"]:
+                if v.get("value") is not None:
+                    current = _eval_c(v["value"], symbols)
+                else:
+                    current += 1  # C enum auto-increment
+                v["_csval"] = _fmt(current)
+                symbols[v["name"]] = current
+            s["_csbase"] = _CS_BASE[s["base"]]
+        elif kind == "struct":
+            for f in s["fields"]:
+                if f.get("array"):
+                    raise NotImplementedError(
+                        f"array struct fields are not supported by the C# target yet: "
+                        f"{s['name']}.{f['name']}"
+                    )
+                f["_cstype"] = _CS_TYPES.get(f["type"], f["type"])
+
+    sizes: list = []
+    for s in schema["sections"]:
+        if s.get("kind") == "static_assert":
+            m = _SIZEOF.match(s["expr"])
+            if m:
+                sizes.append((m.group(1), _eval_c(m.group(2), symbols)))
+    return defines, sizes
 
 
 def render(schema_path: Path, template_name: str) -> str:
     schema = yaml.safe_load(schema_path.read_text())
+    defines, sizes = prepare(schema)
     env = Environment(
         loader=FileSystemLoader(HERE / "templates"),
         trim_blocks=True,
         lstrip_blocks=True,
         keep_trailing_newline=True,
     )
-    return env.get_template(template_name).render(schema_name=schema_path.name, **schema)
+    return env.get_template(template_name).render(
+        schema_name=schema_path.name, defines=defines, sizes=sizes, **schema
+    )
 
 
 def main(argv: list[str]) -> int:

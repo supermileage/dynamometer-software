@@ -1,0 +1,103 @@
+<Application
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  x:Class="Dyno.App.App"
+  RequestedThemeVariant="Dark"
+>
+  <Application.Resources>
+    <!-- Dyno palette: a single deep, desaturated dark scheme shared across the UI. -->
+    <Color x:Key="AppBackgroundColor">#0E1013</Color>
+    <Color x:Key="SurfaceColor">#171A20</Color>
+    <Color x:Key="SurfaceRaisedColor">#1E222B</Color>
+    <Color x:Key="StrokeColor">#2A2F3A</Color>
+    <Color x:Key="TextPrimaryColor">#E7EAF0</Color>
+    <Color x:Key="TextMutedColor">#8892A2</Color>
+    <Color x:Key="AccentColor">#4C8DFF</Color>
+
+    <SolidColorBrush x:Key="AppBackgroundBrush" Color="{StaticResource AppBackgroundColor}" />
+    <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource SurfaceColor}" />
+    <SolidColorBrush x:Key="SurfaceRaisedBrush" Color="{StaticResource SurfaceRaisedColor}" />
+    <SolidColorBrush x:Key="StrokeBrush" Color="{StaticResource StrokeColor}" />
+    <SolidColorBrush x:Key="TextPrimaryBrush" Color="{StaticResource TextPrimaryColor}" />
+    <SolidColorBrush x:Key="TextMutedBrush" Color="{StaticResource TextMutedColor}" />
+    <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}" />
+
+    <!-- Steer Fluent's built-in accent (focus rings, selection, ComboBox highlight). -->
+    <Color x:Key="SystemAccentColor">#4C8DFF</Color>
+    <Color x:Key="SystemAccentColorDark1">#3D7BEB</Color>
+    <Color x:Key="SystemAccentColorDark2">#3169CE</Color>
+    <Color x:Key="SystemAccentColorLight1">#6BA1FF</Color>
+
+    <FontFamily x:Key="MonoFont">
+      Cascadia Mono,Cascadia Code,JetBrains Mono,Consolas,Menlo,monospace
+    </FontFamily>
+  </Application.Resources>
+
+  <Application.Styles>
+    <FluentTheme />
+
+    <!-- Base typography: Inter (registered in Program.cs) with comfortable defaults. -->
+    <Style Selector="Window">
+      <Setter Property="Background" Value="{StaticResource AppBackgroundBrush}" />
+      <Setter Property="FontFamily" Value="{DynamicResource ContentControlThemeFontFamily}" />
+      <Setter Property="FontSize" Value="13" />
+    </Style>
+    <Style Selector="TextBlock">
+      <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+    </Style>
+
+    <!-- Card: the elevated container used for each panel. -->
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+      <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="Padding" Value="16" />
+      <Setter Property="BoxShadow" Value="0 8 24 0 #40000000" />
+    </Style>
+
+    <!-- Section heading inside a card. -->
+    <Style Selector="TextBlock.heading">
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+      <Setter Property="LetterSpacing" Value="1.2" />
+    </Style>
+
+    <!-- Numeric telemetry readouts. -->
+    <Style Selector="TextBlock.readout">
+      <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+      <Setter Property="FontSize" Value="14" />
+    </Style>
+    <Style Selector="TextBlock.label">
+      <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+    </Style>
+
+    <!-- Rounded, flat controls. -->
+    <Style Selector="Button">
+      <Setter Property="CornerRadius" Value="7" />
+      <Setter Property="Padding" Value="14,7" />
+      <Setter Property="FontWeight" Value="Medium" />
+    </Style>
+    <Style Selector="Button.accent">
+      <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Button.accent:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#3D7BEB" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="ComboBox">
+      <Setter Property="CornerRadius" Value="7" />
+    </Style>
+    <Style Selector="ListBox">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="ListBoxItem">
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="Padding" Value="6,2" />
+      <Setter Property="CornerRadius" Value="5" />
+    </Style>
+  </Application.Styles>
+</Application>

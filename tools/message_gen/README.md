@@ -1,70 +1,79 @@
+---
+module: message_gen
+summary: Generates the C# wire-protocol types from the firmware's YAML schema, so the host and firmware can't drift.
+code:
+  - tools/message_gen/generate.py
+  - tools/message_gen/templates/csharp.cs.j2
+  - tools/message_gen/verify.py
+  - tools/message_gen/check.py
+related: [Dyno.Core]
+---
+
 # message_gen
 
-Generates the MessagePassing C headers from a YAML schema, so the wire-protocol
-contract lives in one declarative place instead of being hand-maintained (and
-hand-mirrored on the PC side).
+The USB / message-passing wire contract is defined once, as a YAML schema, in the
+**firmware** repo. That repo renders it to a C header (`messages_public.h`); this tool
+renders the **same schema** to C# so the PC software and the firmware can never disagree
+about the protocol.
 
 ```
-schema/*.yaml  ──(templates/header.h.j2)──►  Core/Inc/MessagePassing/*.h
+firmware/tools/message_gen/schema/messages_public.yaml
+        │  (read from the firmware tree — the single source of truth)
+        ▼  templates/csharp.cs.j2
+src/Dyno.Core/Messages/Generated/Messages.cs   (committed, CI-checked)
 ```
-
-## Targets
-
-| target             | schema                          | output                                   |
-|--------------------|---------------------------------|------------------------------------------|
-| `messages_public`  | `schema/messages_public.yaml`   | `Core/Inc/MessagePassing/messages_public.h`  |
-| `messages_private` | `schema/messages_private.yaml`  | `Core/Inc/MessagePassing/messages_private.h` |
-
-Both render through the single generic template `templates/header.h.j2`.
 
 ## Usage
 
 ```sh
 # one-time: deps (Jinja2 + PyYAML)
-python3 -m venv .venv && .venv/bin/pip install jinja2 pyyaml
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
-.venv/bin/python generate.py                       # regenerate every header
-.venv/bin/python generate.py --target messages_public --stdout   # preview one
+.venv/bin/python generate.py                                  # regenerate Messages.cs
+.venv/bin/python generate.py --target messages_public --stdout  # preview, don't write
+.venv/bin/python check.py                                     # CI drift guard (no temp files)
 ```
 
-## Schema reference
+The schema lives in the firmware tree at `firmware/tools/message_gen/schema/`.
+After a protocol change, rerun `generate.py` and commit the regenerated `Messages.cs`.
 
-`sections:` is an ordered list; each entry has a `kind`:
+## What it emits
 
-| kind            | fields                                            | emits                                  |
-|-----------------|---------------------------------------------------|----------------------------------------|
-| `comment`       | `text`                                            | a `//` block                           |
-| `define`        | `name`, `value`, `comment?`                       | `#define`                              |
-| `code`          | `text`                                            | verbatim C (extern "C" guards, helpers)|
-| `enum`          | `name`, `base`, `comment?`, `values[]`            | `typedef enum : base { ... }`          |
-| `struct`        | `name`, `packed?`, `comment?`, `fields[]`         | `typedef struct [packed] { ... }`      |
-| `static_assert` | `expr`, `message`                                 | `_Static_assert(expr, "message");`     |
+The C# target emits the **data contract only**:
 
-- enum value: `{ name, value?, comment?, blank_before? }`
-- struct field: `{ type, name, comment?, array? }` (`array: N` -> `type name[N];`)
-- include entry: `"stdint.h"` -> `<stdint.h>`; `{ local: "x.h" }` -> `"x.h"`
+| schema kind     | emitted C#                                                              |
+|-----------------|------------------------------------------------------------------------|
+| `define`        | `public const uint` field on `MessageConstants`                        |
+| `enum`          | `public enum Name : <base>` (values evaluated to literals)             |
+| `struct`        | `[StructLayout(Sequential[, Pack = 1])] public struct`                 |
+| `static_assert` | an entry in `MessageContract.ExpectedSizes` (asserted by the tests)    |
+| `comment`       | `//` / `///` lines                                                     |
+| `code`          | **skipped** (see below)                                                |
 
-`static_assert` is its own ordered section so the size checks land where the original
-header puts them, and so the assert spelling exists in exactly one place (the
-template) instead of being copied per type.
+### Why values are evaluated, not copied
 
-## Verifying / CI drift guard
+The schema's expressions are C (`0xFFFFu << TASK_OFFSET_SHIFT`, `WARNING_FLAG`).
+C and C# disagree on integer suffixes and shift-operand types, so a verbatim copy would
+not compile. `generate.py` evaluates each constant expression (trusted, schema-only
+input) against the running symbol table — replicating C's enum auto-increment — and emits
+a concrete C# literal, keeping the original C expression as a trailing comment.
 
-`verify.py` compares two headers as C token streams (comments, whitespace and a
-trailing comma before `}` are ignored), so an empty diff proves the same C is
-declared regardless of formatting:
+### Why `code` sections are skipped
 
-```sh
-# regenerate to a temp file and fail if someone hand-edited the committed header
-.venv/bin/python generate.py --target messages_public --out /tmp/gen.h
-.venv/bin/python verify.py Core/Inc/MessagePassing/messages_public.h /tmp/gen.h
-```
+`code` sections are verbatim C (`extern "C"` guards, the firmware `PopulateTaskError…`
+helper, the `usb_frame_crc16` body) with no C# meaning. The one piece the host needs —
+the frame CRC — is re-implemented once in `Dyno.Core/Protocol` from the generated
+`USB_FRAME_CRC_POLY` / `USB_FRAME_CRC_INIT` / `USB_FRAME_SOF` constants, so the algorithm
+parameters still come from the schema.
 
-## Notes
+## Drift guard (CI)
 
-- Asserts are emitted as `_Static_assert` to match the existing headers. That is a C
-  keyword; mainline g++ rejects it, but these headers are also included by C++ task
-  TUs, so if a host/C++ build ever trips on it, switch the one line in
-  `header.h.j2` to bare `static_assert` (valid in both C23 and C++11+).
-- The PC-side parser can be added as a third target (its own schema/template, same
-  generator) so the firmware header and host parser can never drift.
+`check.py` renders from the schema and compares against the committed `Messages.cs` as a
+token stream (`verify.normalize` ignores comments, whitespace and trailing-comma style),
+so an empty diff proves the same C# is declared regardless of formatting. CI runs it; if
+someone hand-edits `Messages.cs` instead of the schema, the build fails and names the file.
+
+## Related
+
+[[Dyno.Core]] consumes `Messages.cs`. The schema and its full reference live in the
+firmware tree under `firmware/tools/message_gen/`.

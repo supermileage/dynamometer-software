@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  generated-headers:
-    name: generated headers in sync with schema
+  codegen:
+    name: generated C# in sync with schema
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,48 +19,58 @@ jobs:
       - name: Install codegen dependencies
         run: pip install -r tools/message_gen/requirements.txt
 
-      - name: Verify committed headers match their schema
+      - name: Verify committed Messages.cs matches the schema
         run: python tools/message_gen/check.py
 
-  build:
-    name: build (${{ matrix.config }})
+  format:
+    name: csharpier formatting
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore .NET tools
+        run: dotnet tool restore
+
+      - name: Check formatting (CSharpier)
+        run: dotnet csharpier check .
+
+  build:
+    name: build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        config: [Debug, Release]
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: windows-latest
+            rid: win-x64
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
         with:
-          submodules: recursive
+          dotnet-version: '10.0.x'
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Restore
+        run: dotnet restore Dyno.slnx
 
-      - name: Build toolchain image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          load: true
-          tags: stm32-dyno-builder:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Build
+        run: dotnet build Dyno.slnx -c Release --no-restore
 
-      - name: Build ${{ matrix.config }}
-        run: |
-          docker run --rm \
-            -v "${{ github.workspace }}:/work:z" -w /work \
-            --user "$(id -u):$(id -g)" -e HOME=/tmp \
-            stm32-dyno-builder:latest \
-            bash -lc "python3 tools/message_gen/generate.py && cmake --preset ${{ matrix.config }} -B /work/build-docker/${{ matrix.config }} && cmake --build /work/build-docker/${{ matrix.config }}"
+      - name: Test
+        run: dotnet test Dyno.slnx -c Release --no-build
 
-      - name: Upload firmware
+      - name: Publish app (${{ matrix.rid }})
+        run: dotnet publish src/Dyno.App/Dyno.App.csproj -c Release -r ${{ matrix.rid }} --self-contained -o publish/${{ matrix.rid }}
+
+      - name: Upload app
         uses: actions/upload-artifact@v4
         with:
-          name: firmware-${{ matrix.config }}
-          path: |
-            build-docker/${{ matrix.config }}/*.elf
-            build-docker/${{ matrix.config }}/*.hex
-            build-docker/${{ matrix.config }}/*.bin
-            build-docker/${{ matrix.config }}/*.map
+          name: dyno-app-${{ matrix.rid }}
+          path: publish/${{ matrix.rid }}
           if-no-files-found: error

@@ -1,0 +1,485 @@
+<Window
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:vm="using:Dyno.App.ViewModels"
+  xmlns:conv="using:Dyno.App.Converters"
+  x:Class="Dyno.App.Views.MainWindow"
+  x:DataType="vm:MainWindowViewModel"
+  Title="Dyno"
+  Width="960"
+  Height="660"
+  MinWidth="720"
+  MinHeight="660"
+  Background="{StaticResource AppBackgroundBrush}"
+  ExtendClientAreaToDecorationsHint="True"
+  ExtendClientAreaChromeHints="NoChrome"
+  ExtendClientAreaTitleBarHeightHint="-1"
+>
+  <Design.DataContext>
+    <vm:MainWindowViewModel />
+  </Design.DataContext>
+
+  <Window.Styles>
+    <!-- Window control buttons (minimize / maximize / close) -->
+    <Style Selector="Button.chrome">
+      <Setter Property="Width" Value="44" />
+      <Setter Property="Height" Value="38" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="0" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.chrome Path">
+      <Setter Property="Stroke" Value="{StaticResource TextMutedBrush}" />
+      <Setter Property="StrokeThickness" Value="1.1" />
+    </Style>
+    <Style Selector="Button.chrome:pointerover Path">
+      <Setter Property="Stroke" Value="{StaticResource TextPrimaryBrush}" />
+    </Style>
+    <Style Selector="Button.chrome:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#1AFFFFFF" />
+    </Style>
+    <Style Selector="Button.close:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#E81123" />
+    </Style>
+    <Style Selector="Button.close:pointerover Path">
+      <Setter Property="Stroke" Value="White" />
+    </Style>
+  </Window.Styles>
+
+  <Panel>
+    <Grid RowDefinitions="Auto,*">
+      <!-- Custom title bar -->
+      <Border
+        x:Name="TitleBar"
+        Grid.Row="0"
+        Height="40"
+        Background="{StaticResource SurfaceColor}"
+        BorderBrush="{StaticResource StrokeBrush}"
+        BorderThickness="0,0,0,1"
+        PointerPressed="OnTitleBarPointerPressed"
+        DoubleTapped="OnTitleBarDoubleTapped"
+      >
+        <Grid ColumnDefinitions="Auto,*,Auto">
+          <StackPanel
+            Grid.Column="0"
+            Orientation="Horizontal"
+            Spacing="10"
+            Margin="14,0,0,0"
+            VerticalAlignment="Center"
+          >
+            <Border Width="22" Height="22" CornerRadius="6">
+              <Border.Background>
+                <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+                  <GradientStop Color="#4C8DFF" Offset="0" />
+                  <GradientStop Color="#6366F1" Offset="1" />
+                </LinearGradientBrush>
+              </Border.Background>
+              <TextBlock
+                Text="D"
+                Foreground="White"
+                FontSize="13"
+                FontWeight="Bold"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+              />
+            </Border>
+            <TextBlock Text="Dyno" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <TextBlock
+              Text="dynamometer console"
+              FontSize="12"
+              Foreground="{StaticResource TextMutedBrush}"
+              VerticalAlignment="Center"
+            />
+          </StackPanel>
+
+          <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Top">
+            <Button Classes="chrome" Click="OnMinimize" ToolTip.Tip="Minimize">
+              <Path Data="M0,5 L11,5" />
+            </Button>
+            <Button Classes="chrome" Click="OnMaximizeRestore" ToolTip.Tip="Maximize">
+              <Path x:Name="MaximizeIcon" Data="M0,0 L10,0 L10,10 L0,10 Z" Fill="Transparent" />
+            </Button>
+            <Button Classes="chrome close" Click="OnClose" ToolTip.Tip="Close">
+              <Path Data="M0,0 L11,11 M0,11 L11,0" />
+            </Button>
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <!-- Content -->
+      <Grid Grid.Row="1" RowDefinitions="Auto,*,Auto" Margin="16" RowSpacing="14">
+        <!-- Connection toolbar -->
+        <Border Grid.Row="0" Classes="card" Padding="12">
+          <Grid ColumnDefinitions="Auto,*,Auto">
+            <StackPanel
+              Grid.Column="0"
+              Orientation="Horizontal"
+              Spacing="8"
+              VerticalAlignment="Center"
+            >
+              <ComboBox
+                ItemsSource="{Binding Ports}"
+                SelectedItem="{Binding SelectedPort}"
+                MinWidth="220"
+                PlaceholderText="Select serial port"
+              />
+              <Button Content="Refresh" Command="{Binding RefreshPortsCommand}" />
+              <Button Classes="accent" Content="Connect" Command="{Binding ConnectCommand}" />
+              <Button Content="Disconnect" Command="{Binding DisconnectCommand}" />
+
+              <!-- Status pill -->
+              <Border
+                CornerRadius="20"
+                Background="{StaticResource SurfaceRaisedBrush}"
+                Padding="12,5"
+                Margin="8,0,0,0"
+                VerticalAlignment="Center"
+              >
+                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                  <Ellipse
+                    Width="9"
+                    Height="9"
+                    VerticalAlignment="Center"
+                    Fill="{Binding IsConnected, Converter={x:Static conv:BoolToStatusBrushConverter.Instance}}"
+                  />
+                  <TextBlock
+                    Text="{Binding ConnectionStatus}"
+                    VerticalAlignment="Center"
+                    FontSize="12"
+                  />
+                </StackPanel>
+              </Border>
+            </StackPanel>
+
+            <!--
+              Session pill. The dyno streams sensor data only while a session runs, so an idle board
+              and a dead one look identical on the wire; this is what tells them apart at a glance.
+            -->
+            <Border
+              Grid.Column="2"
+              CornerRadius="20"
+              Background="{StaticResource SurfaceRaisedBrush}"
+              Padding="12,5"
+              Margin="8,0,0,0"
+              VerticalAlignment="Center"
+              ToolTip.Tip="Sensor data streams only while the dyno is running a session"
+            >
+              <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <Ellipse
+                  Width="9"
+                  Height="9"
+                  VerticalAlignment="Center"
+                  Fill="{Binding IsSessionActive, Converter={x:Static conv:BoolToStatusBrushConverter.Instance}}"
+                />
+                <TextBlock
+                  Text="{Binding SessionStatus}"
+                  VerticalAlignment="Center"
+                  FontSize="12"
+                  FontWeight="SemiBold"
+                />
+              </StackPanel>
+            </Border>
+          </Grid>
+        </Border>
+
+        <!-- Telemetry + tasks -->
+        <Grid Grid.Row="1" ColumnDefinitions="*,*" ColumnSpacing="14">
+          <Border Grid.Column="0" Classes="card">
+            <StackPanel Spacing="0">
+              <TextBlock Classes="heading" Text="TELEMETRY" Margin="0,0,0,12" />
+
+              <!--
+                Outside a session the device sends no sensor data, so there is nothing current to
+                show: the readouts are replaced (not just frozen) by a notice saying why they're
+                empty. A stale-but-plausible number left on screen reads as a live measurement.
+              -->
+              <Panel MinHeight="150">
+                <StackPanel
+                  IsVisible="{Binding !IsSessionActive}"
+                  VerticalAlignment="Center"
+                  HorizontalAlignment="Center"
+                  Spacing="6"
+                >
+                  <TextBlock
+                    Text="No session running"
+                    HorizontalAlignment="Center"
+                    FontSize="14"
+                    FontWeight="SemiBold"
+                    Foreground="{StaticResource TextMutedBrush}"
+                  />
+                  <TextBlock
+                    Text="Start a session on the dyno to stream sensor data."
+                    HorizontalAlignment="Center"
+                    TextWrapping="Wrap"
+                    TextAlignment="Center"
+                    FontSize="12"
+                    Foreground="{StaticResource TextMutedBrush}"
+                  />
+                </StackPanel>
+
+                <Grid
+                  IsVisible="{Binding IsSessionActive}"
+                  ColumnDefinitions="Auto,*"
+                  RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+                  RowSpacing="9"
+                  VerticalAlignment="Top"
+                >
+                  <TextBlock Grid.Row="0" Grid.Column="0" Classes="label" Text="Angular velocity" />
+                  <TextBlock
+                    Grid.Row="0"
+                    Grid.Column="1"
+                    Classes="readout"
+                    HorizontalAlignment="Right"
+                    Text="{Binding AngularVelocity, StringFormat='{}{0:F3} rad/s'}"
+                  />
+
+                  <TextBlock
+                    Grid.Row="1"
+                    Grid.Column="0"
+                    Classes="label"
+                    Text="Angular acceleration"
+                  />
+                  <TextBlock
+                    Grid.Row="1"
+                    Grid.Column="1"
+                    Classes="readout"
+                    HorizontalAlignment="Right"
+                    Text="{Binding AngularAcceleration, StringFormat='{}{0:F3} rad/s²'}"
+                  />
+
+                  <TextBlock Grid.Row="2" Grid.Column="0" Classes="label" Text="Force" />
+                  <TextBlock
+                    Grid.Row="2"
+                    Grid.Column="1"
+                    Classes="readout"
+                    HorizontalAlignment="Right"
+                    Text="{Binding Force, StringFormat='{}{0:F3} N'}"
+                  />
+
+                  <TextBlock Grid.Row="3" Grid.Column="0" Classes="label" Text="BPM duty cycle" />
+                  <TextBlock
+                    Grid.Row="3"
+                    Grid.Column="1"
+                    Classes="readout"
+                    HorizontalAlignment="Right"
+                    Text="{Binding DutyCycle, StringFormat='{}{0:P1}'}"
+                  />
+
+                  <TextBlock Grid.Row="4" Grid.Column="0" Classes="label" Text="Last timestamp" />
+                  <TextBlock
+                    Grid.Row="4"
+                    Grid.Column="1"
+                    Classes="readout"
+                    HorizontalAlignment="Right"
+                    Text="{Binding LastTimestamp}"
+                  />
+                </Grid>
+              </Panel>
+
+              <Border Height="1" Background="{StaticResource StrokeBrush}" Margin="0,14" />
+
+              <!-- Which force sensor is feeding the reading above: sensor data, so session-gated too. -->
+              <StackPanel
+                Orientation="Horizontal"
+                Margin="0,0,0,8"
+                IsVisible="{Binding IsSessionActive}"
+              >
+                <TextBlock Classes="label" Text="Force source" VerticalAlignment="Center" />
+                <TextBlock
+                  Classes="readout"
+                  Text="{Binding ForceSource}"
+                  Margin="8,0,0,0"
+                  VerticalAlignment="Center"
+                />
+              </StackPanel>
+
+              <TextBlock Classes="heading" Text="FORCE SENSOR SAMPLE RATE" Margin="0,6,0,8" />
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <ComboBox
+                  ItemsSource="{Binding SampleRates}"
+                  SelectedItem="{Binding SelectedSampleRate}"
+                  MinWidth="140"
+                />
+                <Button Classes="accent" Content="Set" Command="{Binding SetSampleRateCommand}" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
+
+          <Border Grid.Column="1" Classes="card">
+            <DockPanel>
+              <TextBlock DockPanel.Dock="Top" Classes="heading" Text="TASKS" Margin="0,0,0,10" />
+              <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,6">
+                <TextBlock Classes="label" FontSize="11" Text="task" />
+                <TextBlock
+                  Grid.Column="1"
+                  Classes="label"
+                  FontSize="11"
+                  Text="state"
+                  Margin="12,0"
+                />
+                <TextBlock Grid.Column="2" Classes="label" FontSize="11" Text="free" />
+              </Grid>
+              <ItemsControl ItemsSource="{Binding Tasks}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:TaskMonitorRow">
+                    <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,3">
+                      <TextBlock Text="{Binding Task}" />
+                      <TextBlock
+                        Grid.Column="1"
+                        Classes="readout"
+                        FontSize="12"
+                        Text="{Binding StateLabel}"
+                        Margin="12,0"
+                        MinWidth="72"
+                        TextAlignment="Right"
+                        ToolTip.Tip="{Binding State, StringFormat='raw osThreadState_t: {0}'}"
+                      />
+                      <TextBlock
+                        Grid.Column="2"
+                        Classes="readout"
+                        FontSize="12"
+                        Text="{Binding FreeBytes}"
+                      />
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </DockPanel>
+          </Border>
+        </Grid>
+
+        <!-- Errors / events -->
+        <Border Grid.Row="2" Classes="card" Height="200" Padding="12">
+          <DockPanel>
+            <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,8">
+              <TextBlock Classes="heading" Text="ERRORS / EVENTS" VerticalAlignment="Center" />
+              <Button
+                x:Name="CopyEventsButton"
+                Grid.Column="1"
+                Content="Copy"
+                Padding="12,4"
+                Margin="0,0,6,0"
+                FontSize="12"
+                Click="OnCopyEvents"
+                ToolTip.Tip="Copy the selected lines — or all of them, if none are selected (Ctrl+C)"
+              />
+              <Button
+                Grid.Column="2"
+                Content="Clear"
+                Padding="12,4"
+                FontSize="12"
+                Command="{Binding ClearEventsCommand}"
+                ToolTip.Tip="Empty the list, e.g. before reproducing a problem"
+              />
+            </Grid>
+            <ListBox
+              x:Name="EventList"
+              ItemsSource="{Binding Events}"
+              SelectionMode="Multiple"
+              KeyDown="OnEventListKeyDown"
+            >
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock
+                    Text="{Binding}"
+                    FontFamily="{StaticResource MonoFont}"
+                    FontSize="12"
+                    Foreground="{Binding Converter={x:Static conv:EventLevelToBrushConverter.Instance}}"
+                  />
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </DockPanel>
+        </Border>
+      </Grid>
+    </Grid>
+
+    <!--
+    Resize grips for when SystemDecorations is None (Linux; see MainWindow.axaml.cs):
+    without WM decorations there are no native resize borders, so these transparent
+    strips call BeginResizeDrag. Hidden on platforms that keep the native frame,
+    and while maximized.
+  -->
+    <Grid x:Name="ResizeGrips" IsVisible="False">
+      <Rectangle
+        Tag="West"
+        Cursor="LeftSide"
+        Fill="Transparent"
+        HorizontalAlignment="Left"
+        Width="5"
+        Margin="0,12"
+        PointerPressed="OnResizeGripPressed"
+      />
+      <Rectangle
+        Tag="East"
+        Cursor="RightSide"
+        Fill="Transparent"
+        HorizontalAlignment="Right"
+        Width="5"
+        Margin="0,12"
+        PointerPressed="OnResizeGripPressed"
+      />
+      <Rectangle
+        Tag="North"
+        Cursor="TopSide"
+        Fill="Transparent"
+        VerticalAlignment="Top"
+        Height="5"
+        Margin="12,0"
+        PointerPressed="OnResizeGripPressed"
+      />
+      <Rectangle
+        Tag="South"
+        Cursor="BottomSide"
+        Fill="Transparent"
+        VerticalAlignment="Bottom"
+        Height="5"
+        Margin="12,0"
+        PointerPressed="OnResizeGripPressed"
+      />
+      <Rectangle
+        Tag="NorthWest"
+        Cursor="TopLeftCorner"
+        Fill="Transparent"
+        HorizontalAlignment="Left"
+        VerticalAlignment="Top"
+        Width="12"
+        Height="12"
+        PointerPressed="OnResizeGripPressed"
+      />
+      <Rectangle
+        Tag="NorthEast"
+        Cursor="TopRightCorner"
+        Fill="Transparent"
+        HorizontalAlignment="Right"
+        VerticalAlignment="Top"
+        Width="12"
+        Height="12"
+        PointerPressed="OnResizeGripPressed"
+      />
+      <Rectangle
+        Tag="SouthWest"
+        Cursor="BottomLeftCorner"
+        Fill="Transparent"
+        HorizontalAlignment="Left"
+        VerticalAlignment="Bottom"
+        Width="12"
+        Height="12"
+        PointerPressed="OnResizeGripPressed"
+      />
+      <Rectangle
+        Tag="SouthEast"
+        Cursor="BottomRightCorner"
+        Fill="Transparent"
+        HorizontalAlignment="Right"
+        VerticalAlignment="Bottom"
+        Width="12"
+        Height="12"
+        PointerPressed="OnResizeGripPressed"
+      />
+    </Grid>
+  </Panel>
+</Window>
