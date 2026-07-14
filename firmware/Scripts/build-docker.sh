@@ -9,7 +9,7 @@
 #   --rebuild, -r  rebuild the toolchain image (do this after editing the
 #                  Dockerfile; otherwise the existing image is reused)
 #
-# (On Windows, run from Git Bash / WSL, or use the docker commands from the README.)
+# (On Windows, use Scripts/build-docker.ps1 — or run this from Git Bash / WSL.)
 
 set -euo pipefail
 

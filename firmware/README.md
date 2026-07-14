@@ -59,12 +59,18 @@ Build output is written to `build/<CONFIG>/`:
 Requires only Docker — no host toolchain. The `Dockerfile` pins the Arm GNU
 toolchain, CMake and Ninja, and CI builds inside this same image:
 ```bash
-./Scripts/build-docker.sh            # Debug
+./Scripts/build-docker.sh            # Debug            (Linux/macOS/Git-Bash)
 ./Scripts/build-docker.sh Release
 ```
-The repo is bind-mounted, so output still lands in `build/<CONFIG>/` on the host.
-On Windows run it from Git Bash/WSL. (On SELinux hosts the script adds the
-required `:z` mount option automatically.)
+```powershell
+.\Scripts\build-docker.ps1                  # Debug     (Windows/PowerShell)
+.\Scripts\build-docker.ps1 -Config Release
+```
+The repo is bind-mounted, so output lands in `build-docker/<CONFIG>/` on the host
+— a separate tree from a native build's `build/<CONFIG>/`, so the two can coexist.
+(On SELinux hosts the shell script adds the required `:z` mount option
+automatically; on Windows, Docker Desktop must be in Linux container mode, which
+is the default.)
 
 ## Regenerating Code from the `.ioc`
 The toolchain in the `.ioc` is set to **CMake**. After editing the design in
@@ -88,6 +94,7 @@ and tool explicitly.
 ./Scripts/flash.sh Debug swd --tool st-flash    # flash that image (no rebuild)
 ```
 ```powershell
+.\Scripts\build-docker.ps1 -Config Debug
 .\Scripts\flash.ps1 -Config Debug -Method swd -Tool st-flash
 ```
 

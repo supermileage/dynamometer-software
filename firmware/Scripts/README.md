@@ -5,7 +5,8 @@ the **host** (not inside the Docker build container).
 
 | Script | Purpose |
 |--------|---------|
-| `build-docker.sh` | Build the firmware in the pinned Docker toolchain image (byte-for-byte the CI environment). |
+| `build-docker.sh` | Build the firmware in the pinned Docker toolchain image on Linux/macOS/Git-Bash (byte-for-byte the CI environment). |
+| `build-docker.ps1` | The same Docker build on Windows (PowerShell). |
 | `flash.sh` | Flash a built image on Linux/macOS/Git-Bash. |
 | `flash.ps1` | Flash a built image on Windows (PowerShell). |
 | `99-stm32-flash.rules` | udev rules for non-root USB flashing on Linux. |
@@ -19,8 +20,18 @@ the **host** (not inside the Docker build container).
 ./Scripts/build-docker.sh Release
 ./Scripts/build-docker.sh Debug -r   # also rebuild the toolchain image
 ```
-The repo is bind-mounted, so output lands in `build/<CONFIG>/` on the host. On
-Windows run it from Git Bash/WSL.
+```powershell
+.\Scripts\build-docker.ps1                  # Debug
+.\Scripts\build-docker.ps1 -Config Release
+.\Scripts\build-docker.ps1 -Rebuild         # also rebuild the toolchain image
+```
+The repo is bind-mounted, so output lands in `build-docker/<CONFIG>/` on the host.
+Both scripts drive the same `Dockerfile` and issue the same `docker run`, so the
+artifacts are identical either way.
+
+The toolchain image is Linux-based: on Windows, Docker Desktop must be in Linux
+container mode (the default). The PowerShell script checks this up front and
+tells you how to switch if it isn't.
 
 ---
 
@@ -51,6 +62,7 @@ point after a Docker build. Build once, flash as often as you like:
 ./Scripts/flash.sh Debug uart --tool stm32flash --port /dev/ttyUSB0
 ```
 ```powershell
+.\Scripts\build-docker.ps1 -Config Debug
 .\Scripts\flash.ps1 -Config Debug -Method swd  -Tool st-flash
 .\Scripts\flash.ps1 -Config Debug -Method dfu  -Tool dfu-util
 .\Scripts\flash.ps1 -Config Debug -Method uart -Tool stm32flash -Port COM5
