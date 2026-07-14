@@ -288,6 +288,37 @@ public sealed class DeviceClient : IDisposable
             cancellationToken: cancellationToken
         );
 
+    /// <summary>
+    /// Writes one runtime sysconfig parameter into the device's store and awaits the firmware's
+    /// RESPONSE. <paramref name="rawValue"/> is the parameter's 32 bits (IEEE-754 bits for float
+    /// parameters — see <c>SysConfigParameterDef.ToRawBits</c>). Sent as a CONFIG frame to the
+    /// USB controller, which owns the store; throws <see cref="TimeoutException"/> on no reply or
+    /// <see cref="DeviceCommandException"/> if the firmware rejects the value (out of range /
+    /// unknown id ⇒ <c>USB_RSP_MALFORMED</c>).
+    /// </summary>
+    public Task<usb_response_data_t> SetSysConfigParamAsync(
+        sysconfig_param_t param,
+        uint rawValue,
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        byte[] body = new byte[6];
+        BitConverter.TryWriteBytes(body.AsSpan(0, 2), (ushort)param);
+        BitConverter.TryWriteBytes(body.AsSpan(2, 4), rawValue);
+        return SendCommandAsync(
+            task_offset_t.TASK_OFFSET_USB_CONTROLLER,
+            (ushort)usb_controller_command_t.USB_CMD_SET_SYSCONFIG,
+            body,
+            type: usb_msg_type_t.USB_MSG_CONFIG,
+            throwOnError: true,
+            timeout: timeout,
+            // Writing a parameter value is idempotent, so a lost ack is safely re-sent.
+            retries: 2,
+            cancellationToken: cancellationToken
+        );
+    }
+
     /// <summary>Hands out the next host msg_id, skipping the firmware-reserved 0 on 16-bit wrap.</summary>
     private ushort NextMsgId()
     {

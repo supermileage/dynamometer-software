@@ -217,7 +217,12 @@ sections:
       -- which never announces session state -- it would sit blank forever. Refusing the
       handshake says why, instead of looking like a dead sensor.
 
-  - { kind: define, name: USB_PROTOCOL_VERSION, value: "2u" }
+      v3 added the runtime sysconfig protocol (sysconfig_param_t / USB_CMD_SET_SYSCONFIG).
+      A v3 host pushes its saved settings after every handshake and trusts they applied;
+      against v2 firmware those pushes would be silently unknown commands and the dyno
+      would run defaults while the host displays the values it believes it set.
+
+  - { kind: define, name: USB_PROTOCOL_VERSION, value: "3u" }
 
   - kind: comment
     text: |-
@@ -298,6 +303,7 @@ sections:
       USB-controller-local commands: frames addressed to TASK_OFFSET_USB_CONTROLLER.
     values:
       - { name: USB_CMD_ACK, value: "0", comment: "host acks the device-ready announce; body = uint32 protocol_version. Firmware replies USB_RSP_OK or USB_RSP_VERSION_MISMATCH" }
+      - { name: USB_CMD_SET_SYSCONFIG, value: "1", comment: "body = sysconfig_set_param_body; writes one runtime parameter into the sysconfig store. Applied by the USB task itself (the store is plain RAM), so the OK is still a full-path ack" }
 
   - kind: comment
     text: |-
@@ -337,6 +343,75 @@ sections:
       Force-sensor (ADS1115) commands: frames addressed to TASK_OFFSET_FORCE_SENSOR_ADS1115.
     values:
       - { name: FORCE_SENSOR_CMD_SET_DATA_RATE, value: "0", comment: "body[0] = ADS1115_RATE_* code (0..7)" }
+
+  - kind: comment
+    text: |-
+      ---- Runtime system configuration -----------------------------------------
+      The tunable quantities from Config/config.h (gains, task delays, thresholds)
+      live in a RAM store (Config/sysconfig.h) seeded from those #defines at boot;
+      tasks read the store every loop iteration, so a write takes effect on the
+      next pass. The host owns persistence: it keeps the values on the PC and
+      re-pushes them after every handshake (the board has no settings storage, so
+      a reboot returns to the config.h defaults until then).
+
+      Parameter ids are wire contract: append new ones, never renumber. Compile-time
+      settings (circular-buffer sizes -- static array dimensions on a heapless
+      firmware -- and debug.h's task/peripheral gates) have no ids here on purpose.
+
+  - kind: enum
+    name: sysconfig_param_t
+    base: uint16_t
+    comment: |-
+      One id per runtime-tunable parameter. The name matches the config.h #define
+      that provides its boot default.
+    values:
+      - { name: SYSCFG_DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M, value: "0",  comment: "float, m" }
+      - { name: SYSCFG_MOMENT_OF_INERTIA_KG_M2,                         value: "1",  comment: "float, kg*m^2" }
+      - { name: SYSCFG_K_P,                                             value: "2",  comment: "float" }
+      - { name: SYSCFG_K_I,                                             value: "3",  comment: "float" }
+      - { name: SYSCFG_K_D,                                             value: "4",  comment: "float" }
+      - { name: SYSCFG_PID_MAX_OUTPUT,                                  value: "5",  comment: "float" }
+      - { name: SYSCFG_THROTTLE_GAIN,                                   value: "6",  comment: "float" }
+      - { name: SYSCFG_BRAKE_GAIN,                                      value: "7",  comment: "float" }
+      - { name: SYSCFG_HORIZONTAL_BIAS,                                 value: "8",  comment: "float" }
+      - { name: SYSCFG_VERTICAL_BIAS,                                   value: "9",  comment: "float" }
+      - { name: SYSCFG_MIN_DUTY_CYCLE_PERCENT,                          value: "10", comment: "float, 0..1" }
+      - { name: SYSCFG_MAX_DUTY_CYCLE_PERCENT,                          value: "11", comment: "float, 0..1" }
+      - { name: SYSCFG_MAX_FORCE_LBF,                                   value: "12", comment: "float, lbf" }
+      - { name: SYSCFG_SESSIONCONTROLLER_TASK_OSDELAY,                  value: "13", comment: "uint32, ms" }
+      - { name: SYSCFG_BPM_TASK_OSDELAY,                                value: "14", comment: "uint32, ms" }
+      - { name: SYSCFG_FORCESENSOR_TASK_OSDELAY,                        value: "15", comment: "uint32, ms" }
+      - { name: SYSCFG_FORCESENSOR_COMMAND_POLL_OSDELAY,                value: "16", comment: "uint32, ms" }
+      - { name: SYSCFG_FORCESENSOR_CONVERSION_TIMEOUT_MS,               value: "17", comment: "uint32, ms" }
+      - { name: SYSCFG_OPTICAL_ENCODER_TASK_OSDELAY,                    value: "18", comment: "uint32, ms" }
+      - { name: SYSCFG_NUM_APERTURES,                                   value: "19", comment: "uint32, encoder wheel apertures" }
+      - { name: SYSCFG_PID_TASK_OSDELAY,                                value: "20", comment: "uint32, ms" }
+      - { name: SYSCFG_USB_TASK_OSDELAY,                                value: "21", comment: "uint32, ms" }
+      - { name: SYSCFG_USB_TX_FLUSH_MAX_RETRIES,                        value: "22", comment: "uint32, attempts" }
+      - { name: SYSCFG_LCD_TASK_OSDELAY,                                value: "23", comment: "uint32, ms" }
+      - { name: SYSCFG_LED_TASK_OSDELAY,                                value: "24", comment: "uint32, ms" }
+      - { name: SYSCFG_TASK_WARNING_RETRY_OSDELAY,                      value: "25", comment: "uint32, ms" }
+      - { name: SYSCFG_TASK_MONITOR_TASK_OSDELAY,                       value: "26", comment: "uint32, ms" }
+
+  - { kind: static_assert, expr: "sizeof(sysconfig_param_t) == 2", message: "Size of sysconfig_param_t must be 2 bytes" }
+
+  - { kind: define, name: SYSCFG_PARAM_COUNT, value: "27u", comment: "one past the highest sysconfig_param_t id; sizes the firmware store" }
+
+  - kind: comment
+    text: |-
+      Body of USB_CMD_SET_SYSCONFIG (after the usb_cmd_header_t). raw_value carries the
+      parameter's 32 bits: IEEE-754 bits for float parameters, the plain value for
+      uint32 ones -- which is which is fixed per id (see sysconfig_param_t comments),
+      so the store can validate range before applying.
+
+  - kind: struct
+    name: sysconfig_set_param_body
+    packed: true
+    fields:
+      - { type: uint16_t, name: param_id,  comment: "sysconfig_param_t" }
+      - { type: uint32_t, name: raw_value, comment: "value bits (float or uint32 per param)" }
+
+  - { kind: static_assert, expr: "sizeof(sysconfig_set_param_body) == 2 + 4", message: "Size of sysconfig_set_param_body must be 6 bytes" }
 
   - kind: struct
     name: optical_encoder_output_data

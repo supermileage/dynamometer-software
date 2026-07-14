@@ -27,6 +27,25 @@ public partial class MainWindowViewModel : ObservableObject
     public ObservableCollection<TaskMonitorRow> Tasks { get; } = new();
     public ObservableCollection<string> Events { get; } = new();
 
+    /// <summary>The SysConfig page: runtime device parameters (SQLite-persisted, pushed over
+    /// USB) plus the compile-time header editor. It reaches the device link through the getter,
+    /// so it always talks to the current client; the sample-rate control on that page binds to
+    /// this view model directly for the same reason.</summary>
+    public SysConfigViewModel SysConfig { get; }
+
+    /// <summary>Which sidebar page is showing. A single value (not a flag per page) so exactly
+    /// one page is ever active; the per-page bools below exist only for IsVisible bindings.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsHomePage))]
+    [NotifyPropertyChangedFor(nameof(IsSysConfigPage))]
+    private AppPage _currentPage = AppPage.Home;
+
+    public bool IsHomePage => CurrentPage == AppPage.Home;
+    public bool IsSysConfigPage => CurrentPage == AppPage.SysConfig;
+
+    [RelayCommand]
+    private void Navigate(AppPage page) => CurrentPage = page;
+
     /// <summary>Selectable force-sensor sample rates, in ascending SPS.</summary>
     public IReadOnlyList<SampleRateChoice> SampleRates { get; } =
         Enum.GetValues<ForceSensorSampleRate>()
@@ -80,6 +99,7 @@ public partial class MainWindowViewModel : ObservableObject
     public MainWindowViewModel(ILoggerFactory loggerFactory)
     {
         _loggerFactory = loggerFactory;
+        SysConfig = new SysConfigViewModel(() => _client);
         SelectedSampleRate =
             SampleRates.FirstOrDefault(c => c.Value == ForceSensorSampleRate.Sps128)
             ?? SampleRates[0];
@@ -216,12 +236,23 @@ public partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    private void OnHandshaked() =>
+    private void OnHandshaked()
+    {
+        // Re-deliver the saved sysconfig overrides on every handshake (first connect and link
+        // recoveries alike): the board keeps them only in RAM, so a reboot behind a re-handshake
+        // means it is running defaults until this push lands. Fire-and-forget off the UI thread;
+        // SysConfig reports the outcome in its own status line.
+        if (_client is { } client)
+        {
+            _ = SysConfig.PushSavedToDeviceAsync(client);
+        }
+
         Dispatcher.UIThread.Post(() =>
         {
             ConnectionStatus = $"Connected to {SelectedPort}";
             AddEvent("[OK  ] handshake complete; streaming enabled");
         });
+    }
 
     /// <summary>
     /// The dyno started or stopped a session. Sensor data only streams during one, so a stop also

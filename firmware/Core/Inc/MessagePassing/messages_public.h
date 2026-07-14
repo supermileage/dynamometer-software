@@ -177,8 +177,13 @@ _Static_assert(sizeof(usb_msg_header_t) == 12, "Size of usb_msg_header_t must be
 // shows sensor data only while it believes a session is running, so against v1 firmware
 // -- which never announces session state -- it would sit blank forever. Refusing the
 // handshake says why, instead of looking like a dead sensor.
+// 
+// v3 added the runtime sysconfig protocol (sysconfig_param_t / USB_CMD_SET_SYSCONFIG).
+// A v3 host pushes its saved settings after every handshake and trusts they applied;
+// against v2 firmware those pushes would be silently unknown commands and the dyno
+// would run defaults while the host displays the values it believes it set.
 
-#define USB_PROTOCOL_VERSION 2u
+#define USB_PROTOCOL_VERSION 3u
 
 // Shared CRC so firmware and host compute identical checksums over a frame body.
 
@@ -240,7 +245,8 @@ typedef enum : uint32_t
 // USB-controller-local commands: frames addressed to TASK_OFFSET_USB_CONTROLLER.
 typedef enum : uint16_t
 {
-    USB_CMD_ACK = 0   // host acks the device-ready announce; body = uint32 protocol_version. Firmware replies USB_RSP_OK or USB_RSP_VERSION_MISMATCH
+    USB_CMD_ACK = 0,   // host acks the device-ready announce; body = uint32 protocol_version. Firmware replies USB_RSP_OK or USB_RSP_VERSION_MISMATCH
+    USB_CMD_SET_SYSCONFIG = 1   // body = sysconfig_set_param_body; writes one runtime parameter into the sysconfig store. Applied by the USB task itself (the store is plain RAM), so the OK is still a full-path ack
 } usb_controller_command_t;
 
 // Device-ready announcement (STM32 -> PC): emitted as USB_MSG_EVENT with task_offset
@@ -273,6 +279,67 @@ typedef enum : uint16_t
 {
     FORCE_SENSOR_CMD_SET_DATA_RATE = 0   // body[0] = ADS1115_RATE_* code (0..7)
 } force_sensor_command_opcode;
+
+// ---- Runtime system configuration -----------------------------------------
+// The tunable quantities from Config/config.h (gains, task delays, thresholds)
+// live in a RAM store (Config/sysconfig.h) seeded from those #defines at boot;
+// tasks read the store every loop iteration, so a write takes effect on the
+// next pass. The host owns persistence: it keeps the values on the PC and
+// re-pushes them after every handshake (the board has no settings storage, so
+// a reboot returns to the config.h defaults until then).
+// 
+// Parameter ids are wire contract: append new ones, never renumber. Compile-time
+// settings (circular-buffer sizes -- static array dimensions on a heapless
+// firmware -- and debug.h's task/peripheral gates) have no ids here on purpose.
+
+// One id per runtime-tunable parameter. The name matches the config.h #define
+// that provides its boot default.
+typedef enum : uint16_t
+{
+    SYSCFG_DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M = 0,   // float, m
+    SYSCFG_MOMENT_OF_INERTIA_KG_M2 = 1,   // float, kg*m^2
+    SYSCFG_K_P = 2,   // float
+    SYSCFG_K_I = 3,   // float
+    SYSCFG_K_D = 4,   // float
+    SYSCFG_PID_MAX_OUTPUT = 5,   // float
+    SYSCFG_THROTTLE_GAIN = 6,   // float
+    SYSCFG_BRAKE_GAIN = 7,   // float
+    SYSCFG_HORIZONTAL_BIAS = 8,   // float
+    SYSCFG_VERTICAL_BIAS = 9,   // float
+    SYSCFG_MIN_DUTY_CYCLE_PERCENT = 10,   // float, 0..1
+    SYSCFG_MAX_DUTY_CYCLE_PERCENT = 11,   // float, 0..1
+    SYSCFG_MAX_FORCE_LBF = 12,   // float, lbf
+    SYSCFG_SESSIONCONTROLLER_TASK_OSDELAY = 13,   // uint32, ms
+    SYSCFG_BPM_TASK_OSDELAY = 14,   // uint32, ms
+    SYSCFG_FORCESENSOR_TASK_OSDELAY = 15,   // uint32, ms
+    SYSCFG_FORCESENSOR_COMMAND_POLL_OSDELAY = 16,   // uint32, ms
+    SYSCFG_FORCESENSOR_CONVERSION_TIMEOUT_MS = 17,   // uint32, ms
+    SYSCFG_OPTICAL_ENCODER_TASK_OSDELAY = 18,   // uint32, ms
+    SYSCFG_NUM_APERTURES = 19,   // uint32, encoder wheel apertures
+    SYSCFG_PID_TASK_OSDELAY = 20,   // uint32, ms
+    SYSCFG_USB_TASK_OSDELAY = 21,   // uint32, ms
+    SYSCFG_USB_TX_FLUSH_MAX_RETRIES = 22,   // uint32, attempts
+    SYSCFG_LCD_TASK_OSDELAY = 23,   // uint32, ms
+    SYSCFG_LED_TASK_OSDELAY = 24,   // uint32, ms
+    SYSCFG_TASK_WARNING_RETRY_OSDELAY = 25,   // uint32, ms
+    SYSCFG_TASK_MONITOR_TASK_OSDELAY = 26   // uint32, ms
+} sysconfig_param_t;
+
+_Static_assert(sizeof(sysconfig_param_t) == 2, "Size of sysconfig_param_t must be 2 bytes");
+
+#define SYSCFG_PARAM_COUNT 27u              // one past the highest sysconfig_param_t id; sizes the firmware store
+
+// Body of USB_CMD_SET_SYSCONFIG (after the usb_cmd_header_t). raw_value carries the
+// parameter's 32 bits: IEEE-754 bits for float parameters, the plain value for
+// uint32 ones -- which is which is fixed per id (see sysconfig_param_t comments),
+// so the store can validate range before applying.
+
+typedef struct __attribute__((packed)) {
+    uint16_t param_id;   // sysconfig_param_t
+    uint32_t raw_value;   // value bits (float or uint32 per param)
+} sysconfig_set_param_body;
+
+_Static_assert(sizeof(sysconfig_set_param_body) == 2 + 4, "Size of sysconfig_set_param_body must be 6 bytes");
 
 typedef struct {
     uint32_t timestamp;   // Timestamp of the reading

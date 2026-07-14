@@ -1,5 +1,6 @@
 #include <Tasks/OpticalSensor/OpticalSensor.hpp>
 #include <Tasks/OpticalSensor/opticalsensor_main.h>
+#include <Config/sysconfig.h>
 
 extern size_t optical_encoder_circular_buffer_index_writer;
 extern optical_encoder_output_data optical_encoder_circular_buffer[OPTICAL_ENCODER_CIRCULAR_BUFFER_SIZE];
@@ -32,7 +33,7 @@ void OpticalSensor::Run(void)
 
     while (1)
     {
-        osDelay(OPTICAL_ENCODER_TASK_OSDELAY);
+        osDelay(sysconfig_get_u32(SYSCFG_OPTICAL_ENCODER_TASK_OSDELAY));
         // --- Get the latest enable/disable state ---
         GetLatestFromQueue(
             _sessionControllerToOpticalSensorHandle,
@@ -79,7 +80,7 @@ float OpticalSensor::CalculateRPM(uint32_t numCounts, uint32_t prevTimestamp, ui
     float deltaTimeSec = static_cast<float>(currTimestamp - prevTimestamp) / _timestampClockSpeedFreq;
 
     // RPM = revolutions per minute
-    float rpm = (static_cast<float>(numCounts) / NUM_APERTURES / deltaTimeSec) * 60.0f;
+    float rpm = (static_cast<float>(numCounts) / static_cast<float>(sysconfig_get_u32(SYSCFG_NUM_APERTURES)) / deltaTimeSec) * 60.0f;
 
     return rpm;
 }
@@ -95,7 +96,7 @@ float OpticalSensor::CalculateAngularVelocity(uint32_t numCounts, uint32_t prevT
     float deltaTimeSec = static_cast<float>(currTimestamp - prevTimestamp) / _timestampClockSpeedFreq;
 
     // Angular velocity in radians per second
-    float angularVelocity = (static_cast<float>(numCounts) / NUM_APERTURES) * (2.0f * M_PI) / deltaTimeSec;
+    float angularVelocity = (static_cast<float>(numCounts) / static_cast<float>(sysconfig_get_u32(SYSCFG_NUM_APERTURES))) * (2.0f * M_PI) / deltaTimeSec;
 
     return angularVelocity;
 }

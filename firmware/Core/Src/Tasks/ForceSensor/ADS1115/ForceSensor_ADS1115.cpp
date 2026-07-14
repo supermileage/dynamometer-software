@@ -1,5 +1,6 @@
 #include <Tasks/ForceSensor/ADS1115/forcesensor_ads1115_main.h>
 #include <Tasks/ForceSensor/ADS1115/ForceSensor_ADS1115.hpp>
+#include <Config/sysconfig.h>
 
 #define LBF_TO_NEWTON 4.44822
 #define ADS1115_VOLTAGE 5.1
@@ -78,7 +79,7 @@ void ForceSensorADS1115::Run(void)
         GetLatestFromQueue(_sessionControllerToForceSensorHandle,
                                             &enableADS1115,
                                             sizeof(enableADS1115),
-                                            enableADS1115 ? 0 : FORCESENSOR_COMMAND_POLL_OSDELAY);
+                                            enableADS1115 ? 0 : sysconfig_get_u32(SYSCFG_FORCESENSOR_COMMAND_POLL_OSDELAY));
 
         // Apply any host setting commands (data rate, ...) and ack them, in any state.
         ProcessCommands();
@@ -101,14 +102,15 @@ void ForceSensorADS1115::Run(void)
             );
             
             _task_error_buffer_writer.WriteElementAndIncrementIndex(error_data);
-            osDelay(TASK_WARNING_RETRY_OSDELAY);
+            osDelay(sysconfig_get_u32(SYSCFG_TASK_WARNING_RETRY_OSDELAY));
             continue;
         }
 
         // --- Wait for alert GPIO to indicate conversion complete (bounded) ---
         uint32_t alertWaitStart = osKernelGetTickCount();
+        const uint32_t conversionTimeoutMs = sysconfig_get_u32(SYSCFG_FORCESENSOR_CONVERSION_TIMEOUT_MS);
         while (!ads1115_alert_status &&
-               (osKernelGetTickCount() - alertWaitStart) < FORCESENSOR_CONVERSION_TIMEOUT_MS)
+               (osKernelGetTickCount() - alertWaitStart) < conversionTimeoutMs)
         {
             osDelay(1); // yield to other tasks
         }
@@ -124,7 +126,7 @@ void ForceSensorADS1115::Run(void)
                 static_cast<uint32_t>(WARNING_FORCE_SENSOR_ADS1115_GET_CONVERSION_FAILURE)
             );
             _task_error_buffer_writer.WriteElementAndIncrementIndex(error_data);
-            osDelay(TASK_WARNING_RETRY_OSDELAY);
+            osDelay(sysconfig_get_u32(SYSCFG_TASK_WARNING_RETRY_OSDELAY));
             continue;
         }
 
@@ -138,7 +140,7 @@ void ForceSensorADS1115::Run(void)
                 static_cast<uint32_t>(WARNING_FORCE_SENSOR_ADS1115_GET_CONVERSION_FAILURE)
             );
             _task_error_buffer_writer.WriteElementAndIncrementIndex(error_data);
-            osDelay(TASK_WARNING_RETRY_OSDELAY);
+            osDelay(sysconfig_get_u32(SYSCFG_TASK_WARNING_RETRY_OSDELAY));
             continue; 
         }
 
@@ -148,7 +150,7 @@ void ForceSensorADS1115::Run(void)
 
         _data_buffer_writer.WriteElementAndIncrementIndex(outputData);
 
-        osDelay(FORCESENSOR_TASK_OSDELAY);  // allow other tasks to run
+        osDelay(sysconfig_get_u32(SYSCFG_FORCESENSOR_TASK_OSDELAY));  // allow other tasks to run
     }
 }
 
@@ -158,7 +160,7 @@ void ForceSensorADS1115::Run(void)
 float ForceSensorADS1115::GetForce(uint16_t raw_value)
 {
     // mv per count * count / 1000 to get volts / supply voltage to get ratio * max force in lbf * lbf to newton
-    return _ads1115.getMvPerCount() * raw_value  / 1000 / ADS1115_VOLTAGE * MAX_FORCE_LBF * LBF_TO_NEWTON;
+    return _ads1115.getMvPerCount() * raw_value  / 1000 / ADS1115_VOLTAGE * sysconfig_get_float(SYSCFG_MAX_FORCE_LBF) * LBF_TO_NEWTON;
 }
 
 void ForceSensorADS1115::ProcessCommands()

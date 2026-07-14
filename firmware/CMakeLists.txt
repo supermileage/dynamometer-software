@@ -46,6 +46,7 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # directly under Core/Src, so globbing the application subdirectories is safe
 # from duplicates and picks up new task files automatically.
 file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS
+    ${CMAKE_SOURCE_DIR}/Core/Src/Config/*.c
     ${CMAKE_SOURCE_DIR}/Core/Src/Tasks/*.c
     ${CMAKE_SOURCE_DIR}/Core/Src/Tasks/*.cpp
     ${CMAKE_SOURCE_DIR}/Core/Src/MessagePassing/*.c

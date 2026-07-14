@@ -1,4 +1,5 @@
 #include "Tasks/TaskMonitor/TaskMonitor.hpp"
+#include "Config/sysconfig.h"
 
 extern size_t task_error_circular_buffer_index_writer;
 extern task_error_data task_error_circular_buffer[TASK_ERROR_CIRCULAR_BUFFER_SIZE];
@@ -99,7 +100,7 @@ void TaskMonitor::Run()
 
 		GetTaskDataAndSendToUsbController(TASK_OFFSET_TASK_MONITOR, osThreadGetId());
 		
-		osDelay(TASK_MONITOR_TASK_OSDELAY);
+		osDelay(sysconfig_get_u32(SYSCFG_TASK_MONITOR_TASK_OSDELAY));
 	}
 
 }

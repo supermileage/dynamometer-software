@@ -3,6 +3,12 @@
 
 #include "ADS1115_main.h"
 
+// Tunable quantities below (gains, task delays, thresholds) are *boot defaults*: they
+// seed the runtime sysconfig store (Config/sysconfig.h), which the host can rewrite live
+// over USB (USB_CMD_SET_SYSCONFIG) -- the host re-pushes its saved values after every
+// handshake. Buffer sizes are not runtime: they dimension static arrays on a heapless
+// firmware, so changing them still requires a rebuild.
+
 // Voltage Reference (should be 3V3)
 #define VREF 3.3f
 

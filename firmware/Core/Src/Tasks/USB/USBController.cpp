@@ -1,5 +1,6 @@
 #include <Tasks/USB/usbcontroller_main.h>
 #include <Tasks/USB/USBController.hpp>
+#include <Config/sysconfig.h>
 
 // The ADC and ADS1115 force sensors share one data buffer; report whichever
 // variant is compiled in (exactly one is enabled, enforced in main.c).
@@ -158,6 +159,25 @@ void USBController::HandleUsbLocalCommand(const usb_cmd_header_t& cmd, const uin
             _sessionStateDue = true;
             _appReady = true;
             SendResponse(TASK_OFFSET_USB_CONTROLLER, cmd.opcode, cmd.msg_id, USB_RSP_OK);
+            break;
+        }
+
+        case USB_CMD_SET_SYSCONFIG:
+        {
+            // Runtime parameter write. The store is plain RAM read by the owning tasks each
+            // loop pass, so applying it here *is* the full application -- the OK below is as
+            // truthful as a routed command's completion ack. Range violations and unknown
+            // ids are rejected by the store and reported as MALFORMED.
+            if (bodyLen < sizeof(sysconfig_set_param_body))
+            {
+                SendResponse(TASK_OFFSET_USB_CONTROLLER, cmd.opcode, cmd.msg_id, USB_RSP_MALFORMED);
+                break;
+            }
+            sysconfig_set_param_body set;
+            memcpy(&set, body, sizeof(set));
+            bool applied = sysconfig_set_raw((sysconfig_param_t)set.param_id, set.raw_value);
+            SendResponse(TASK_OFFSET_USB_CONTROLLER, cmd.opcode, cmd.msg_id,
+                         applied ? USB_RSP_OK : USB_RSP_MALFORMED);
             break;
         }
 
@@ -463,13 +483,13 @@ void USBController::Run()
         {
             if (CDC_Transmit_FS(_txBuffer, _txBufferIndex) == USBD_BUSY)
             {
-                osDelay(USB_TASK_OSDELAY);
+                osDelay(sysconfig_get_u32(SYSCFG_USB_TASK_OSDELAY));
                 continue; // host busy; keep the buffer and retry next iteration
             }
             _txBufferIndex = 0;
         }
 
-        osDelay(USB_TASK_OSDELAY);
+        osDelay(sysconfig_get_u32(SYSCFG_USB_TASK_OSDELAY));
     }
 }
 
@@ -621,7 +641,7 @@ void USBController::MockMessages(const bool forever)
         _txBufferIndex = 0;
 
        
-        osDelay(USB_TASK_OSDELAY);
+        osDelay(sysconfig_get_u32(SYSCFG_USB_TASK_OSDELAY));
     }
 }
 
@@ -659,7 +679,8 @@ void USBController::StallIfIsBufferFull(bool bufferFull)
     // the buffered batch so the loop can keep servicing inbound commands. Telemetry is
     // lossy by nature; a dropped command response is recovered by the host's ack-timeout
     // retry.
-    for (uint32_t attempt = 0; attempt < USB_TX_FLUSH_MAX_RETRIES; ++attempt) {
+    const uint32_t maxRetries = sysconfig_get_u32(SYSCFG_USB_TX_FLUSH_MAX_RETRIES);
+    for (uint32_t attempt = 0; attempt < maxRetries; ++attempt) {
         if (CDC_Transmit_FS(_txBuffer, _txBufferIndex) != USBD_BUSY) {
             _txBufferIndex = 0;
             return;

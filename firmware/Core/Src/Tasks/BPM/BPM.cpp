@@ -1,5 +1,6 @@
 #include "Tasks/BPM/bpm_main.h"
 #include "Tasks/BPM/BPM.hpp"
+#include "Config/sysconfig.h"
 
 extern size_t bpm_circular_buffer_index_writer;
 extern bpm_output_data bpm_circular_buffer[BPM_CIRCULAR_BUFFER_SIZE];
@@ -84,7 +85,7 @@ void BPM::Run(void)
 		outputData.duty_cycle = latestDutyCycle;
 		_data_buffer_writer.WriteElementAndIncrementIndex(outputData);
 
-		osDelay(BPM_TASK_OSDELAY);
+		osDelay(sysconfig_get_u32(SYSCFG_BPM_TASK_OSDELAY));
 		
 	
 
@@ -134,10 +135,12 @@ bool BPM::TogglePWM(bool enable)
 void BPM::SetDutyCycle(float new_duty_cycle_percent)
 {
 
-	if (new_duty_cycle_percent < MIN_DUTY_CYCLE_PERCENT)
-		new_duty_cycle_percent = MIN_DUTY_CYCLE_PERCENT;
-	else if (new_duty_cycle_percent > MAX_DUTY_CYCLE_PERCENT)
-		new_duty_cycle_percent = MAX_DUTY_CYCLE_PERCENT;
+	const float minDutyCycle = sysconfig_get_float(SYSCFG_MIN_DUTY_CYCLE_PERCENT);
+	const float maxDutyCycle = sysconfig_get_float(SYSCFG_MAX_DUTY_CYCLE_PERCENT);
+	if (new_duty_cycle_percent < minDutyCycle)
+		new_duty_cycle_percent = minDutyCycle;
+	else if (new_duty_cycle_percent > maxDutyCycle)
+		new_duty_cycle_percent = maxDutyCycle;
 
 	uint16_t new_duty_cycle = new_duty_cycle_percent * __HAL_TIM_GET_AUTORELOAD(bpmTimer);
 
