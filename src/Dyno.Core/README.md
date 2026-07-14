@@ -90,6 +90,28 @@ raises `ProtocolMismatch(null)` — the device rejected us without saying what i
 *The firmware fix (clear `_appReady` on DTR deassert, so the board resumes announcing) is still
 worth doing; the probe means the host works against boards already in the field.*
 
+## Sysconfig: the host is the memory
+The firmware's runtime-tunable parameters (`SysConfigCatalog`, generated from the schema) live on the
+board in **RAM with no flash behind it**. It boots on its config.h defaults, keeps whatever the host
+wrote only while it stays powered, and cannot tell anyone what it currently holds. So the PC's SQLite
+store is not a cache of the device's settings — it is the only copy, and the device is the copy.
+
+That splits saving from applying. Saving is the app's Apply button: it writes the values to SQLite,
+and touches no device. Applying is a reconciliation pass over `SysConfigDeviceMirror`, which tracks
+what the board is *believed* to hold and yields the parameters whose saved value it isn't known to
+have. One pass therefore serves both cases:
+
+- **A value changed** → the mirror is current except for that one parameter, so exactly one write
+  goes out (announced, so the event log names it).
+- **A device connected** → `Forget()` first, because a link that dropped may have dropped *because*
+  the board reset. Nothing is believed, so the whole catalog goes out — **defaults included**, since
+  a board that stayed powered through a host restart is still holding the last session's values, and
+  a parameter the user never overrode is exactly the one nobody would think to re-send. All 27 are
+  written unannounced and reported as a single summary line.
+
+A write that is never acked is simply never confirmed, so it stays outstanding and goes out again on
+the next pass — which is the only recovery available to a board that cannot remember anything.
+
 ## Session state
 The dyno streams sensor data **only while a session is running**, so the absence of samples means
 nothing on its own — an idle board and a dead one look the same. The device therefore announces a

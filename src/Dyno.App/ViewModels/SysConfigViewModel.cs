@@ -13,10 +13,14 @@ namespace Dyno.App.ViewModels;
 /// <summary>
 /// Drives the SysConfig page, which manages two kinds of firmware settings:
 /// <list type="bullet">
-/// <item><b>Runtime parameters</b> (gains, task delays, thresholds): edited here, persisted in a
-/// SQLite database on this computer, and written to the running device over USB — immediately when
-/// connected, and re-pushed automatically after every handshake, since the board itself has no
-/// settings storage and reboots back to its config.h defaults.</item>
+/// <item><b>Runtime parameters</b> (gains, task delays, thresholds): edited here and persisted in a
+/// SQLite database on this computer, which is the only place they are kept — the board's store is
+/// RAM behind no flash, so it forgets them on every reboot. Saving and applying are therefore two
+/// separate jobs: <see cref="ApplyRuntime"/> writes the values to the database, and a reconciliation
+/// pass (<see cref="SyncDeviceAsync"/>) brings whatever device is connected into line with it. That
+/// pass sends only what the board is not already known to hold, which makes it both the cheap path
+/// for a single edit and the correct path on connect, where nothing is known and every parameter
+/// goes out.</item>
 /// <item><b>Compile-time settings</b> (buffer sizes; debug.h's task/peripheral gates): these
 /// physically cannot change at runtime — buffer sizes dimension static arrays on a heapless
 /// firmware, and debug.h decides what code is compiled in at all — so they are edited in the
@@ -42,7 +46,22 @@ public partial class SysConfigViewModel : ObservableObject
     private readonly List<LoadedFile> _files = new();
     private readonly List<ConfigParameterViewModel> _parameters = new();
     private readonly List<RuntimeParameterViewModel> _runtimeParameters = new();
+
+    /// <summary>What the connected board is believed to hold — the difference between this and the
+    /// saved values is exactly the set of writes still owed to it.</summary>
+    private readonly SysConfigDeviceMirror _mirror = new();
+
+    /// <summary>One reconciliation pass at a time. An edit applied while the connect-time restore is
+    /// still running would otherwise race it, and the two could write the same parameter in either
+    /// order — leaving the board holding the older value.</summary>
+    private readonly SemaphoreSlim _syncGate = new(1, 1);
+
     private SysConfigStore? _store;
+
+    /// <summary>Raised with a line for the main window's event log. The connect-time restore writes
+    /// every parameter at once, which is summarised here rather than narrated write by write (see
+    /// <see cref="DeviceClient.SetSysConfigParamAsync"/>'s <c>announce</c>).</summary>
+    public event Action<string>? DeviceSyncLogged;
 
     /// <summary>Runtime category cards currently visible, in catalog order.</summary>
     public ObservableCollection<RuntimeCategoryViewModel> FilteredRuntimeCategories { get; } =
@@ -133,19 +152,16 @@ public partial class SysConfigViewModel : ObservableObject
 
     private bool CanApplyRuntime => RuntimeDirtyCount > 0;
 
-    /// <summary>Saves every edited runtime value to SQLite and, when a device is connected,
-    /// writes it into the running firmware's store. Values the firmware would reject never
-    /// leave the validation in <see cref="RuntimeParameterViewModel"/> (the button counts only
-    /// valid edits), so a failure here is a link problem, not a value problem.</summary>
+    /// <summary>Saves every edited runtime value to SQLite. That is all it does to the settings
+    /// themselves — the database is where they live, and the device is a copy of it, brought up to
+    /// date by the sync that follows. Values the firmware would reject never leave the validation in
+    /// <see cref="RuntimeParameterViewModel"/> (the button counts only valid edits), so a failure to
+    /// reach the device is a link problem, not a value problem.</summary>
     [RelayCommand(CanExecute = nameof(CanApplyRuntime))]
     private async Task ApplyRuntime()
     {
-        var dirty = _runtimeParameters.Where(p => p.IsDirty && !p.IsInvalid).ToList();
-        var applied = 0;
-        var pushFailures = new List<string>();
-        var client = ConnectedClient();
-
-        foreach (var parameter in dirty)
+        var saved = 0;
+        foreach (var parameter in _runtimeParameters.Where(p => p.IsDirty && !p.IsInvalid).ToList())
         {
             if (parameter.EditedValue is not double value)
             {
@@ -153,105 +169,123 @@ public partial class SysConfigViewModel : ObservableObject
             }
 
             _store?.Save(parameter.Def.Id, parameter.Name, value);
-
-            if (client is not null)
-            {
-                try
-                {
-                    await client.SetSysConfigParamAsync(
-                        parameter.Def.Id,
-                        parameter.Def.ToRawBits(value)
-                    );
-                }
-                catch (Exception)
-                {
-                    pushFailures.Add(parameter.Name);
-                    // Saved locally all the same; the next handshake re-push delivers it.
-                }
-            }
-
             parameter.MarkSaved(isOverride: true);
-            applied++;
+            saved++;
         }
 
-        RuntimeStatusText = (client, pushFailures.Count) switch
-        {
-            (null, _) =>
-                $"Saved {applied} setting{(applied == 1 ? "" : "s")} on this PC — will apply when a device connects",
-            (_, 0) =>
-                $"Applied {applied} setting{(applied == 1 ? "" : "s")} to the device and saved on this PC",
-            _ =>
-                $"Saved {applied}, but the device didn't ack: {string.Join(", ", pushFailures)} — they'll re-apply on the next handshake",
-        };
+        RuntimeStatusText = $"Saved {Count(saved, "setting")} on this PC";
+        await SyncDeviceAsync(ConnectedClient(), announce: true);
     }
 
-    /// <summary>Reverts one parameter to the firmware default: forgets the local override and,
-    /// when connected, pushes the default so the running device matches what the page now shows.</summary>
+    /// <summary>Reverts one parameter to the firmware default: forgets the local override, so the
+    /// value the sync below wants on the device is the default again.</summary>
     private async Task ResetRuntimeParameterAsync(RuntimeParameterViewModel parameter)
     {
         _store?.Remove(parameter.Def.Id);
         parameter.ResetToDefault();
 
-        if (ConnectedClient() is { } client)
-        {
-            try
-            {
-                await client.SetSysConfigParamAsync(
-                    parameter.Def.Id,
-                    parameter.Def.ToRawBits(parameter.Def.Default)
-                );
-                RuntimeStatusText = $"{parameter.Name} reset to default on the device and this PC";
-            }
-            catch (Exception)
-            {
-                RuntimeStatusText =
-                    $"{parameter.Name} reset on this PC; the device didn't ack and will pick it up on the next handshake or reboot";
-            }
-        }
-        else
-        {
-            RuntimeStatusText =
-                $"{parameter.Name} reset on this PC — the device returns to it on next connect or reboot";
-        }
+        RuntimeStatusText = $"{parameter.Name} reset to its firmware default on this PC";
+        await SyncDeviceAsync(ConnectedClient(), announce: true);
     }
 
     /// <summary>
-    /// Pushes every locally saved override to a freshly handshaked device. Called (on a background
-    /// thread) each time the link handshakes — including re-handshakes after a lost link — because
-    /// the board holds settings only in RAM: without this re-push a rebooted board would silently
-    /// run defaults while the page displays the saved values.
+    /// Re-applies the settings to a freshly handshaked device. Called (on a background thread) on
+    /// every handshake, including the re-handshake that follows a recovered link — because a link
+    /// that dropped may well have dropped *because* the board reset, and a board that reset is back
+    /// on its config.h defaults with no way to say so. Nothing is assumed about what it holds, so
+    /// this writes the whole catalog: not only the overrides, but the defaults too, since a board
+    /// that stayed powered through a host restart is still holding the previous session's values.
     /// </summary>
-    public async Task PushSavedToDeviceAsync(DeviceClient client)
+    public Task ResyncDeviceAsync(DeviceClient client) =>
+        SyncDeviceAsync(client, announce: false, forget: true);
+
+    /// <summary>
+    /// Brings the device in line with what this PC has saved, writing only the parameters it is not
+    /// already known to hold — after a save that is the one value that changed; with
+    /// <paramref name="forget"/>, it is all of them. A write that isn't acked stays unconfirmed and
+    /// so is simply included in the next pass.
+    /// </summary>
+    private async Task SyncDeviceAsync(DeviceClient? client, bool announce, bool forget = false)
     {
-        var overrides = _runtimeParameters.Where(p => p.IsOverride).ToList();
-        if (overrides.Count == 0)
+        if (client is null)
         {
+            Report("Saved on this PC — applied to the device when one connects");
             return;
         }
 
-        var failures = 0;
-        foreach (var parameter in overrides)
+        var written = 0;
+        var failures = new List<string>();
+
+        await _syncGate.WaitAsync();
+        try
         {
-            try
+            // Inside the gate, so the mirror is only ever touched by one pass: forgetting from
+            // outside it would let a restore already in flight confirm its writes into a mirror that
+            // a second handshake had just cleared, and the board would be credited with values that
+            // the reboot behind that handshake had already thrown away.
+            if (forget)
             {
-                // The last *saved* value, not any in-progress edit in the text box.
-                await client.SetSysConfigParamAsync(
-                    parameter.Def.Id,
-                    parameter.Def.ToRawBits(parameter.SavedValue)
-                );
+                _mirror.Forget();
             }
-            catch (Exception)
+
+            foreach (var (def, value) in _mirror.Outstanding(SavedValues()))
             {
-                failures++;
+                try
+                {
+                    await client.SetSysConfigParamAsync(
+                        def.Id,
+                        def.ToRawBits(value),
+                        announce: announce
+                    );
+                    _mirror.Confirm(def.Id, value);
+                    written++;
+                }
+                catch (Exception)
+                {
+                    // Left unconfirmed on purpose: the next sync — or the next connect — sends it
+                    // again, which is the only recovery a board with no storage of its own has.
+                    failures.Add(def.Name);
+                }
             }
         }
+        finally
+        {
+            _syncGate.Release();
+        }
 
-        var summary =
-            failures == 0
-                ? $"Applied {overrides.Count} saved setting{(overrides.Count == 1 ? "" : "s")} to the device"
-                : $"Applied {overrides.Count - failures}/{overrides.Count} saved settings to the device; the rest were not acked";
-        Dispatcher.UIThread.Post(() => RuntimeStatusText = summary);
+        Report(
+            (written, failures.Count) switch
+            {
+                (0, 0) => "The device already holds every saved value",
+                (_, 0) => $"Applied {Count(written, "setting")} to the device",
+                _ =>
+                    $"Applied {written} to the device; it didn't ack {string.Join(", ", failures)} — retried on the next connect",
+            }
+        );
+
+        // A restore writes all 27 parameters, so it reports itself as one line rather than as 27
+        // sends and 27 acks; an ordinary edit is already narrated write-by-write by the client.
+        if (!announce && (written > 0 || failures.Count > 0))
+        {
+            DeviceSyncLogged?.Invoke(
+                failures.Count == 0
+                    ? $"[CFG ] restored {Count(written, "sysconfig parameter")} to the device (its store is RAM only)"
+                    : $"[ERR ] restored {written} sysconfig parameters, but the device didn't ack "
+                        + $"{string.Join(", ", failures)}"
+            );
+        }
     }
+
+    /// <summary>The value each parameter should have, keyed by wire id: the saved override where one
+    /// exists and the firmware default otherwise — never an edit still being typed.</summary>
+    private Dictionary<sysconfig_param_t, double> SavedValues() =>
+        _runtimeParameters.ToDictionary(p => p.Def.Id, p => p.SavedValue);
+
+    /// <summary>Status lines can come off the handshake thread, so they are marshalled.</summary>
+    private void Report(string status) =>
+        Dispatcher.UIThread.Post(() => RuntimeStatusText = status);
+
+    private static string Count(int n, string noun) => $"{n} {noun}{(n == 1 ? "" : "s")}";
 
     private DeviceClient? ConnectedClient() =>
         _getClient() is { IsHandshaked: true } client ? client : null;

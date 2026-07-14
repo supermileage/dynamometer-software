@@ -346,10 +346,16 @@ public sealed class DeviceClient : IDisposable
     /// USB controller, which owns the store; throws <see cref="TimeoutException"/> on no reply or
     /// <see cref="DeviceCommandException"/> if the firmware rejects the value (out of range /
     /// unknown id ⇒ <c>USB_RSP_MALFORMED</c>).
+    /// <paramref name="announce"/> controls whether the write reports itself through
+    /// <see cref="CommandSent"/> / <see cref="CommandFailed"/>. Clear it for a bulk restore: every
+    /// parameter in the catalog goes out on each handshake, and narrating all of them would bury a
+    /// user's actual edit under a page of routine writes. The caller that suppressed the per-write
+    /// reports is then the one that owes a summary.
     /// </summary>
     public Task<usb_response_data_t> SetSysConfigParamAsync(
         sysconfig_param_t param,
         uint rawValue,
+        bool announce = true,
         TimeSpan? timeout = null,
         CancellationToken cancellationToken = default
     )
@@ -366,7 +372,7 @@ public sealed class DeviceClient : IDisposable
             task_offset_t.TASK_OFFSET_USB_CONTROLLER,
             (ushort)usb_controller_command_t.USB_CMD_SET_SYSCONFIG,
             body,
-            description: $"sysconfig {def.Describe(def.FromRawBits(rawValue))}",
+            description: announce ? $"sysconfig {def.Describe(def.FromRawBits(rawValue))}" : null,
             type: usb_msg_type_t.USB_MSG_CONFIG,
             throwOnError: true,
             timeout: timeout,

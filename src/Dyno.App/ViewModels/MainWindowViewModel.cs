@@ -100,6 +100,9 @@ public partial class MainWindowViewModel : ObservableObject
     {
         _loggerFactory = loggerFactory;
         SysConfig = new SysConfigViewModel(() => _client);
+        // The connect-time restore is the one device write the user never asked for, and the only
+        // one they cannot see happen on the page they're not looking at.
+        SysConfig.DeviceSyncLogged += line => Dispatcher.UIThread.Post(() => AddEvent(line));
         SelectedSampleRate =
             SampleRates.FirstOrDefault(c => c.Value == ForceSensorSampleRate.Sps128)
             ?? SampleRates[0];
@@ -243,13 +246,13 @@ public partial class MainWindowViewModel : ObservableObject
 
     private void OnHandshaked()
     {
-        // Re-deliver the saved sysconfig overrides on every handshake (first connect and link
-        // recoveries alike): the board keeps them only in RAM, so a reboot behind a re-handshake
-        // means it is running defaults until this push lands. Fire-and-forget off the UI thread;
-        // SysConfig reports the outcome in its own status line.
+        // Re-apply the saved sysconfig to the board on every handshake (first connect and link
+        // recoveries alike): it keeps settings only in RAM, so until this lands we have no idea what
+        // it is running — defaults if it rebooted, a previous session's values if it never did.
+        // Fire-and-forget off the UI thread; SysConfig reports the outcome itself.
         if (_client is { } client)
         {
-            _ = SysConfig.PushSavedToDeviceAsync(client);
+            _ = SysConfig.ResyncDeviceAsync(client);
         }
 
         Dispatcher.UIThread.Post(() =>

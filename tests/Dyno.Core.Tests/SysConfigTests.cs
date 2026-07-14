@@ -91,6 +91,97 @@ public class SysConfigCatalogTests
     }
 }
 
+public class SysConfigDeviceMirrorTests
+{
+    private static readonly IReadOnlyDictionary<sysconfig_param_t, double> NoOverrides =
+        new Dictionary<sysconfig_param_t, double>();
+
+    [Fact]
+    public void AFreshDevice_IsOwedTheWholeCatalog_DefaultsIncluded()
+    {
+        // The board's store is RAM with no flash behind it, and a board that stayed powered while
+        // the host restarted is still holding the *last* session's values — so a parameter the user
+        // never overrode still has to be written, or it keeps whatever it was left at.
+        var mirror = new SysConfigDeviceMirror();
+
+        var outstanding = mirror.Outstanding(NoOverrides);
+
+        Assert.Equal(SysConfigCatalog.Parameters.Count, outstanding.Count);
+        Assert.All(outstanding, o => Assert.Equal(o.Def.Default, o.Value));
+    }
+
+    [Fact]
+    public void OverridesAreWantedInPlaceOfDefaults()
+    {
+        var mirror = new SysConfigDeviceMirror();
+        var wanted = new Dictionary<sysconfig_param_t, double>
+        {
+            [sysconfig_param_t.SYSCFG_K_P] = 2.5,
+        };
+
+        var kp = Assert.Single(
+            mirror.Outstanding(wanted),
+            o => o.Def.Id == sysconfig_param_t.SYSCFG_K_P
+        );
+        Assert.Equal(2.5, kp.Value);
+    }
+
+    [Fact]
+    public void OnceConfirmed_OnlyAChangedValueIsOwed()
+    {
+        var mirror = new SysConfigDeviceMirror();
+        var wanted = SysConfigCatalog.Parameters.ToDictionary(d => d.Id, d => d.Default);
+        foreach (var (def, value) in mirror.Outstanding(wanted))
+        {
+            mirror.Confirm(def.Id, value);
+        }
+
+        // Nothing changed: the device is up to date and a save must not re-send the catalog.
+        Assert.Empty(mirror.Outstanding(wanted));
+
+        // One value edited: exactly that parameter goes out.
+        wanted[sysconfig_param_t.SYSCFG_K_P] = 2.5;
+        var owed = Assert.Single(mirror.Outstanding(wanted));
+        Assert.Equal(sysconfig_param_t.SYSCFG_K_P, owed.Def.Id);
+        Assert.Equal(2.5, owed.Value);
+    }
+
+    [Fact]
+    public void AWriteThatWasNeverConfirmed_StaysOwed()
+    {
+        var mirror = new SysConfigDeviceMirror();
+        var wanted = SysConfigCatalog.Parameters.ToDictionary(d => d.Id, d => d.Default);
+        foreach (var (def, value) in mirror.Outstanding(wanted))
+        {
+            // The device never acked K_P — so it must not be marked as holding it.
+            if (def.Id != sysconfig_param_t.SYSCFG_K_P)
+            {
+                mirror.Confirm(def.Id, value);
+            }
+        }
+
+        var owed = Assert.Single(mirror.Outstanding(wanted));
+        Assert.Equal(sysconfig_param_t.SYSCFG_K_P, owed.Def.Id);
+    }
+
+    [Fact]
+    public void Forget_OwesTheWholeCatalogAgain()
+    {
+        var mirror = new SysConfigDeviceMirror();
+        var wanted = SysConfigCatalog.Parameters.ToDictionary(d => d.Id, d => d.Default);
+        foreach (var (def, value) in mirror.Outstanding(wanted))
+        {
+            mirror.Confirm(def.Id, value);
+        }
+
+        // The link dropped and came back — which is exactly what a board reset looks like from here.
+        mirror.Forget();
+
+        Assert.Equal(SysConfigCatalog.Parameters.Count, mirror.Outstanding(wanted).Count);
+        Assert.Equal(0, mirror.ConfirmedCount);
+    }
+}
+
 public class SysConfigStoreTests : IDisposable
 {
     private readonly string _dbPath = Path.Combine(
@@ -278,6 +369,38 @@ public class SysConfigDeviceCommandTests
 
         Assert.Equal("sysconfig K_P = 2.5", Assert.Single(sent));
         Assert.Empty(failed);
+    }
+
+    [Fact]
+    public async Task SetSysConfigParam_Unannounced_IsWrittenButNotNarrated()
+    {
+        using var serial = new FakeSerial();
+        using var client = new DeviceClient(serial);
+
+        var sent = new List<string>();
+        var acks = new List<CommandResponse>();
+        client.CommandSent += d => sent.Add(d);
+        client.MessageReceived += m =>
+        {
+            if (m is CommandResponse r)
+            {
+                acks.Add(r);
+            }
+        };
+
+        AckWhatever(serial, usb_response_status_t.USB_RSP_OK);
+        client.Start();
+        var response = await client.SetSysConfigParamAsync(
+            sysconfig_param_t.SYSCFG_K_P,
+            BitConverter.SingleToUInt32Bits(2.5f),
+            announce: false
+        );
+
+        // The restore that runs on every connect writes all 27 parameters; narrating each one would
+        // bury the log. The write still happens — it just reports itself as a batch, upstream.
+        Assert.Equal((uint)usb_response_status_t.USB_RSP_OK, response.status);
+        Assert.Empty(sent);
+        Assert.Null(Assert.Single(acks).Request);
     }
 
     [Fact]
