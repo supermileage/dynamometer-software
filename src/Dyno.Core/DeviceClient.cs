@@ -77,6 +77,12 @@ public sealed class DeviceClient : IDisposable
     /// is not something a reader can notice. Undescribed traffic (the handshake ack and the
     /// heartbeats built on it) stays silent, so this reports intent, not chatter. Fires on the
     /// caller's thread; retries do not re-raise it.</summary>
+    /// <summary>Raised when the parser had to throw bytes away to regain alignment, with how many.
+    /// The device→host stream carries no CRC and no framing, so bytes lost in transit (a full ring
+    /// buffer on the board, most likely) do not announce themselves — they just shift everything
+    /// after them, and this is the only place that shows up. Fires on the read-loop thread.</summary>
+    public event Action<int>? StreamResynced;
+
     public event Action<string>? CommandSent;
 
     /// <summary>Raised when a described command runs out of attempts without an ack — a timeout, or
@@ -129,6 +135,16 @@ public sealed class DeviceClient : IDisposable
         _connection = connection;
         _log = logger ?? NullLogger<DeviceClient>.Instance;
         _parser.MessageReceived += OnParsed;
+        _parser.Resynced += OnResynced;
+    }
+
+    private void OnResynced(int bytesDropped)
+    {
+        _log.LogWarning(
+            "dropped {Bytes} bytes to resync the device stream; the link is losing data",
+            bytesDropped
+        );
+        StreamResynced?.Invoke(bytesDropped);
     }
 
     public bool IsRunning => _readLoop is { IsCompleted: false };
@@ -408,6 +424,7 @@ public sealed class DeviceClient : IDisposable
                 // reconstruct what was asked.
                 message = response with
                 {
+                    Matched = true,
                     Request = pending.Description,
                 };
                 break;
@@ -504,7 +521,7 @@ public sealed class DeviceClient : IDisposable
                 _log.LogDebug(
                     "response from {Task}: {Request} (opcode={Opcode} msg_id={MsgId}) status={Status}",
                     r.Source,
-                    r.Request ?? "unmatched request",
+                    r.Request ?? (r.Matched ? "unannounced command" : "unmatched request"),
                     r.Data.opcode,
                     r.Data.msg_id,
                     (usb_response_status_t)r.Data.status

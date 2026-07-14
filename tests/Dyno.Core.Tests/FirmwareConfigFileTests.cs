@@ -155,48 +155,4 @@ public class FirmwareConfigFileTests
         var file = ParseDebug();
         Assert.All(file.Defines, d => Assert.Equal(ConfigValueKind.Bool, d.Kind));
     }
-
-    [Fact]
-    public void SetValueRewritesOnlyTheValue()
-    {
-        var file = ParseConfig();
-        Assert.True(file.TrySetValue("VREF", "5.0f"));
-        Assert.True(file.TrySetValue("NUM_APERTURES", "128"));
-        Assert.True(file.TrySetValue("SESSION_CONTROLLER_TO_LUMEX_LCD_MSG_STRING_SIZE", "32 + 1"));
-
-        var text = file.ToText();
-        Assert.Contains("#define VREF 5.0f", text);
-        // The trailing comment survives in place.
-        Assert.Contains("#define NUM_APERTURES 128 // Tied to physical 3D printed apparatus", text);
-        Assert.Contains("#define SESSION_CONTROLLER_TO_LUMEX_LCD_MSG_STRING_SIZE 32 + 1", text);
-        Assert.Equal("5.0f", Get(file, "VREF").Value);
-    }
-
-    [Fact]
-    public void SetValuePreservesAlignmentPadding()
-    {
-        var file = ParseDebug();
-        Assert.True(file.TrySetValue("STM32_PERIPHERAL_GPIO_ENABLE", "0"));
-        Assert.Contains("#define STM32_PERIPHERAL_GPIO_ENABLE      0", file.ToText());
-    }
-
-    [Fact]
-    public void UntouchedTextRoundTripsExactly()
-    {
-        Assert.Equal(ConfigHeader, ParseConfig().ToText());
-        Assert.Equal(DebugHeader, ParseDebug().ToText());
-    }
-
-    [Fact]
-    public void SetValueRejectsBadInput()
-    {
-        var file = ParseConfig();
-        Assert.False(file.TrySetValue("NOT_A_DEFINE", "1"));
-        Assert.False(file.TrySetValue("VREF", ""));
-        Assert.False(file.TrySetValue("VREF", "   "));
-        Assert.False(file.TrySetValue("VREF", "1.0f // sneaky comment"));
-        Assert.False(file.TrySetValue("VREF", "1.0f\n#define EVIL 1"));
-        // Failed sets leave the text untouched.
-        Assert.Equal(ConfigHeader, file.ToText());
-    }
 }

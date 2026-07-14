@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using Dyno.Core.Firmware;
 
 namespace Dyno.App.ViewModels;
@@ -6,7 +7,12 @@ namespace Dyno.App.ViewModels;
 /// <summary>
 /// One editable firmware <c>#define</c> on the SysConfig page. Wraps a parsed
 /// <see cref="ConfigDefine"/> with edit state: the value being typed (or toggled), whether it
-/// differs from what's on disk, and the text searched against.
+/// differs from the last saved value, whether it differs from the header at all, and the text
+/// searched against.
+///
+/// The header's value is the firmware's — the app never writes it — so a saved value here is a
+/// statement of intent, not a change to the build. <see cref="HeaderValue"/> is kept alongside it
+/// so the page can always show what the running firmware actually has.
 /// </summary>
 public partial class ConfigParameterViewModel : ObservableObject
 {
@@ -23,6 +29,17 @@ public partial class ConfigParameterViewModel : ObservableObject
     public bool IsText => !IsBool;
     public bool HasDescription => Description.Length > 0;
 
+    /// <summary>What the header declares, and so what the firmware was built with.</summary>
+    public string HeaderValue { get; }
+
+    /// <summary>Shown while the saved value differs from the header, which is the only case where
+    /// the two can be confused.</summary>
+    public string HeaderText => $"{FileLabel} has {HeaderValue}";
+
+    /// <summary>Puts the header's value back in the editor. Staged like any other edit — Apply is
+    /// what drops the saved row.</summary>
+    public IRelayCommand ResetCommand { get; }
+
     /// <summary>Free-form value for non-bool settings, as shown in the TextBox.</summary>
     [ObservableProperty]
     private string _text;
@@ -34,7 +51,22 @@ public partial class ConfigParameterViewModel : ObservableObject
     [ObservableProperty]
     private bool _isDirty;
 
-    public ConfigParameterViewModel(ConfigDefine define, string fileLabel, Action edited)
+    /// <summary>True while the box is empty: a <c>#define</c> with no value is an include guard,
+    /// not a setting, so there is nothing to save.</summary>
+    [ObservableProperty]
+    private bool _isInvalid;
+
+    /// <summary>True when the saved value differs from the header's — the page is showing something
+    /// the firmware does not have. Drives the Reset button.</summary>
+    [ObservableProperty]
+    private bool _isOverride;
+
+    public ConfigParameterViewModel(
+        ConfigDefine define,
+        string fileLabel,
+        string? savedValue,
+        Action edited
+    )
     {
         _edited = edited;
         Name = define.Name;
@@ -42,10 +74,13 @@ public partial class ConfigParameterViewModel : ObservableObject
         FileLabel = fileLabel;
         Description = define.Description;
         IsBool = define.Kind == ConfigValueKind.Bool;
+        HeaderValue = define.Value;
         _boolUsesWords = define.Value is "true" or "false";
-        _savedValue = define.Value;
-        _text = define.Value;
-        _isOn = define.Value is "1" or "true";
+        _savedValue = savedValue ?? define.Value;
+        _isOverride = savedValue is not null && savedValue != define.Value;
+        _text = _savedValue;
+        _isOn = _savedValue is "1" or "true";
+        ResetCommand = new RelayCommand(Reset);
         _searchHaystack = string.Join(
                 ' ',
                 Name,
@@ -57,7 +92,7 @@ public partial class ConfigParameterViewModel : ObservableObject
             .ToLowerInvariant();
     }
 
-    /// <summary>The value as it would be written back to the header.</summary>
+    /// <summary>The value as it would appear in the header.</summary>
     public string EditedValue =>
         IsBool
             ? (IsOn, _boolUsesWords) switch
@@ -69,20 +104,36 @@ public partial class ConfigParameterViewModel : ObservableObject
             }
             : Text.Trim();
 
+    private void Reset()
+    {
+        if (IsBool)
+        {
+            IsOn = HeaderValue is "1" or "true";
+        }
+        else
+        {
+            Text = HeaderValue;
+        }
+    }
+
     partial void OnTextChanged(string value) => RefreshDirty();
 
     partial void OnIsOnChanged(bool value) => RefreshDirty();
 
     private void RefreshDirty()
     {
-        IsDirty = EditedValue != _savedValue;
+        IsInvalid = EditedValue.Length == 0;
+        IsDirty = !IsInvalid && EditedValue != _savedValue;
         _edited();
     }
 
-    /// <summary>The current edit is now what's on disk.</summary>
+    /// <summary>The current edit has been persisted. A value equal to the header's is not an
+    /// override at all — there is nothing to remember about wanting what you already have — so
+    /// saving it is how a Reset takes effect.</summary>
     public void MarkSaved()
     {
         _savedValue = EditedValue;
+        IsOverride = _savedValue != HeaderValue;
         RefreshDirty();
     }
 

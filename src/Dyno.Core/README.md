@@ -31,8 +31,36 @@ The firmware emits `usb_msg_header_t`(12 B) + payload back-to-back with **no SOF
 CDC is already reliable). `StreamParser.Append` accumulates bytes, reads each header, waits
 for `payload_len` bytes, then dispatches on `(msg_type, task_offset)` to an
 `OpticalEncoderSample` / `ForceSensorSample` / `BpmSample` / `TaskMonitorSample` /
-`DeviceFault` / `CommandResponse` / `DeviceReady` / `SessionState` / `UnknownMessage`. A header
-plausibility check gives best-effort resync if the stream is ever corrupted.
+`DeviceFault` / `CommandResponse` / `DeviceReady` / `SessionState` / `UnknownMessage`.
+
+`msg_type` is the protocol-level intent and decides the direction: `COMMAND` and `CONFIG` only ever
+go PC → STM32; `RESPONSE` (a reply to one of those), `EVENT` (an async announcement — device-ready,
+session start/stop), `STREAM` (continuous sensor data), `STATUS`, `ERROR` and `WARNING` only ever
+come back. `task_offset` says which module the payload belongs to, and the two together pick the
+record: `EVENT` + `USB_CONTROLLER` is a device-ready announce, `STREAM` + `OPTICAL_ENCODER` is an
+encoder sample, and so on.
+
+### Resync, and why it has to be strict
+Nothing in this direction is framed — no start marker, no CRC, no length prefix beyond the header's
+own — so **any 12 bytes that look like a header are a header**, and the parser will consume a
+payload's worth of real data behind them. If the board ever drops bytes (a full USB ring is the
+likely cause), every record after the gap is misaligned, and a window onto the middle of one record
+can pass for the start of another.
+
+`IsPlausible` is therefore as strict as the format allows: an inbound-only `msg_type`, a
+`task_offset` the firmware actually has (they are sparse — 0, 0x10000, 0x20000 …), a payload within
+bounds, and — for every record we can decode — **exactly** the size that record must be. That last
+check matters more than it looks: `TASK_OFFSET_TASK_MONITOR` is 0, so without it a run of zeros is a
+"valid" task, and a stray `4` nearby is a "valid" STREAM type. A real link produced
+`RESPONSE / task 252 / len 4` — impossible twice over (no such task; a RESPONSE is always 8 bytes) —
+and a laxer check reported it upward as a message the device never sent.
+
+Bytes skipped to regain alignment are counted and raised on `Resynced` **once alignment is regained**
+(not per read — one lost record is re-scanned across several serial chunks, and reporting per chunk
+turns one fault into a stutter of warnings). `DeviceClient` re-raises it as `StreamResynced`, and the
+app logs it as a warning: dropped bytes are the *only* evidence this link ever loses data, so they
+are a link fault to surface, not noise to swallow. An `UnknownMessage` now means what it says — a
+well-formed record this host has no decoder for.
 
 ## Transmit path (PC → STM32)
 `UsbFrame.BuildCommandFrame` wraps a `usb_cmd_header_t` (opcode + msg_id) + body in the
@@ -96,10 +124,13 @@ board in **RAM with no flash behind it**. It boots on its config.h defaults, kee
 wrote only while it stays powered, and cannot tell anyone what it currently holds. So the PC's SQLite
 store is not a cache of the device's settings — it is the only copy, and the device is the copy.
 
-That splits saving from applying. Saving is the app's Apply button: it writes the values to SQLite,
-and touches no device. Applying is a reconciliation pass over `SysConfigDeviceMirror`, which tracks
-what the board is *believed* to hold and yields the parameters whose saved value it isn't known to
-have. One pass therefore serves both cases:
+That splits saving from applying. Saving is the app's Apply button — the **only** thing that writes
+to `SysConfigStore`, and it touches no device. Every edit on the page is staged until it: typing a
+value, and Reset too, which stages the firmware default rather than committing it (a reset that wrote
+straight through would be the one edit that bypassed the button, and would leave Apply greyed out on
+a change the user had just made). Applying is a reconciliation pass over `SysConfigDeviceMirror`,
+which tracks what the board is *believed* to hold and yields the parameters whose saved value it
+isn't known to have. One pass therefore serves both cases:
 
 - **A value changed** → the mirror is current except for that one parameter, so exactly one write
   goes out (announced, so the event log names it).
@@ -111,6 +142,19 @@ have. One pass therefore serves both cases:
 
 A write that is never acked is simply never confirmed, so it stays outstanding and goes out again on
 the next pass — which is the only recovery available to a board that cannot remember anything.
+
+### Compile-time settings are remembered, not applied
+The same page also lists the `#define`s from `config.h` / `debug.h` (`FirmwareConfigFile` parses
+them). These *cannot* be applied to a running board — buffer sizes dimension static arrays on a
+heapless firmware, and debug.h decides what code is compiled in at all — so Apply saves them to the
+store's second table (`compiletime`, keyed by define name, values kept as text because
+`ADS1115_RATE_475` and `16 + 1` are as much a `#define` value as `100u`) **and stops there**.
+
+Nothing else reads that table yet: the headers are parsed but **never written**, so the firmware
+keeps whatever it was compiled with. A saved value is a statement of intent, and the page says so —
+it shows what the header actually has beside any setting whose saved value differs, and offers Reset
+to drop the row. A value equal to the header's is stored as no row at all: wanting what you already
+have is not worth remembering, and that is how the row a Reset undid actually disappears.
 
 ## Session state
 The dyno streams sensor data **only while a session is running**, so the absence of samples means

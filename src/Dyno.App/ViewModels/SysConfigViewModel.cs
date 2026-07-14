@@ -11,20 +11,22 @@ using Dyno.Core.SysConfig;
 namespace Dyno.App.ViewModels;
 
 /// <summary>
-/// Drives the SysConfig page, which manages two kinds of firmware settings:
+/// Drives the SysConfig page. Everything on it is saved the same way — <see cref="Apply"/> writes it
+/// to a SQLite database on this computer — but the two halves differ in what happens next:
 /// <list type="bullet">
-/// <item><b>Runtime parameters</b> (gains, task delays, thresholds): edited here and persisted in a
-/// SQLite database on this computer, which is the only place they are kept — the board's store is
-/// RAM behind no flash, so it forgets them on every reboot. Saving and applying are therefore two
-/// separate jobs: <see cref="ApplyRuntime"/> writes the values to the database, and a reconciliation
-/// pass (<see cref="SyncDeviceAsync"/>) brings whatever device is connected into line with it. That
-/// pass sends only what the board is not already known to hold, which makes it both the cheap path
-/// for a single edit and the correct path on connect, where nothing is known and every parameter
-/// goes out.</item>
+/// <item><b>Runtime parameters</b> (gains, task delays, thresholds): the database is the only place
+/// they are kept, since the board's store is RAM behind no flash and it forgets them on every
+/// reboot. So saving and applying are separate jobs: Apply writes the values, and a reconciliation
+/// pass (<see cref="SyncDeviceAsync"/>) brings whatever device is connected into line with them.
+/// That pass sends only what the board is not already known to hold, which makes it both the cheap
+/// path for a single edit and the correct path on connect, where nothing is known and every
+/// parameter goes out.</item>
 /// <item><b>Compile-time settings</b> (buffer sizes; debug.h's task/peripheral gates): these
 /// physically cannot change at runtime — buffer sizes dimension static arrays on a heapless
-/// firmware, and debug.h decides what code is compiled in at all — so they are edited in the
-/// headers themselves and take effect on the next firmware build and flash.</item>
+/// firmware, and debug.h decides what code is compiled in at all. Saving one records what the user
+/// wants and <b>nothing else</b>: the headers are read but never written, and no build reads the
+/// database, so the firmware keeps whatever it was compiled with until someone edits config.h /
+/// debug.h and flashes it.</item>
 /// </list>
 /// </summary>
 public partial class SysConfigViewModel : ObservableObject
@@ -34,16 +36,14 @@ public partial class SysConfigViewModel : ObservableObject
     private const string SampleRateCardHaystack =
         "device runtime force sensor sample rate sps usb ads1115 live";
 
-    private sealed record LoadedFile(string Label, string Path, FirmwareConfigFile File);
-
     /// <summary>config.h defines that are runtime-managed now: their #define is only the boot
-    /// default, so the header editor hides them in favour of the runtime section above it.</summary>
+    /// default, so the compile-time section hides them in favour of the runtime section above
+    /// it.</summary>
     private static readonly HashSet<string> RuntimeManagedNames = SysConfigCatalog
         .Parameters.Select(p => p.Name)
         .ToHashSet();
 
     private readonly Func<DeviceClient?> _getClient;
-    private readonly List<LoadedFile> _files = new();
     private readonly List<ConfigParameterViewModel> _parameters = new();
     private readonly List<RuntimeParameterViewModel> _runtimeParameters = new();
 
@@ -92,21 +92,15 @@ public partial class SysConfigViewModel : ObservableObject
     [ObservableProperty]
     private bool _hasNoMatches;
 
+    /// <summary>Edits staged across both halves of the page — Apply's whole job, and the only thing
+    /// that enables it.</summary>
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(SaveCommand))]
-    [NotifyPropertyChangedFor(nameof(DirtySummary))]
-    private int _dirtyCount;
+    [NotifyCanExecuteChangedFor(nameof(ApplyCommand))]
+    [NotifyPropertyChangedFor(nameof(PendingSummary))]
+    private int _pendingCount;
 
-    [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(ApplyRuntimeCommand))]
-    [NotifyPropertyChangedFor(nameof(RuntimeDirtySummary))]
-    private int _runtimeDirtyCount;
-
-    public string DirtySummary =>
-        DirtyCount == 1 ? "1 unsaved change" : $"{DirtyCount} unsaved changes";
-
-    public string RuntimeDirtySummary =>
-        RuntimeDirtyCount == 1 ? "1 pending change" : $"{RuntimeDirtyCount} pending changes";
+    public string PendingSummary =>
+        PendingCount == 1 ? "1 pending change" : $"{PendingCount} pending changes";
 
     public SysConfigViewModel(Func<DeviceClient?> getClient, string? databasePath = null)
     {
@@ -143,26 +137,53 @@ public partial class SysConfigViewModel : ObservableObject
                 new RuntimeParameterViewModel(
                     def,
                     saved.TryGetValue(def.Id, out var value) ? value : null,
-                    RecountRuntimeDirty,
-                    ResetRuntimeParameterAsync
+                    Recount
                 )
             );
         }
     }
 
-    private bool CanApplyRuntime => RuntimeDirtyCount > 0;
+    private bool CanApply => PendingCount > 0;
 
-    /// <summary>Saves every edited runtime value to SQLite. That is all it does to the settings
-    /// themselves — the database is where they live, and the device is a copy of it, brought up to
-    /// date by the sync that follows. Values the firmware would reject never leave the validation in
-    /// <see cref="RuntimeParameterViewModel"/> (the button counts only valid edits), so a failure to
-    /// reach the device is a link problem, not a value problem.</summary>
-    [RelayCommand(CanExecute = nameof(CanApplyRuntime))]
-    private async Task ApplyRuntime()
+    /// <summary>The page's one commit point: every staged edit, of either kind, is written to SQLite
+    /// here and nowhere else. What follows differs by kind — the runtime values are then pushed to
+    /// whatever device is connected, while the compile-time ones just sit in the database — but a
+    /// user pressing this has done the same thing either way: told this computer what they want.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanApply))]
+    private async Task Apply()
+    {
+        var savedRuntime = SaveRuntime();
+        SaveCompileTime();
+
+        if (savedRuntime > 0)
+        {
+            RuntimeStatusText = $"Saved {Count(savedRuntime, "change")} on this PC";
+            await SyncDeviceAsync(ConnectedClient(), announce: true);
+        }
+    }
+
+    /// <summary>Persists the edited runtime values. Values the firmware would reject never get this
+    /// far — the validation in <see cref="RuntimeParameterViewModel"/> keeps them out of the pending
+    /// count, and so out of Apply — which is why a failure to reach the device below is a link
+    /// problem rather than a value problem.</summary>
+    private int SaveRuntime()
     {
         var saved = 0;
-        foreach (var parameter in _runtimeParameters.Where(p => p.IsDirty && !p.IsInvalid).ToList())
+        foreach (var parameter in _runtimeParameters.Where(p => p.IsDirty).ToList())
         {
+            // A staged reset is a change like any other, and this is where it lands: forgetting the
+            // saved override rather than writing a value over it. Both leave the parameter wanting a
+            // different value than the device is known to hold, so both are picked up by the same
+            // sync — a reset simply wants the firmware default.
+            if (parameter.ResetRequested)
+            {
+                _store?.Remove(parameter.Def.Id);
+                parameter.MarkReset();
+                saved++;
+                continue;
+            }
+
             if (parameter.EditedValue is not double value)
             {
                 continue;
@@ -172,20 +193,36 @@ public partial class SysConfigViewModel : ObservableObject
             parameter.MarkSaved(isOverride: true);
             saved++;
         }
-
-        RuntimeStatusText = $"Saved {Count(saved, "setting")} on this PC";
-        await SyncDeviceAsync(ConnectedClient(), announce: true);
+        return saved;
     }
 
-    /// <summary>Reverts one parameter to the firmware default: forgets the local override, so the
-    /// value the sync below wants on the device is the default again.</summary>
-    private async Task ResetRuntimeParameterAsync(RuntimeParameterViewModel parameter)
+    /// <summary>Persists the edited <c>#define</c>s, and stops there. Nothing reads them back except
+    /// this page: the headers are the firmware's, and the app only ever reads them. A value equal to
+    /// the header's is stored as no row at all — wanting what you already have is not worth
+    /// remembering, and it is how the row a Reset undid actually disappears.</summary>
+    private void SaveCompileTime()
     {
-        _store?.Remove(parameter.Def.Id);
-        parameter.ResetToDefault();
+        var saved = 0;
+        foreach (var parameter in _parameters.Where(p => p.IsDirty).ToList())
+        {
+            if (parameter.EditedValue == parameter.HeaderValue)
+            {
+                _store?.RemoveCompileTime(parameter.Name);
+            }
+            else
+            {
+                _store?.SaveCompileTime(parameter.Name, parameter.FileLabel, parameter.EditedValue);
+            }
+            parameter.MarkSaved();
+            saved++;
+        }
 
-        RuntimeStatusText = $"{parameter.Name} reset to its firmware default on this PC";
-        await SyncDeviceAsync(ConnectedClient(), announce: true);
+        if (saved > 0)
+        {
+            StatusText =
+                $"Saved {Count(saved, "compile-time setting")} on this PC — the firmware still "
+                + "builds from config.h / debug.h, so nothing on the board has changed";
+        }
     }
 
     /// <summary>
@@ -290,15 +327,16 @@ public partial class SysConfigViewModel : ObservableObject
     private DeviceClient? ConnectedClient() =>
         _getClient() is { IsHandshaked: true } client ? client : null;
 
-    private void RecountRuntimeDirty() =>
-        RuntimeDirtyCount = _runtimeParameters.Count(p => p.IsDirty && !p.IsInvalid);
+    private void Recount() =>
+        PendingCount = _runtimeParameters.Count(p => p.IsDirty) + _parameters.Count(p => p.IsDirty);
 
+    /// <summary>Re-reads the headers, discarding staged edits to them. Saved values survive: they
+    /// live in the database, not in the files.</summary>
     [RelayCommand]
     private void Reload() => Load();
 
     private void Load()
     {
-        _files.Clear();
         _parameters.Clear();
 
         var dir = FirmwareConfigLocator.FindConfigDirectory();
@@ -313,10 +351,11 @@ public partial class SysConfigViewModel : ObservableObject
         {
             try
             {
+                var saved = _store?.LoadAllCompileTime() ?? new Dictionary<string, string>();
                 // debug.h's defines are all 0/1 enable switches, so they get toggles; config.h's
                 // are quantities, where a literal 0 or 1 would be an ordinary number.
-                LoadFile(dir, "config.h", binaryTogglesAreBool: false);
-                LoadFile(dir, "debug.h", binaryTogglesAreBool: true);
+                LoadFile(dir, "config.h", saved, binaryTogglesAreBool: false);
+                LoadFile(dir, "debug.h", saved, binaryTogglesAreBool: true);
                 LoadFailed = false;
                 StatusText = $"{_parameters.Count} compile-time settings — {dir}";
             }
@@ -327,19 +366,22 @@ public partial class SysConfigViewModel : ObservableObject
             }
         }
 
-        RecountDirty();
+        Recount();
         ApplyFilter();
     }
 
-    private void LoadFile(string dir, string fileName, bool binaryTogglesAreBool)
+    private void LoadFile(
+        string dir,
+        string fileName,
+        IReadOnlyDictionary<string, string> saved,
+        bool binaryTogglesAreBool
+    )
     {
-        var path = Path.Combine(dir, fileName);
         var parsed = FirmwareConfigFile.Parse(
             fileName,
-            File.ReadAllText(path),
+            File.ReadAllText(Path.Combine(dir, fileName)),
             binaryTogglesAreBool
         );
-        _files.Add(new LoadedFile(fileName, path, parsed));
         foreach (var define in parsed.Defines)
         {
             // Runtime-managed values are edited in the section above; their #define is just the
@@ -348,62 +390,16 @@ public partial class SysConfigViewModel : ObservableObject
             {
                 continue;
             }
-            _parameters.Add(new ConfigParameterViewModel(define, fileName, RecountDirty));
+            _parameters.Add(
+                new ConfigParameterViewModel(
+                    define,
+                    fileName,
+                    saved.TryGetValue(define.Name, out var value) ? value : null,
+                    Recount
+                )
+            );
         }
     }
-
-    private bool CanSave => DirtyCount > 0;
-
-    [RelayCommand(CanExecute = nameof(CanSave))]
-    private void Save()
-    {
-        var saved = 0;
-        var rejected = new List<string>();
-        foreach (var file in _files)
-        {
-            var applied = new List<ConfigParameterViewModel>();
-            foreach (
-                var parameter in _parameters.Where(p => p.IsDirty && p.FileLabel == file.Label)
-            )
-            {
-                if (file.File.TrySetValue(parameter.Name, parameter.EditedValue))
-                {
-                    applied.Add(parameter);
-                }
-                else
-                {
-                    rejected.Add(parameter.Name);
-                }
-            }
-            if (applied.Count == 0)
-            {
-                continue;
-            }
-
-            try
-            {
-                File.WriteAllText(file.Path, file.File.ToText());
-            }
-            catch (Exception ex)
-            {
-                // The edits stay dirty (nothing below runs), so a later save retries them.
-                StatusText = $"Failed to write {file.Label}: {ex.Message}";
-                return;
-            }
-            foreach (var parameter in applied)
-            {
-                parameter.MarkSaved();
-            }
-            saved += applied.Count;
-        }
-
-        StatusText =
-            rejected.Count > 0
-                ? $"Saved {saved}, but rejected empty/invalid value for: {string.Join(", ", rejected)}"
-                : $"Saved {saved} setting{(saved == 1 ? "" : "s")} — rebuild and flash the firmware to apply";
-    }
-
-    private void RecountDirty() => DirtyCount = _parameters.Count(p => p.IsDirty);
 
     partial void OnSearchTextChanged(string value) => ApplyFilter();
 

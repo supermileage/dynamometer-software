@@ -156,6 +156,7 @@ public partial class MainWindowViewModel : ObservableObject
             client.SessionStateChanged += OnSessionStateChanged;
             client.CommandSent += OnCommandSent;
             client.CommandFailed += OnCommandFailed;
+            client.StreamResynced += OnStreamResynced;
             _client = client;
             ConnectionStatus = $"Connecting to {SelectedPort}…";
             // Opening the serial port starts blocking I/O that, on a Linux USB-CDC device, can
@@ -218,6 +219,7 @@ public partial class MainWindowViewModel : ObservableObject
         client.SessionStateChanged -= OnSessionStateChanged;
         client.CommandSent -= OnCommandSent;
         client.CommandFailed -= OnCommandFailed;
+        client.StreamResynced -= OnStreamResynced;
     }
 
     private bool CanSetSampleRate => IsConnected && SelectedSampleRate is not null;
@@ -398,12 +400,25 @@ public partial class MainWindowViewModel : ObservableObject
                 // outcome is already reported through Handshaked / ConnectionLost, so logging each
                 // one would just push real events out of the (capped) list every few seconds.
                 break;
+            case CommandResponse { Matched: true, Request: null }:
+                // A command whose sender asked not to announce it: the sysconfig restore, which
+                // writes all 27 parameters on every handshake and reports itself as one summary
+                // line. The ack is real and its command did apply — it just isn't news on its own,
+                // and 27 of them would bury whatever else the log was holding.
+                break;
             case CommandResponse r:
                 AddEvent(Describe(r));
                 break;
             case UnknownMessage u:
+                // A frame whose header passed the parser's plausibility check but whose payload
+                // then fit no known record. Two things do that: a firmware sending something this
+                // host has no decoder for, or — far more often — bytes lost in the device→host
+                // stream, which is unframed (no start marker, no CRC), so a window onto the middle
+                // of one record can pass for the start of another.
                 AddEvent(
-                    $"[?   ] {u.Header.msg_type}/{Friendly(u.Header.task_offset)} len={u.Header.payload_len}"
+                    $"[?   ] undecoded {u.Header.msg_type} from {Friendly(u.Header.task_offset)} "
+                        + $"with a {u.Header.payload_len}-byte payload — no decoder for it, or bytes "
+                        + "were dropped and the parser is resyncing"
                 );
                 break;
         }
@@ -455,6 +470,20 @@ public partial class MainWindowViewModel : ObservableObject
         }
     }
 
+    /// <summary>Bytes were thrown away to realign the stream — which means bytes were lost getting
+    /// here. Reported as a warning rather than as the undecodable frames it used to produce: those
+    /// frames were never sent by anything, and reading them as messages (from "task 252", say) told
+    /// the user about a device that does not exist instead of about a link that is dropping data.
+    /// </summary>
+    private void OnStreamResynced(int bytesDropped) =>
+        Dispatcher.UIThread.Post(() =>
+            AddEvent(
+                $"[WARN] dropped {bytesDropped} byte{(bytesDropped == 1 ? "" : "s")} to resync the "
+                    + "device stream — data was lost in transit (the board's USB buffer overflowing "
+                    + "would do it); samples around this point are missing"
+            )
+        );
+
     /// <summary>A command going out. Logged from the client rather than from each call site so the
     /// sysconfig writes pushed on a handshake — which no button press announces — show up too.
     /// Fires on whichever thread sent the command (the UI thread for a button, a background one for
@@ -479,17 +508,21 @@ public partial class MainWindowViewModel : ObservableObject
     /// device do the thing, or not. The reply names neither — it carries an opcode and a msg_id,
     /// which say nothing to a reader — so the wording leans on the request the client matched it to
     /// (<see cref="CommandResponse.Request"/>), and a rejection is filed as an error rather than
-    /// left to be spotted in a status code. The raw form is the fallback for an ack we can't pair
-    /// with a request (a duplicate, or one that outlived its command's timeout); those numbers are
-    /// all there is to say about it, and it is the case where they're worth printing.
+    /// left to be spotted in a status code. The raw form is the fallback for an ack that matched no
+    /// command at all (a duplicate, or one that outlived its command's timeout); those numbers are
+    /// all there is to say about it, and it is the one case where they're worth printing.
     /// </summary>
     private static string Describe(CommandResponse r)
     {
         var status = (usb_response_status_t)r.Data.status;
         if (r.Request is not { } request)
         {
-            return $"[RSP ] {Friendly(r.Source)} unmatched reply — opcode={r.Data.opcode} "
-                + $"id={r.Data.msg_id} status={status}";
+            // msg_id is just the counter the host stamps on each command so the reply can be paired
+            // back to it — there is nothing in it to decode, and saying whose number it was is the
+            // most it can tell anyone. The opcode does have a meaning, and it is per-task.
+            return $"[RSP ] {Friendly(r.Source)} {CommandOpcodes.Name(r.Source, r.Data.opcode)} — "
+                + $"{status}, but this answers host request #{r.Data.msg_id}, which nothing was "
+                + "waiting for (a duplicate ack, or one that outlived its command)";
         }
 
         return status == usb_response_status_t.USB_RSP_OK

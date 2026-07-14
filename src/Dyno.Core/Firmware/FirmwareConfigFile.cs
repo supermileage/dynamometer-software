@@ -32,16 +32,14 @@ public sealed class ConfigDefine
 
     public required ConfigValueKind Kind { get; init; }
 
-    /// <summary>Zero-based line of the define within the file, for write-back.</summary>
-    public required int LineIndex { get; init; }
-
-    public string Value { get; internal set; } = string.Empty;
+    /// <summary>The value the header declares — what the firmware is actually built with.</summary>
+    public required string Value { get; init; }
 }
 
 /// <summary>
 /// Parses a firmware config header (<c>config.h</c> / <c>debug.h</c>) into its editable
-/// <c>#define</c>s and writes edited values back without disturbing anything else in the file —
-/// comments, blank lines, alignment and include guards all survive a round trip.
+/// <c>#define</c>s. Read-only: the app shows and stores these settings but never writes the headers
+/// back, so the source files stay the sole authority on what the firmware was built with.
 ///
 /// The grouping convention mirrors how these headers are actually written: a comment block
 /// separated from the code above by a blank line is a section header ("category") for the defines
@@ -56,26 +54,13 @@ public sealed class FirmwareConfigFile
         RegexOptions.Compiled
     );
 
-    private readonly string[] _lines;
-    private readonly string _newline;
-    private readonly List<ConfigDefine> _defines;
-    private readonly Dictionary<string, ConfigDefine> _byName;
-
     public string FileName { get; }
-    public IReadOnlyList<ConfigDefine> Defines => _defines;
+    public IReadOnlyList<ConfigDefine> Defines { get; }
 
-    private FirmwareConfigFile(
-        string fileName,
-        string[] lines,
-        string newline,
-        List<ConfigDefine> defines
-    )
+    private FirmwareConfigFile(string fileName, IReadOnlyList<ConfigDefine> defines)
     {
         FileName = fileName;
-        _lines = lines;
-        _newline = newline;
-        _defines = defines;
-        _byName = defines.ToDictionary(d => d.Name);
+        Defines = defines;
     }
 
     /// <param name="fileName">Display name only (e.g. <c>config.h</c>); no I/O happens here.</param>
@@ -89,7 +74,6 @@ public sealed class FirmwareConfigFile
         bool binaryTogglesAreBool = false
     )
     {
-        var newline = content.Contains("\r\n") ? "\r\n" : "\n";
         var lines = content.Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
 
         var defines = new List<ConfigDefine>();
@@ -163,7 +147,6 @@ public sealed class FirmwareConfigFile
                         Category = category,
                         Description = description,
                         Kind = ClassifyValue(value, binaryTogglesAreBool),
-                        LineIndex = i,
                         Value = value,
                     }
                 );
@@ -178,57 +161,8 @@ public sealed class FirmwareConfigFile
             previousLineWasDefine = false;
         }
 
-        return new FirmwareConfigFile(fileName, lines, newline, defines);
+        return new FirmwareConfigFile(fileName, defines);
     }
-
-    /// <summary>Replaces the value of <paramref name="name"/> in the stored text, leaving the
-    /// rest of its line (indentation, trailing comment) untouched. False if the define is unknown
-    /// or the new value is empty/multi-line.</summary>
-    public bool TrySetValue(string name, string newValue)
-    {
-        newValue = newValue.Trim();
-        if (
-            newValue.Length == 0
-            || newValue.Contains('\n')
-            || newValue.Contains("//")
-            || newValue.Contains("/*")
-            || !_byName.TryGetValue(name, out var define)
-        )
-        {
-            return false;
-        }
-
-        var line = _lines[define.LineIndex];
-        var nameStart = line.IndexOf(define.Name, StringComparison.Ordinal);
-        var valueStart = nameStart + define.Name.Length;
-        while (valueStart < line.Length && char.IsWhiteSpace(line[valueStart]))
-        {
-            valueStart++;
-        }
-
-        // The value runs to the trailing comment (if any), minus right-hand padding.
-        var regionEnd = line.IndexOf("//", valueStart, StringComparison.Ordinal);
-        if (regionEnd < 0)
-        {
-            regionEnd = line.IndexOf("/*", valueStart, StringComparison.Ordinal);
-        }
-        if (regionEnd < 0)
-        {
-            regionEnd = line.Length;
-        }
-        var valueEnd = regionEnd;
-        while (valueEnd > valueStart && char.IsWhiteSpace(line[valueEnd - 1]))
-        {
-            valueEnd--;
-        }
-
-        _lines[define.LineIndex] = line[..valueStart] + newValue + line[valueEnd..];
-        define.Value = newValue;
-        return true;
-    }
-
-    /// <summary>The file's full text with any edits applied.</summary>
-    public string ToText() => string.Join(_newline, _lines);
 
     private static bool TryParseDefine(
         string trimmedLine,

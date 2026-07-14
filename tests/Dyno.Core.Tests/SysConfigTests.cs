@@ -232,6 +232,50 @@ public class SysConfigStoreTests : IDisposable
     {
         using var store = new SysConfigStore(_dbPath);
         Assert.Empty(store.LoadAll());
+        Assert.Empty(store.LoadAllCompileTime());
+    }
+
+    [Fact]
+    public void CompileTimeValuesRoundTrip_AndSurviveReopen()
+    {
+        using (var store = new SysConfigStore(_dbPath))
+        {
+            // Kept as text: a #define is a C token, not a number.
+            store.SaveCompileTime("ADS1115_SAMPLE_SPEED", "config.h", "ADS1115_RATE_860");
+            store.SaveCompileTime("STM32_PERIPHERAL_TIM2_ENABLE", "debug.h", "1");
+            store.SaveCompileTime("ADS1115_SAMPLE_SPEED", "config.h", "ADS1115_RATE_475"); // overwrite
+        }
+
+        using var reopened = new SysConfigStore(_dbPath);
+        var values = reopened.LoadAllCompileTime();
+        Assert.Equal(2, values.Count);
+        Assert.Equal("ADS1115_RATE_475", values["ADS1115_SAMPLE_SPEED"]);
+        Assert.Equal("1", values["STM32_PERIPHERAL_TIM2_ENABLE"]);
+    }
+
+    [Fact]
+    public void RemoveCompileTimeForgetsASetting()
+    {
+        using var store = new SysConfigStore(_dbPath);
+        store.SaveCompileTime("NUM_APERTURES", "config.h", "128");
+        store.RemoveCompileTime("NUM_APERTURES");
+        Assert.Empty(store.LoadAllCompileTime());
+    }
+
+    [Fact]
+    public void TheTwoKindsOfSettingDoNotCollide()
+    {
+        // Same name, different tables: the runtime K_P is a value the device is told, the
+        // compile-time one would be the board's boot default. Nothing should conflate them.
+        using var store = new SysConfigStore(_dbPath);
+        store.Save(sysconfig_param_t.SYSCFG_K_P, "K_P", 2.5);
+        store.SaveCompileTime("K_P", "config.h", "1.0f");
+
+        Assert.Equal(2.5, store.LoadAll()[sysconfig_param_t.SYSCFG_K_P]);
+        Assert.Equal("1.0f", store.LoadAllCompileTime()["K_P"]);
+
+        store.RemoveCompileTime("K_P");
+        Assert.Equal(2.5, store.LoadAll()[sysconfig_param_t.SYSCFG_K_P]);
     }
 }
 
@@ -400,7 +444,13 @@ public class SysConfigDeviceCommandTests
         // bury the log. The write still happens — it just reports itself as a batch, upstream.
         Assert.Equal((uint)usb_response_status_t.USB_RSP_OK, response.status);
         Assert.Empty(sent);
-        Assert.Null(Assert.Single(acks).Request);
+
+        // Its ack has no description, but it is still an ack for a command we sent: a consumer must
+        // be able to tell that from a reply that matched nothing, or it will report the whole quiet
+        // restore as 27 stray frames.
+        var ack = Assert.Single(acks);
+        Assert.Null(ack.Request);
+        Assert.True(ack.Matched);
     }
 
     [Fact]
@@ -509,7 +559,9 @@ public class SysConfigDeviceCommandTests
         );
 
         await seen.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        Assert.Null(Assert.Single(acks).Request);
+        var ack = Assert.Single(acks);
+        Assert.Null(ack.Request);
+        Assert.False(ack.Matched);
     }
 
     /// <summary>Acks whatever the host writes, echoing its opcode and msg_id like the firmware.</summary>

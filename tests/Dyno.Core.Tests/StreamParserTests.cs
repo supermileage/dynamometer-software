@@ -206,4 +206,130 @@ public class StreamParserTests
         var sample = Assert.IsType<OpticalEncoderSample>(Assert.Single(received));
         Assert.Equal(7u, sample.Data.timestamp);
     }
+
+    [Fact]
+    public void AHeaderWithAnImpossibleTaskOffset_IsDesync_NotAMessage()
+    {
+        var (parser, received) = NewParser();
+
+        // Exactly what a real link produced: a RESPONSE header claiming task 252 and a 4-byte
+        // payload. No task has that offset (they are 0, 0x10000, 0x20000 …) and a real
+        // usb_response_data_t is 8 bytes, so these 12 bytes are a window onto the middle of some
+        // other record — the tail of one that lost bytes. Believing it would cost us the 4 bytes
+        // behind it too, and put a fictional message in front of the user.
+        var bogus = new usb_msg_header_t
+        {
+            msg_type = usb_msg_type_t.USB_MSG_RESPONSE,
+            task_offset = (task_offset_t)252,
+            payload_len = 4,
+        };
+        byte[] real = Wire.Message(
+            usb_msg_type_t.USB_MSG_STREAM,
+            task_offset_t.TASK_OFFSET_OPTICAL_ENCODER,
+            new optical_encoder_output_data { timestamp = 9 }
+        );
+
+        parser.Append([.. Wire.ToBytes(bogus), 1, 2, 3, 4, .. real]);
+
+        // The garbage is skipped byte by byte and the record behind it still arrives.
+        var sample = Assert.IsType<OpticalEncoderSample>(Assert.Single(received));
+        Assert.Equal(9u, sample.Data.timestamp);
+    }
+
+    [Fact]
+    public void AKnownRecordAtTheWrongSize_IsDesync_NotAMessage()
+    {
+        var (parser, received) = NewParser();
+
+        // A RESPONSE is always 8 bytes (the firmware static-asserts it), so a 4-byte one is not a
+        // short RESPONSE — it is not a RESPONSE. Handing it upward as an undecodable frame would be
+        // reporting a message the device never sent.
+        var wrongSize = new usb_msg_header_t
+        {
+            msg_type = usb_msg_type_t.USB_MSG_RESPONSE,
+            task_offset = task_offset_t.TASK_OFFSET_USB_CONTROLLER,
+            payload_len = 4,
+        };
+        byte[] real = Wire.Message(
+            usb_msg_type_t.USB_MSG_STREAM,
+            task_offset_t.TASK_OFFSET_OPTICAL_ENCODER,
+            new optical_encoder_output_data { timestamp = 11 }
+        );
+
+        parser.Append([.. Wire.ToBytes(wrongSize), 1, 2, 3, 4, .. real]);
+
+        var sample = Assert.IsType<OpticalEncoderSample>(Assert.Single(received));
+        Assert.Equal(11u, sample.Data.timestamp);
+    }
+
+    [Fact]
+    public void ARecordWeHaveNoDecoderFor_IsStillSurfaced()
+    {
+        var (parser, received) = NewParser();
+
+        // The other reason a frame fails to decode: it is real, from a real task, and this host
+        // simply has no decoder for it (a STATUS frame — nothing reads those yet). That is worth
+        // showing, and it is exactly what must not be confused with a desync.
+        var status = new usb_msg_header_t
+        {
+            msg_type = usb_msg_type_t.USB_MSG_STATUS,
+            task_offset = task_offset_t.TASK_OFFSET_PID_CONTROLLER,
+            payload_len = 4,
+        };
+
+        parser.Append([.. Wire.ToBytes(status), 1, 2, 3, 4]);
+
+        var unknown = Assert.IsType<UnknownMessage>(Assert.Single(received));
+        Assert.Equal(usb_msg_type_t.USB_MSG_STATUS, unknown.Header.msg_type);
+        Assert.Equal(4u, unknown.Header.payload_len);
+    }
+
+    [Fact]
+    public void DroppedBytes_AreReported_NotSwallowed()
+    {
+        var parser = new StreamParser();
+        var received = new List<DeviceMessage>();
+        var resyncs = new List<int>();
+        parser.MessageReceived += received.Add;
+        parser.Resynced += resyncs.Add;
+
+        byte[] message = Wire.Message(
+            usb_msg_type_t.USB_MSG_STREAM,
+            task_offset_t.TASK_OFFSET_OPTICAL_ENCODER,
+            new optical_encoder_output_data { timestamp = 3 }
+        );
+
+        // Three bytes of a lost record's tail ahead of a good one. The stream has no CRC and no
+        // framing, so this silent loss is the only thing that ever tells anyone it happened.
+        parser.Append([0xEE, 0xEE, 0xEE, .. message]);
+
+        Assert.IsType<OpticalEncoderSample>(Assert.Single(received));
+        Assert.Equal(3, Assert.Single(resyncs));
+    }
+
+    [Fact]
+    public void OneDesync_SpreadOverManyReads_IsOneWarningWithTheTotal()
+    {
+        var parser = new StreamParser();
+        var received = new List<DeviceMessage>();
+        var resyncs = new List<int>();
+        parser.MessageReceived += received.Add;
+        parser.Resynced += resyncs.Add;
+
+        byte[] message = Wire.Message(
+            usb_msg_type_t.USB_MSG_STREAM,
+            task_offset_t.TASK_OFFSET_OPTICAL_ENCODER,
+            new optical_encoder_output_data { timestamp = 5 }
+        );
+
+        // The serial port hands bytes over in whatever chunks it feels like, so one lost record gets
+        // re-scanned across several Appends. That is one fault, and the user should be told once —
+        // not once per chunk the garbage happened to be split into.
+        parser.Append([0xEE, 0xEE, 0xEE, 0xEE]);
+        parser.Append([0xEE, 0xEE, 0xEE, 0xEE]);
+        parser.Append([0xEE, 0xEE, .. message]);
+
+        Assert.IsType<OpticalEncoderSample>(Assert.Single(received));
+        Assert.Equal(10, Assert.Single(resyncs));
+    }
 }

@@ -58,9 +58,10 @@
   </UserControl.Styles>
 
   <Grid RowDefinitions="Auto,*" Margin="16" RowSpacing="14">
-    <!-- Toolbar: title + search -->
+    <!-- Toolbar: title + search + the page's single Apply. It lives here, outside the scroller, so
+         it stays reachable from either half of the page — both halves save to the same place. -->
     <Border Grid.Row="0" Classes="card" Padding="12">
-      <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8">
         <TextBlock
           Grid.Column="0"
           Classes="heading"
@@ -74,13 +75,29 @@
           Watermark="Search settings — name, category or description (e.g. PID, task enable)"
           CornerRadius="7"
         />
+        <TextBlock
+          Grid.Column="2"
+          Text="{Binding SysConfig.PendingSummary}"
+          IsVisible="{Binding SysConfig.PendingCount}"
+          Foreground="{StaticResource AccentBrush}"
+          FontSize="12"
+          VerticalAlignment="Center"
+          Margin="6,0"
+        />
+        <Button
+          Grid.Column="3"
+          Classes="accent"
+          Content="Apply"
+          Command="{Binding SysConfig.ApplyCommand}"
+          ToolTip.Tip="Save every change on this page to this computer. Runtime values are then written to the connected device, and re-applied automatically each time a device connects, since the board forgets them when it reboots. Compile-time settings are only remembered — the firmware still builds from the headers."
+        />
       </Grid>
     </Border>
 
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
       <StackPanel Spacing="12">
         <!-- ===================== DEVICE RUNTIME ===================== -->
-        <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto" ColumnSpacing="10" Margin="4,0">
+        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="10" Margin="4,0">
           <TextBlock
             Grid.Column="0"
             Classes="sectiontitle"
@@ -90,21 +107,6 @@
           <Border Grid.Column="1" Classes="filebadge">
             <TextBlock Text="applied over USB · saved on this PC" />
           </Border>
-          <TextBlock
-            Grid.Column="3"
-            Text="{Binding SysConfig.RuntimeDirtySummary}"
-            IsVisible="{Binding SysConfig.RuntimeDirtyCount}"
-            Foreground="{StaticResource AccentBrush}"
-            FontSize="12"
-            VerticalAlignment="Center"
-          />
-          <Button
-            Grid.Column="4"
-            Classes="accent"
-            Content="Apply"
-            Command="{Binding SysConfig.ApplyRuntimeCommand}"
-            ToolTip.Tip="Send the edited values to the running device and save them on this computer. Saved values re-apply automatically every time a device connects."
-          />
         </Grid>
         <TextBlock
           Text="{Binding SysConfig.RuntimeStatusText}"
@@ -203,7 +205,7 @@
                             VerticalAlignment="Center"
                             IsVisible="{Binding IsOverride}"
                             Command="{Binding ResetCommand}"
-                            ToolTip.Tip="Forget the saved override and return to the firmware default"
+                            ToolTip.Tip="Go back to the firmware default — press Apply to save it"
                           />
                         </Grid>
                       </DataTemplate>
@@ -216,7 +218,7 @@
         </ItemsControl>
 
         <!-- ===================== COMPILE-TIME ===================== -->
-        <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto" ColumnSpacing="10" Margin="4,14,4,0">
+        <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="10" Margin="4,14,4,0">
           <TextBlock
             Grid.Column="0"
             Classes="sectiontitle"
@@ -224,28 +226,13 @@
             VerticalAlignment="Center"
           />
           <Border Grid.Column="1" Classes="filebadge">
-            <TextBlock Text="edits config.h / debug.h · rebuild + flash to apply" />
+            <TextBlock Text="saved on this PC · the firmware still builds from config.h / debug.h" />
           </Border>
-          <TextBlock
-            Grid.Column="3"
-            Text="{Binding SysConfig.DirtySummary}"
-            IsVisible="{Binding SysConfig.DirtyCount}"
-            Foreground="{StaticResource AccentBrush}"
-            FontSize="12"
-            VerticalAlignment="Center"
-          />
           <Button
-            Grid.Column="4"
+            Grid.Column="3"
             Content="Reload"
             Command="{Binding SysConfig.ReloadCommand}"
-            ToolTip.Tip="Re-read config.h and debug.h from disk, discarding unsaved edits"
-          />
-          <Button
-            Grid.Column="5"
-            Classes="accent"
-            Content="Save to headers"
-            Command="{Binding SysConfig.SaveCommand}"
-            ToolTip.Tip="Write the edited values back into config.h / debug.h. They take effect on the next firmware build + flash."
+            ToolTip.Tip="Re-read config.h and debug.h from disk, discarding edits you haven't applied. Saved values are kept — they live in this PC's database, not in the headers."
           />
         </Grid>
         <TextBlock Text="{Binding SysConfig.StatusText}" Classes="paramdesc" Margin="4,-6,4,0" />
@@ -270,8 +257,8 @@
                   <ItemsControl ItemsSource="{Binding Parameters}">
                     <ItemsControl.ItemTemplate>
                       <DataTemplate x:DataType="vm:ConfigParameterViewModel">
-                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10" Margin="0,5">
-                          <!-- Unsaved-change marker -->
+                        <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="10" Margin="0,5">
+                          <!-- Pending-change marker -->
                           <Ellipse
                             Grid.Column="0"
                             Width="7"
@@ -279,7 +266,7 @@
                             VerticalAlignment="Center"
                             Fill="{StaticResource AccentBrush}"
                             IsVisible="{Binding IsDirty}"
-                            ToolTip.Tip="Changed — not yet saved to the header"
+                            ToolTip.Tip="Changed — not yet applied"
                           />
                           <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
                             <TextBlock Classes="definename" Text="{Binding Name}" />
@@ -290,6 +277,14 @@
                               MaxWidth="560"
                               HorizontalAlignment="Left"
                             />
+                            <!-- Only while the saved value differs from the built firmware's, which
+                                 is the one case where the number on screen can mislead. -->
+                            <TextBlock
+                              Classes="paramdesc"
+                              Text="{Binding HeaderText}"
+                              IsVisible="{Binding IsOverride}"
+                              FontSize="10.5"
+                            />
                           </StackPanel>
                           <Panel Grid.Column="2" VerticalAlignment="Center">
                             <ToggleSwitch
@@ -299,10 +294,21 @@
                             />
                             <TextBox
                               Classes="definevalue"
+                              Classes.invalid="{Binding IsInvalid}"
                               Text="{Binding Text}"
                               IsVisible="{Binding IsText}"
                             />
                           </Panel>
+                          <Button
+                            Grid.Column="3"
+                            Content="Reset"
+                            FontSize="11"
+                            Padding="9,4"
+                            VerticalAlignment="Center"
+                            IsVisible="{Binding IsOverride}"
+                            Command="{Binding ResetCommand}"
+                            ToolTip.Tip="Go back to what the header says — press Apply to save it"
+                          />
                         </Grid>
                       </DataTemplate>
                     </ItemsControl.ItemTemplate>

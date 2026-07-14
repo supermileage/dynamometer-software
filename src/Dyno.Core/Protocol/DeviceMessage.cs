@@ -45,12 +45,19 @@ public sealed record SessionState(session_state_event Data) : DeviceMessage
 /// owning task, not the USB controller that relayed it.</summary>
 public sealed record CommandResponse(task_offset_t Source, usb_response_data_t Data) : DeviceMessage
 {
+    /// <summary>True when <see cref="DeviceClient"/> paired this reply with a command it had in
+    /// flight. False means nothing was waiting on that <c>msg_id</c> — a duplicate ack, or one that
+    /// arrived after its command had already timed out — and the frame's opcode and id are then all
+    /// anyone can say about it.</summary>
+    public bool Matched { get; init; }
+
     /// <summary>What the host asked for, in words (e.g. <c>"sysconfig K_P = 2.5"</c>) — filled in
-    /// by <see cref="DeviceClient"/> from the request this reply's <c>msg_id</c> matches. The
-    /// RESPONSE frame itself carries only an opcode and that id, so a reader of the reply alone
-    /// cannot tell *which* parameter a sysconfig write set, nor to what: the ack is meaningful
-    /// only next to the command it answers. Null when nothing matched the id — a duplicate ack, or
-    /// one that arrived after its command had already timed out.</summary>
+    /// from the request this reply's <c>msg_id</c> matches. The RESPONSE frame itself carries only
+    /// an opcode and that id, so a reader of the reply alone cannot tell *which* parameter a
+    /// sysconfig write set, nor to what: the ack is meaningful only next to the command it answers.
+    /// Null in two quite different cases, which <see cref="Matched"/> separates: the command matched
+    /// but was sent unannounced (a bulk restore, the heartbeat), or it matched nothing at all.
+    /// </summary>
     public string? Request { get; init; }
 }
 
