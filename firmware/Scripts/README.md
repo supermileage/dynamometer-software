@@ -5,7 +5,8 @@ the **host** (not inside the Docker build container).
 
 | Script | Purpose |
 |--------|---------|
-| `build-docker.sh` | Build the firmware in the pinned Docker toolchain image (byte-for-byte the CI environment). |
+| `build-docker.sh` | Build the firmware in the pinned Docker toolchain image on Linux/macOS/Git-Bash (byte-for-byte the CI environment). |
+| `build-docker.ps1` | The same Docker build on Windows (PowerShell). |
 | `flash.sh` | Flash a built image on Linux/macOS/Git-Bash. |
 | `flash.ps1` | Flash a built image on Windows (PowerShell). |
 | `99-stm32-flash.rules` | udev rules for non-root USB flashing on Linux. |
@@ -15,12 +16,22 @@ the **host** (not inside the Docker build container).
 ## Building (Docker)
 
 ```bash
-./Scripts/build-docker.sh            # Debug
-./Scripts/build-docker.sh Release
+./Scripts/build-docker.sh            # Release (the default)
+./Scripts/build-docker.sh Debug
 ./Scripts/build-docker.sh Debug -r   # also rebuild the toolchain image
 ```
-The repo is bind-mounted, so output lands in `build/<CONFIG>/` on the host. On
-Windows run it from Git Bash/WSL.
+```powershell
+.\Scripts\build-docker.ps1                  # Release (the default)
+.\Scripts\build-docker.ps1 -Config Debug
+.\Scripts\build-docker.ps1 -Rebuild         # also rebuild the toolchain image
+```
+The repo is bind-mounted, so output lands in `build-docker/<CONFIG>/` on the host.
+Both scripts drive the same `Dockerfile` and issue the same `docker run`, so the
+artifacts are identical either way.
+
+The toolchain image is Linux-based: on Windows, Docker Desktop must be in Linux
+container mode (the default). The PowerShell script checks this up front and
+tells you how to switch if it isn't.
 
 ---
 
@@ -43,17 +54,22 @@ the chip's built-in ROM bootloader, entered by holding **BOOT0 high and
 resetting** the board.
 
 The scripts flash an **already-built** image without rebuilding — the right entry
-point after a Docker build. Build once, flash as often as you like:
+point after a Docker build. Build once, flash as often as you like. Both the build
+and the flash scripts default to **Release**, so the pair lines up with no
+arguments; pass `Debug` explicitly to work with the Debug build instead.
 ```bash
-./Scripts/build-docker.sh Debug
-./Scripts/flash.sh Debug swd  --tool st-flash
-./Scripts/flash.sh Debug dfu  --tool dfu-util
-./Scripts/flash.sh Debug uart --tool stm32flash --port /dev/ttyUSB0
+./Scripts/build-docker.sh                       # Release
+./Scripts/flash.sh swd  --tool st-flash         # flashes the Release build
+./Scripts/flash.sh dfu  --tool dfu-util
+./Scripts/flash.sh uart --tool stm32flash --port /dev/ttyUSB0
+./Scripts/flash.sh Debug swd --tool st-flash    # flash the Debug build instead
 ```
 ```powershell
-.\Scripts\flash.ps1 -Config Debug -Method swd  -Tool st-flash
-.\Scripts\flash.ps1 -Config Debug -Method dfu  -Tool dfu-util
-.\Scripts\flash.ps1 -Config Debug -Method uart -Tool stm32flash -Port COM5
+.\Scripts\build-docker.ps1
+.\Scripts\flash.ps1 -Method swd  -Tool st-flash
+.\Scripts\flash.ps1 -Method dfu  -Tool dfu-util
+.\Scripts\flash.ps1 -Method uart -Tool stm32flash -Port COM5
+.\Scripts\flash.ps1 -Config Debug -Method swd -Tool st-flash
 ```
 
 Run `./Scripts/flash.sh --help` for the full option list.
