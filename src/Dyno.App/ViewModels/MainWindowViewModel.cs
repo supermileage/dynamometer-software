@@ -27,6 +27,83 @@ public partial class MainWindowViewModel : ObservableObject
     public ObservableCollection<TaskMonitorRow> Tasks { get; } = new();
     public ObservableCollection<string> Events { get; } = new();
 
+    // ---- Event log placement -------------------------------------------------------------------
+    // The log is a window onto the link, not a feature of the Home page: a sysconfig write is
+    // rejected, or the board drops off, while you are on SysConfig or Firmware — which is exactly
+    // when you are changing something. So it lives in the window rather than in a page, and the
+    // three states below are the ways it can sit there.
+
+    /// <summary>Docked: the log takes its own strip at the foot of the window and the page shrinks
+    /// to fit above it. Nothing is ever covered.</summary>
+    public bool IsEventLogDocked => IsEventLogVisible && IsEventLogPinned;
+
+    /// <summary>Floating: the log hovers over the foot of the page instead of shortening it. The
+    /// dense pages (SysConfig, Firmware) are worth their full height, and there the log is something
+    /// you glance at rather than read.</summary>
+    public bool IsEventLogFloating => IsEventLogVisible && !IsEventLogPinned;
+
+    /// <summary>Collapsed to a one-line bar. Not gone: it still says what the last event was, and
+    /// counts what you missed — a hidden log that silently swallowed an error would be worse than
+    /// no log.</summary>
+    public bool IsEventLogCollapsed => !IsEventLogVisible;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsEventLogDocked))]
+    [NotifyPropertyChangedFor(nameof(IsEventLogFloating))]
+    [NotifyPropertyChangedFor(nameof(IsEventLogCollapsed))]
+    private bool _isEventLogVisible = true;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsEventLogDocked))]
+    [NotifyPropertyChangedFor(nameof(IsEventLogFloating))]
+    [NotifyPropertyChangedFor(nameof(PinTooltip))]
+    private bool _isEventLogPinned = true;
+
+    /// <summary>Height of the log, in either state — dragged by the grip along its top edge.</summary>
+    [ObservableProperty]
+    private double _eventLogHeight = 200;
+
+    public string PinTooltip =>
+        IsEventLogPinned
+            ? "Pinned to the bottom — the page ends above the log. Unpin to let the log float over it instead."
+            : "Floating over the page. Pin it to give the log its own strip, so it never covers anything.";
+
+    /// <summary>What arrived while the log was collapsed, so the bar can say there is something to
+    /// come back for.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasMissedEvents))]
+    [NotifyPropertyChangedFor(nameof(MissedEventsText))]
+    private int _missedEventCount;
+
+    /// <summary>True when any of the missed events was an error or a warning — the difference
+    /// between "22 pings happened" and "something went wrong while you weren't looking".</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(MissedEventsText))]
+    private bool _missedAProblem;
+
+    public bool HasMissedEvents => MissedEventCount > 0;
+
+    public string MissedEventsText =>
+        $"{MissedEventCount} new{(MissedAProblem ? " — including a problem" : string.Empty)}";
+
+    /// <summary>The newest line, shown on the collapsed bar.</summary>
+    [ObservableProperty]
+    private string _latestEvent = "Nothing logged yet";
+
+    [RelayCommand]
+    private void ShowEventLog()
+    {
+        IsEventLogVisible = true;
+        MissedEventCount = 0;
+        MissedAProblem = false;
+    }
+
+    [RelayCommand]
+    private void HideEventLog() => IsEventLogVisible = false;
+
+    [RelayCommand]
+    private void ToggleEventLogPin() => IsEventLogPinned = !IsEventLogPinned;
+
     /// <summary>The SysConfig page: runtime device parameters (SQLite-persisted, pushed over
     /// USB) plus the compile-time header editor. It reaches the device link through the getter,
     /// so it always talks to the current client; the sample-rate control on that page binds to
@@ -458,7 +535,13 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void ClearEvents() => Events.Clear();
+    private void ClearEvents()
+    {
+        Events.Clear();
+        LatestEvent = "Nothing logged yet";
+        MissedEventCount = 0;
+        MissedAProblem = false;
+    }
 
     /// <summary>
     /// Renders event lines as text to paste elsewhere (a bug report, a chat). The list is shown
@@ -480,7 +563,19 @@ public partial class MainWindowViewModel : ObservableObject
 
     private void AddEvent(string text)
     {
-        Events.Insert(0, $"{DateTime.Now:HH:mm:ss.fff}  {text}");
+        var line = $"{DateTime.Now:HH:mm:ss.fff}  {text}";
+        Events.Insert(0, line);
+        LatestEvent = line;
+
+        if (IsEventLogCollapsed)
+        {
+            MissedEventCount++;
+            // Errors and warnings are the reason to reopen the log; pings are not.
+            MissedAProblem |=
+                text.StartsWith("[ERR", StringComparison.Ordinal)
+                || text.StartsWith("[WARN", StringComparison.Ordinal);
+        }
+
         // A [PING] every 5s is 12 lines a minute of routine traffic, so the cap is what decides how
         // far back a real error stays reachable: 200 would bury one within ~15 minutes of idling.
         const int cap = 1000;

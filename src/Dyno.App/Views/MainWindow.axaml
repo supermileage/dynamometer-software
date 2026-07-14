@@ -83,6 +83,25 @@
     <Style Selector="Button.nav.active">
       <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
     </Style>
+    <!-- Badge on the collapsed event log: how much arrived while it was shut. Grey for routine
+         traffic, red once any of it was an error or a warning — "22 new" and "22 new, one of them
+         a fault" are not the same news. -->
+    <Style Selector="Border.missed">
+      <Setter Property="CornerRadius" Value="9" />
+      <Setter Property="Padding" Value="7,2" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+    </Style>
+    <Style Selector="Border.missed TextBlock">
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+    </Style>
+    <Style Selector="Border.missed.problem">
+      <Setter Property="Background" Value="#E5484D" />
+    </Style>
+    <Style Selector="Border.missed.problem TextBlock">
+      <Setter Property="Foreground" Value="White" />
+    </Style>
     <Style Selector="Button.nav.active Path">
       <Setter Property="Stroke" Value="{StaticResource AccentBrush}" />
     </Style>
@@ -215,12 +234,81 @@
           </StackPanel>
         </Border>
 
-        <!-- Every page stays alive so Home keeps accumulating events while another is open. -->
-        <Panel Grid.Column="1">
-          <views:HomeView IsVisible="{Binding IsHomePage}" />
-          <views:SysConfigView IsVisible="{Binding IsSysConfigPage}" />
-          <views:FirmwareView IsVisible="{Binding IsFirmwarePage}" />
-        </Panel>
+        <!--
+          The page, with the event log beneath it. The log belongs to the window, not to a page:
+          the events worth seeing (a rejected write, a lost link) happen while you are on the page
+          that caused them. Pinned, it takes the bottom row and the page ends above it; unpinned, it
+          floats over the page instead of shortening it; hidden, it is a one-line bar that still
+          says what you missed.
+        -->
+        <Grid Grid.Column="1" RowDefinitions="*,Auto">
+          <!-- Every page stays alive so Home keeps accumulating events while another is open. -->
+          <Panel Grid.Row="0">
+            <views:HomeView IsVisible="{Binding IsHomePage}" />
+            <views:SysConfigView IsVisible="{Binding IsSysConfigPage}" />
+            <views:FirmwareView IsVisible="{Binding IsFirmwarePage}" />
+
+            <Border
+              VerticalAlignment="Bottom"
+              Margin="16"
+              CornerRadius="10"
+              BoxShadow="0 10 30 0 #99000000"
+              IsVisible="{Binding IsEventLogFloating}"
+            >
+              <views:EventLogView Height="{Binding EventLogHeight}" />
+            </Border>
+          </Panel>
+
+          <views:EventLogView
+            Grid.Row="1"
+            Margin="16,0,16,16"
+            Height="{Binding EventLogHeight}"
+            IsVisible="{Binding IsEventLogDocked}"
+          />
+
+          <!-- Collapsed: still the newest line, and a count of what arrived while it was shut. -->
+          <Border
+            Grid.Row="1"
+            Classes="card"
+            Margin="16,0,16,16"
+            Padding="12,7"
+            IsVisible="{Binding IsEventLogCollapsed}"
+          >
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="10">
+              <TextBlock
+                Grid.Column="0"
+                Classes="heading"
+                Text="ERRORS / EVENTS"
+                VerticalAlignment="Center"
+              />
+              <Border
+                Grid.Column="1"
+                Classes="missed"
+                Classes.problem="{Binding MissedAProblem}"
+                IsVisible="{Binding HasMissedEvents}"
+              >
+                <TextBlock Text="{Binding MissedEventsText}" />
+              </Border>
+              <TextBlock
+                Grid.Column="2"
+                Text="{Binding LatestEvent}"
+                FontFamily="{StaticResource MonoFont}"
+                FontSize="11.5"
+                Foreground="{StaticResource TextMutedBrush}"
+                TextTrimming="CharacterEllipsis"
+                VerticalAlignment="Center"
+              />
+              <Button
+                Grid.Column="3"
+                Content="Show"
+                Padding="10,4"
+                FontSize="12"
+                Command="{Binding ShowEventLogCommand}"
+                ToolTip.Tip="Bring the log back"
+              />
+            </Grid>
+          </Border>
+        </Grid>
       </Grid>
     </Grid>
 

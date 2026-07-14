@@ -45,14 +45,30 @@ Health data (task monitor) and faults are *not* gated: they are most worth seein
 sits idle.
 
 ## Pages
-- **Home** — connect, live telemetry, task monitor, event log.
+- **Home** — connect, live telemetry, task monitor.
 - **Config** (`SysConfigViewModel`) — the device's runtime parameters (saved on this PC, pushed over
   USB) and the firmware's compile-time `#define`s (saved on this PC, built in by the Firmware page).
   One Apply button commits both; see [[Dyno.Core]] for why saving and applying are separate.
 - **Firmware** (`FirmwareViewModel`) — build the firmware in the Docker toolchain, then flash it over
   SWD, USB DFU or UART. It runs `firmware/Scripts/` and shows their output verbatim.
 
-Every page stays alive while another is showing, so Home keeps accumulating events in the background.
+Every page stays alive while another is showing, so Home keeps accumulating telemetry in the
+background.
+
+### The event log belongs to the window, not to a page
+`EventLogView` is hosted by `MainWindow`, beneath whichever page is showing, because the events worth
+seeing happen while you are on the page that caused them: a sysconfig write is *rejected* while you
+are on Config, a link drops while you are flashing. It used to be the bottom row of Home, which is
+the one page you are not on when that matters.
+
+Three placements, and the log is resizable in each (drag the grip on its top edge):
+- **Pinned** (default) — it takes a strip at the foot of the window and the page ends above it, so
+  nothing is ever covered.
+- **Floating** — it hovers over the foot of the page instead of shortening it. The dense pages are
+  worth their full height, and there the log is something you glance at rather than read.
+- **Hidden** — a one-line bar, *not* nothing: it still shows the newest line and counts what arrived
+  while it was shut, turning red once any of that was an error or a warning. A hidden log that
+  silently swallowed a fault would be worse than no log.
 
 ### The Firmware page
 Two steps, in the order you do them. **Build** writes the saved compile-time settings into the

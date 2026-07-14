@@ -1,0 +1,125 @@
+<UserControl
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:vm="using:Dyno.App.ViewModels"
+  xmlns:conv="using:Dyno.App.Converters"
+  x:Class="Dyno.App.Views.EventLogView"
+  x:DataType="vm:MainWindowViewModel"
+>
+  <Design.DataContext>
+    <vm:MainWindowViewModel />
+  </Design.DataContext>
+
+  <UserControl.Styles>
+    <!-- The drag grip along the top edge. It is the whole width, because a resize handle you have
+         to hunt for is one nobody finds. -->
+    <Style Selector="Thumb.resize">
+      <Setter Property="Height" Value="10" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Cursor" Value="SizeNorthSouth" />
+      <Setter Property="Margin" Value="0,-8,0,2" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Background="Transparent" HorizontalAlignment="Stretch">
+            <Border
+              Width="34"
+              Height="3"
+              CornerRadius="2"
+              Background="{StaticResource StrokeBrush}"
+              VerticalAlignment="Center"
+              HorizontalAlignment="Center"
+            />
+          </Border>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+    <Style Selector="Thumb.resize:pointerover /template/ Border > Border">
+      <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+    </Style>
+    <Style Selector="Button.logaction">
+      <Setter Property="Padding" Value="10,4" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+    <!-- The pin, lit while the log holds its own strip at the foot of the window. -->
+    <Style Selector="ToggleButton.pin">
+      <Setter Property="Padding" Value="9,4" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="MinWidth" Value="0" />
+    </Style>
+    <Style Selector="ToggleButton.pin:checked /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+      <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+    </Style>
+  </UserControl.Styles>
+
+  <Border Classes="card" Padding="12,8,12,12">
+    <DockPanel>
+      <Thumb
+        x:Name="ResizeGrip"
+        Classes="resize"
+        DockPanel.Dock="Top"
+        DragDelta="OnResize"
+        ToolTip.Tip="Drag to resize the log"
+      />
+
+      <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" Margin="0,0,0,8">
+        <TextBlock
+          Grid.Column="0"
+          Classes="heading"
+          Text="ERRORS / EVENTS"
+          VerticalAlignment="Center"
+        />
+        <Button
+          x:Name="CopyEventsButton"
+          Grid.Column="2"
+          Classes="logaction"
+          Content="Copy"
+          Margin="0,0,6,0"
+          Click="OnCopyEvents"
+          ToolTip.Tip="Copy the selected lines — or all of them, if none are selected (Ctrl+C)"
+        />
+        <Button
+          Grid.Column="3"
+          Classes="logaction"
+          Content="Clear"
+          Margin="0,0,6,0"
+          Command="{Binding ClearEventsCommand}"
+          ToolTip.Tip="Empty the list, e.g. before reproducing a problem"
+        />
+        <ToggleButton
+          Grid.Column="4"
+          Classes="pin"
+          Content="Pin"
+          Margin="0,0,6,0"
+          IsChecked="{Binding IsEventLogPinned}"
+          ToolTip.Tip="{Binding PinTooltip}"
+        />
+        <Button
+          Grid.Column="5"
+          Classes="logaction"
+          Content="Hide"
+          Command="{Binding HideEventLogCommand}"
+          ToolTip.Tip="Collapse to a single bar. It keeps counting what you miss."
+        />
+      </Grid>
+
+      <ListBox
+        x:Name="EventList"
+        ItemsSource="{Binding Events}"
+        SelectionMode="Multiple"
+        KeyDown="OnEventListKeyDown"
+      >
+        <ListBox.ItemTemplate>
+          <DataTemplate>
+            <TextBlock
+              Text="{Binding}"
+              FontFamily="{StaticResource MonoFont}"
+              FontSize="12"
+              Foreground="{Binding Converter={x:Static conv:EventLevelToBrushConverter.Instance}}"
+            />
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+    </DockPanel>
+  </Border>
+</UserControl>

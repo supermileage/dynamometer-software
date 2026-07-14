@@ -10,7 +10,9 @@
     <vm:MainWindowViewModel />
   </Design.DataContext>
 
-  <Grid RowDefinitions="Auto,*,Auto" Margin="16" RowSpacing="14">
+  <!-- The event log used to be the last row here. It now belongs to the window (see
+       MainWindow.axaml), so it is on every page rather than only on this one. -->
+  <Grid RowDefinitions="Auto,*" Margin="16" RowSpacing="14">
     <!-- Connection toolbar -->
     <Border Grid.Row="0" Classes="card" Padding="12">
       <Grid ColumnDefinitions="Auto,*,Auto">
@@ -226,49 +228,5 @@
         </DockPanel>
       </Border>
     </Grid>
-
-    <!-- Errors / events -->
-    <Border Grid.Row="2" Classes="card" Height="200" Padding="12">
-      <DockPanel>
-        <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,8">
-          <TextBlock Classes="heading" Text="ERRORS / EVENTS" VerticalAlignment="Center" />
-          <Button
-            x:Name="CopyEventsButton"
-            Grid.Column="1"
-            Content="Copy"
-            Padding="12,4"
-            Margin="0,0,6,0"
-            FontSize="12"
-            Click="OnCopyEvents"
-            ToolTip.Tip="Copy the selected lines — or all of them, if none are selected (Ctrl+C)"
-          />
-          <Button
-            Grid.Column="2"
-            Content="Clear"
-            Padding="12,4"
-            FontSize="12"
-            Command="{Binding ClearEventsCommand}"
-            ToolTip.Tip="Empty the list, e.g. before reproducing a problem"
-          />
-        </Grid>
-        <ListBox
-          x:Name="EventList"
-          ItemsSource="{Binding Events}"
-          SelectionMode="Multiple"
-          KeyDown="OnEventListKeyDown"
-        >
-          <ListBox.ItemTemplate>
-            <DataTemplate>
-              <TextBlock
-                Text="{Binding}"
-                FontFamily="{StaticResource MonoFont}"
-                FontSize="12"
-                Foreground="{Binding Converter={x:Static conv:EventLevelToBrushConverter.Instance}}"
-              />
-            </DataTemplate>
-          </ListBox.ItemTemplate>
-        </ListBox>
-      </DockPanel>
-    </Border>
   </Grid>
 </UserControl>
