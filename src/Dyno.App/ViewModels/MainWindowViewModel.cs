@@ -151,6 +151,8 @@ public partial class MainWindowViewModel : ObservableObject
             client.HandshakeTimedOut += OnHandshakeTimedOut;
             client.HeartbeatAcked += OnHeartbeatAcked;
             client.SessionStateChanged += OnSessionStateChanged;
+            client.CommandSent += OnCommandSent;
+            client.CommandFailed += OnCommandFailed;
             _client = client;
             ConnectionStatus = $"Connecting to {SelectedPort}…";
             // Opening the serial port starts blocking I/O that, on a Linux USB-CDC device, can
@@ -211,6 +213,8 @@ public partial class MainWindowViewModel : ObservableObject
         client.HandshakeTimedOut -= OnHandshakeTimedOut;
         client.HeartbeatAcked -= OnHeartbeatAcked;
         client.SessionStateChanged -= OnSessionStateChanged;
+        client.CommandSent -= OnCommandSent;
+        client.CommandFailed -= OnCommandFailed;
     }
 
     private bool CanSetSampleRate => IsConnected && SelectedSampleRate is not null;
@@ -223,16 +227,17 @@ public partial class MainWindowViewModel : ObservableObject
             return;
         }
 
-        var choice = SelectedSampleRate;
         try
         {
-            // Succeeds only on a USB_RSP_OK ack; a timeout or firmware rejection throws.
-            await _client.SetForceSensorSampleRateAsync(choice.Value);
-            AddEvent($"[CMD ] force sensor sample rate set to {choice.Label}");
+            // Succeeds only on a USB_RSP_OK ack; a timeout or firmware rejection throws. Every
+            // outcome — sent, applied, rejected, unanswered — is already logged by the client's
+            // command events, so this catch exists to keep a rejection from faulting the command,
+            // not to report it a second time.
+            await _client.SetForceSensorSampleRateAsync(SelectedSampleRate.Value);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            AddEvent($"[ERR ] set sample rate failed: {ex.Message}");
+            // reported through CommandFailed / the response's status
         }
     }
 
@@ -391,9 +396,7 @@ public partial class MainWindowViewModel : ObservableObject
                 // one would just push real events out of the (capped) list every few seconds.
                 break;
             case CommandResponse r:
-                AddEvent(
-                    $"[RSP ] {Friendly(r.Source)} opcode={r.Data.opcode} id={r.Data.msg_id} status={(usb_response_status_t)r.Data.status}"
-                );
+                AddEvent(Describe(r));
                 break;
             case UnknownMessage u:
                 AddEvent(
@@ -447,6 +450,48 @@ public partial class MainWindowViewModel : ObservableObject
         {
             Events.RemoveAt(Events.Count - 1);
         }
+    }
+
+    /// <summary>A command going out. Logged from the client rather than from each call site so the
+    /// sysconfig writes pushed on a handshake — which no button press announces — show up too.
+    /// Fires on whichever thread sent the command (the UI thread for a button, a background one for
+    /// the handshake re-push), hence the marshalling.</summary>
+    private void OnCommandSent(string request) =>
+        Dispatcher.UIThread.Post(() => AddEvent($"[CMD ] {request} — sent, awaiting the device"));
+
+    /// <summary>A command that never got an answer. Worth a line of its own: the device applying a
+    /// value and the device never hearing about it are the same silence in a log that only prints
+    /// replies, and they are not the same thing to a user watching the dyno.</summary>
+    private void OnCommandFailed(string request, Exception ex) =>
+        Dispatcher.UIThread.Post(() =>
+            AddEvent(
+                ex is TimeoutException
+                    ? $"[ERR ] {request} — no reply from the device; it may or may not have applied"
+                    : $"[ERR ] {request} — could not be sent: {ex.Message}"
+            )
+        );
+
+    /// <summary>
+    /// One line for a command's ack, answering the only question the log is asked of it: did the
+    /// device do the thing, or not. The reply names neither — it carries an opcode and a msg_id,
+    /// which say nothing to a reader — so the wording leans on the request the client matched it to
+    /// (<see cref="CommandResponse.Request"/>), and a rejection is filed as an error rather than
+    /// left to be spotted in a status code. The raw form is the fallback for an ack we can't pair
+    /// with a request (a duplicate, or one that outlived its command's timeout); those numbers are
+    /// all there is to say about it, and it is the case where they're worth printing.
+    /// </summary>
+    private static string Describe(CommandResponse r)
+    {
+        var status = (usb_response_status_t)r.Data.status;
+        if (r.Request is not { } request)
+        {
+            return $"[RSP ] {Friendly(r.Source)} unmatched reply — opcode={r.Data.opcode} "
+                + $"id={r.Data.msg_id} status={status}";
+        }
+
+        return status == usb_response_status_t.USB_RSP_OK
+            ? $"[RSP ] {request} — applied by the device"
+            : $"[ERR ] {request} — REJECTED by the device ({status}); it still holds its previous value";
     }
 
     /// <summary>True for a reply to the USB controller's own <c>USB_CMD_ACK</c> — the handshake or

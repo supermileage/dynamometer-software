@@ -25,12 +25,7 @@ public partial class RuntimeParameterViewModel : ObservableObject
 
     /// <summary>Shown as the edit hint: the firmware default and accepted range.</summary>
     public string RangeText =>
-        $"default {Format(Def.Default)}"
-        + (
-            Def.IsFloat
-                ? $" · {Format(Def.Min)} to {Format(Def.Max)}"
-                : $" · {Def.Min:0} to {Def.Max:0}"
-        );
+        $"default {Def.Format(Def.Default)} · {Def.Format(Def.Min)} to {Def.Format(Def.Max)}";
 
     /// <summary>Reverts to the firmware default: forgets the SQLite override and, when connected,
     /// pushes the default back to the device. Injected by the page view model.</summary>
@@ -62,7 +57,7 @@ public partial class RuntimeParameterViewModel : ObservableObject
         _edited = edited;
         _savedValue = savedValue ?? def.Default;
         _isOverride = savedValue is not null;
-        _text = Format(_savedValue);
+        _text = def.Format(_savedValue);
         ResetCommand = new AsyncRelayCommand(() => reset(this));
     }
 
@@ -97,7 +92,7 @@ public partial class RuntimeParameterViewModel : ObservableObject
     {
         _savedValue = Def.Default;
         IsOverride = false;
-        Text = Format(Def.Default);
+        Text = Def.Format(Def.Default);
     }
 
     public bool Matches(IReadOnlyList<string> lowerCaseTerms)
@@ -114,9 +109,4 @@ public partial class RuntimeParameterViewModel : ObservableObject
             .ToLowerInvariant();
         return lowerCaseTerms.All(haystack.Contains);
     }
-
-    private string Format(double value) =>
-        Def.IsFloat
-            ? value.ToString("0.######", CultureInfo.InvariantCulture)
-            : value.ToString("0", CultureInfo.InvariantCulture);
 }

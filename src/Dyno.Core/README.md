@@ -39,6 +39,25 @@ plausibility check gives best-effort resync if the stream is ever corrupted.
 framed envelope with a CRC-16/CCITT-FALSE over header+payload. `DeviceClient.SendCommandAsync`
 allocates a `msg_id`, writes the frame, and awaits the matching `USB_MSG_RESPONSE`.
 
+### Saying what a command was
+A `USB_MSG_RESPONSE` carries only an opcode, the `msg_id` it echoes, and a status — so it cannot,
+on its own, say *which* sysconfig parameter a write set or to what. Only the sender knows that, and
+only until it stops caring. `SendCommandAsync` therefore takes a `description` ("sysconfig
+K_P = 2.5", built from `SysConfigCatalog`), holds it with the pending request, and reports the
+command's whole life against it:
+
+- `CommandSent` as it goes out (once per command, not per retry),
+- `CommandResponse.Request` on the reply that matches its `msg_id` — so a subscriber sees the ack
+  next to what it acks, and a non-OK status is a *named* parameter being refused,
+- `CommandFailed` if it runs out of attempts unanswered. A firmware *rejection* is not this: the
+  device replied, and the reply speaks for itself.
+
+The reply is published to `MessageReceived` **before** the pending command completes, so a sender
+cannot resume — and announce its next write — ahead of the ack for its last one. Applying a page of
+sysconfig edits is exactly that: one write after another, whose acks would otherwise log a beat late
+and read as the following parameter's. Undescribed commands (the handshake ack, the heartbeats built
+on it) raise neither event, which is what keeps routine link traffic out of the app's event log.
+
 ## Handshake (device-announced)
 The firmware streams **nothing** until the host acknowledges it. On connect it repeatedly
 emits a `usb_device_ready_event` (`USB_MSG_EVENT` / `TASK_OFFSET_USB_CONTROLLER`) carrying its

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Dyno.Core.Messages;
 using Dyno.Core.Protocol;
 using Dyno.Core.Serial;
+using Dyno.Core.SysConfig;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -15,13 +16,19 @@ namespace Dyno.Core;
 /// </summary>
 public sealed class DeviceClient : IDisposable
 {
+    /// <summary>A command awaiting its RESPONSE. <paramref name="Description"/> is what the command
+    /// was, in words; it is held here (rather than in a second dictionary) so it is discarded on
+    /// exactly the paths that discard the request itself — reply, timeout, failed write, link stop.
+    /// </summary>
+    private sealed record PendingCommand(
+        TaskCompletionSource<usb_response_data_t> Completion,
+        string? Description
+    );
+
     private readonly ISerialConnection _connection;
     private readonly ILogger<DeviceClient> _log;
     private readonly StreamParser _parser = new();
-    private readonly ConcurrentDictionary<
-        ushort,
-        TaskCompletionSource<usb_response_data_t>
-    > _pending = new();
+    private readonly ConcurrentDictionary<ushort, PendingCommand> _pending = new();
 
     private CancellationTokenSource? _cts;
     private Task? _readLoop;
@@ -63,6 +70,21 @@ public sealed class DeviceClient : IDisposable
     /// transition, and once just after the handshake so a host that connected to a steady board
     /// learns its state without waiting for an edge. Fires on the read-loop thread.</summary>
     public event Action<bool>? SessionStateChanged;
+
+    /// <summary>Raised as a described command goes out, with that description — the opening half of
+    /// the pair that <see cref="CommandResponse.Request"/> (or <see cref="CommandFailed"/>) closes.
+    /// Without it, a command the device never answers leaves no trace at all: the absence of an ack
+    /// is not something a reader can notice. Undescribed traffic (the handshake ack and the
+    /// heartbeats built on it) stays silent, so this reports intent, not chatter. Fires on the
+    /// caller's thread; retries do not re-raise it.</summary>
+    public event Action<string>? CommandSent;
+
+    /// <summary>Raised when a described command runs out of attempts without an ack — a timeout, or
+    /// a write that failed outright — with the description and the reason. A command the firmware
+    /// answers with a rejection is <em>not</em> a failure here: that reply arrives as a
+    /// <see cref="CommandResponse"/> carrying its non-OK status, and reporting it twice would say
+    /// the device both refused and ignored it. Fires on the caller's thread.</summary>
+    public event Action<string, Exception>? CommandFailed;
 
     /// <summary>True once the device-ready handshake (<c>USB_CMD_ACK</c> → <c>USB_RSP_OK</c>)
     /// completed, and while the device keeps answering the heartbeat.</summary>
@@ -163,11 +185,15 @@ public sealed class DeviceClient : IDisposable
     /// When <paramref name="throwOnError"/> is set, a RESPONSE whose status is not
     /// <c>USB_RSP_OK</c> is treated as a failure and raised as <see cref="DeviceCommandException"/>
     /// rather than returned — so callers that only care "did it apply?" need not inspect the status.
+    /// <paramref name="description"/> says what the command is in words; it rides along to the
+    /// matching <see cref="CommandResponse.Request"/> so the ack can be read without decoding an
+    /// opcode and a msg_id by hand.
     /// </summary>
     public async Task<usb_response_data_t> SendCommandAsync(
         task_offset_t target,
         ushort opcode,
         byte[]? body = null,
+        string? description = null,
         usb_msg_type_t type = usb_msg_type_t.USB_MSG_COMMAND,
         bool throwOnError = false,
         TimeSpan? timeout = null,
@@ -175,6 +201,14 @@ public sealed class DeviceClient : IDisposable
         CancellationToken cancellationToken = default
     )
     {
+        // Announced once for the whole command, not once per attempt: the retries below are this
+        // method's business, and a caller told "sending K_P = 2.5" three times would read it as
+        // three writes.
+        if (description is not null)
+        {
+            CommandSent?.Invoke(description);
+        }
+
         // A routed command's ack is the owning task's completion relayed back (ProcessCompletions).
         // If that completion is dropped (e.g. its queue was momentarily full) the reply never comes
         // and the attempt times out even though the command may have applied. A bounded retry with a
@@ -182,30 +216,45 @@ public sealed class DeviceClient : IDisposable
         // command already applied, so a retry re-applies it. A non-OK status or caller cancellation is
         // a definitive answer, not a timeout, so neither is retried.
         int attempts = 1 + Math.Max(0, retries);
-        for (int attempt = 1; ; attempt++)
+        try
         {
-            try
+            for (int attempt = 1; ; attempt++)
             {
-                return await SendOnceAsync(
-                        target,
+                try
+                {
+                    return await SendOnceAsync(
+                            target,
+                            opcode,
+                            body,
+                            description,
+                            type,
+                            throwOnError,
+                            timeout,
+                            cancellationToken
+                        )
+                        .ConfigureAwait(false);
+                }
+                catch (TimeoutException) when (attempt < attempts)
+                {
+                    _log.LogWarning(
+                        "no RESPONSE for opcode {Opcode} (attempt {Attempt}/{Attempts}); retrying with a fresh msg_id",
                         opcode,
-                        body,
-                        type,
-                        throwOnError,
-                        timeout,
-                        cancellationToken
-                    )
-                    .ConfigureAwait(false);
+                        attempt,
+                        attempts
+                    );
+                }
             }
-            catch (TimeoutException) when (attempt < attempts)
-            {
-                _log.LogWarning(
-                    "no RESPONSE for opcode {Opcode} (attempt {Attempt}/{Attempts}); retrying with a fresh msg_id",
-                    opcode,
-                    attempt,
-                    attempts
-                );
-            }
+        }
+        catch (Exception ex)
+            when (description is not null
+                && ex is not (OperationCanceledException or DeviceCommandException)
+            )
+        {
+            // Out of attempts with nothing to show for it. A rejection is excluded because the
+            // device did answer — that reply reports itself — and a cancellation is the caller (or
+            // the link) stopping, not the device failing to reply.
+            CommandFailed?.Invoke(description, ex);
+            throw;
         }
     }
 
@@ -213,6 +262,7 @@ public sealed class DeviceClient : IDisposable
         task_offset_t target,
         ushort opcode,
         byte[]? body,
+        string? description,
         usb_msg_type_t type,
         bool throwOnError,
         TimeSpan? timeout,
@@ -223,7 +273,7 @@ public sealed class DeviceClient : IDisposable
         var tcs = new TaskCompletionSource<usb_response_data_t>(
             TaskCreationOptions.RunContinuationsAsynchronously
         );
-        _pending[msgId] = tcs;
+        _pending[msgId] = new PendingCommand(tcs, description);
 
         byte[] frame = UsbFrame.BuildCommandFrame(target, type, opcode, msgId, body ?? []);
         try
@@ -246,7 +296,7 @@ public sealed class DeviceClient : IDisposable
                     // Distinguish the two reasons the linked token fired: a caller-requested cancel
                     // is a definitive stop (surface OperationCanceledException), whereas elapsing our
                     // own CancelAfter is a timeout (which callers may choose to retry).
-                    pending.TrySetException(
+                    pending.Completion.TrySetException(
                         cancellationToken.IsCancellationRequested
                             ? new OperationCanceledException(cancellationToken)
                             : new TimeoutException(
@@ -281,6 +331,7 @@ public sealed class DeviceClient : IDisposable
             task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115,
             (ushort)force_sensor_command_opcode.FORCE_SENSOR_CMD_SET_DATA_RATE,
             [(byte)rate],
+            description: $"force sensor sample rate = {rate.ToLabel()}",
             throwOnError: true,
             timeout: timeout,
             // Setting a data rate is idempotent, so it is safe to re-send if a completion ack is lost.
@@ -306,10 +357,16 @@ public sealed class DeviceClient : IDisposable
         byte[] body = new byte[6];
         BitConverter.TryWriteBytes(body.AsSpan(0, 2), (ushort)param);
         BitConverter.TryWriteBytes(body.AsSpan(2, 4), rawValue);
+        // The reply echoes only this opcode and a msg_id, so the parameter and the value it was set
+        // to are named here, while they are still known, and carried to the ack (CommandResponse.
+        // Request). rawValue is the wire form; the catalog turns it back into the number a person
+        // typed, which is also what the firmware will act on.
+        var def = SysConfigCatalog.Get(param);
         return SendCommandAsync(
             task_offset_t.TASK_OFFSET_USB_CONTROLLER,
             (ushort)usb_controller_command_t.USB_CMD_SET_SYSCONFIG,
             body,
+            description: $"sysconfig {def.Describe(def.FromRawBits(rawValue))}",
             type: usb_msg_type_t.USB_MSG_CONFIG,
             throwOnError: true,
             timeout: timeout,
@@ -332,12 +389,21 @@ public sealed class DeviceClient : IDisposable
 
     private void OnParsed(DeviceMessage message)
     {
-        LogInbound(message);
+        PendingCommand? answered = null;
+        usb_response_data_t answer = default;
+
         switch (message)
         {
             case CommandResponse response
-                when _pending.TryRemove(response.Data.msg_id, out var tcs):
-                tcs.TrySetResult(response.Data);
+                when _pending.TryRemove(response.Data.msg_id, out var pending):
+                (answered, answer) = (pending, response.Data);
+                // Republish the reply with the request it answers attached: this is the one place
+                // both halves are in hand, and a subscriber that sees only the reply cannot
+                // reconstruct what was asked.
+                message = response with
+                {
+                    Request = pending.Description,
+                };
                 break;
             case DeviceReady ready:
                 BeginHandshake(ready);
@@ -346,6 +412,8 @@ public sealed class DeviceClient : IDisposable
                 SetSessionActive(session.InSession);
                 break;
         }
+
+        LogInbound(message);
 
         try
         {
@@ -362,6 +430,13 @@ public sealed class DeviceClient : IDisposable
                 "a MessageReceived consumer threw; dropping this message and continuing"
             );
         }
+
+        // Released only now that the reply has been published — and released even if a subscriber
+        // threw above, since the sender is owed its answer either way. Completing first would let
+        // the sender resume (and send its next command, and announce it) while this reply was still
+        // on its way to the subscribers, so a batch of writes would log its acks a beat late,
+        // reading as though each one belonged to the following parameter.
+        answered?.Completion.TrySetResult(answer);
     }
 
     /// <summary>
@@ -421,8 +496,9 @@ public sealed class DeviceClient : IDisposable
                 break;
             case CommandResponse r:
                 _log.LogDebug(
-                    "response from {Task}: opcode={Opcode} msg_id={MsgId} status={Status}",
+                    "response from {Task}: {Request} (opcode={Opcode} msg_id={MsgId}) status={Status}",
                     r.Source,
+                    r.Request ?? "unmatched request",
                     r.Data.opcode,
                     r.Data.msg_id,
                     (usb_response_status_t)r.Data.status
@@ -721,9 +797,9 @@ public sealed class DeviceClient : IDisposable
     {
         foreach (var key in _pending.Keys)
         {
-            if (_pending.TryRemove(key, out var tcs))
+            if (_pending.TryRemove(key, out var pending))
             {
-                tcs.TrySetException(ex);
+                pending.Completion.TrySetException(ex);
             }
         }
     }

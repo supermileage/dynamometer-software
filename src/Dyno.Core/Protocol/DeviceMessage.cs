@@ -43,8 +43,16 @@ public sealed record SessionState(session_state_event Data) : DeviceMessage
 /// <summary>Reply to a host command, correlated to its request by <c>msg_id</c>. <paramref
 /// name="Source"/> is the module that actually applied it — for a routed command that is the
 /// owning task, not the USB controller that relayed it.</summary>
-public sealed record CommandResponse(task_offset_t Source, usb_response_data_t Data)
-    : DeviceMessage;
+public sealed record CommandResponse(task_offset_t Source, usb_response_data_t Data) : DeviceMessage
+{
+    /// <summary>What the host asked for, in words (e.g. <c>"sysconfig K_P = 2.5"</c>) — filled in
+    /// by <see cref="DeviceClient"/> from the request this reply's <c>msg_id</c> matches. The
+    /// RESPONSE frame itself carries only an opcode and that id, so a reader of the reply alone
+    /// cannot tell *which* parameter a sysconfig write set, nor to what: the ack is meaningful
+    /// only next to the command it answers. Null when nothing matched the id — a duplicate ack, or
+    /// one that arrived after its command had already timed out.</summary>
+    public string? Request { get; init; }
+}
 
 /// <summary>A well-formed header whose (type, task_offset, length) we don't decode yet.</summary>
 public sealed record UnknownMessage(usb_msg_header_t Header, byte[] Payload) : DeviceMessage;

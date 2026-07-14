@@ -1,3 +1,4 @@
+using System.Globalization;
 using Dyno.Core.Messages;
 
 namespace Dyno.Core.SysConfig;
@@ -32,4 +33,18 @@ public sealed record SysConfigParameterDef(
     /// float parameters, the plain integer for uint32 ones.</summary>
     public uint ToRawBits(double value) =>
         IsFloat ? BitConverter.SingleToUInt32Bits((float)value) : (uint)value;
+
+    /// <summary>The value those 32 bits stand for — the inverse of <see cref="ToRawBits"/>. Lets a
+    /// caller holding only the wire form (the body of a write already sent) say what it means.</summary>
+    public double FromRawBits(uint bits) => IsFloat ? BitConverter.UInt32BitsToSingle(bits) : bits;
+
+    /// <summary>The value as a person reads it: no exponent, no trailing zeros, and never the
+    /// current culture's decimal comma (these numbers are also what goes on the wire).</summary>
+    public string Format(double value) =>
+        value.ToString(IsFloat ? "0.######" : "0", CultureInfo.InvariantCulture);
+
+    /// <summary>This parameter and value in words, e.g. <c>"K_P = 2.5"</c> or
+    /// <c>"PID_TASK_OSDELAY = 10 ms"</c> — what a log line shows instead of a wire id.</summary>
+    public string Describe(double value) =>
+        $"{Name} = {Format(value)}{(Unit.Length > 0 ? $" {Unit}" : string.Empty)}";
 }

@@ -24,6 +24,29 @@ public class SysConfigCatalogTests
     }
 
     [Fact]
+    public void RawBitsRoundTrip_ForBothParameterKinds()
+    {
+        // A write goes out as 32 bits and its ack echoes nothing but an opcode, so the value has to
+        // be recoverable from the bits alone to be reported back to the user.
+        var kp = SysConfigCatalog.Get(sysconfig_param_t.SYSCFG_K_P);
+        Assert.Equal(2.5, kp.FromRawBits(kp.ToRawBits(2.5)));
+
+        var delay = SysConfigCatalog.Get(sysconfig_param_t.SYSCFG_PID_TASK_OSDELAY);
+        Assert.Equal(10.0, delay.FromRawBits(delay.ToRawBits(10)));
+    }
+
+    [Fact]
+    public void DescribeNamesTheParameterItsValueAndUnit()
+    {
+        // What the event log prints in place of "opcode=1 id=13".
+        Assert.Equal("K_P = 2.5", SysConfigCatalog.Get(sysconfig_param_t.SYSCFG_K_P).Describe(2.5));
+        Assert.Equal(
+            "PID_TASK_OSDELAY = 10 ms",
+            SysConfigCatalog.Get(sysconfig_param_t.SYSCFG_PID_TASK_OSDELAY).Describe(10)
+        );
+    }
+
+    [Fact]
     public void CatalogNamesMatchTheEnumNames()
     {
         // Name is the config.h macro; the wire enum is SYSCFG_ + that macro. Keeping them locked
@@ -203,6 +226,191 @@ public class SysConfigDeviceCommandTests
         Assert.Equal((ushort)sysconfig_param_t.SYSCFG_K_P, BitConverter.ToUInt16(sentBody, 0));
         Assert.Equal(kpBits, BitConverter.ToUInt32(sentBody, 2));
     }
+
+    [Fact]
+    public async Task SetSysConfigParam_Ack_CarriesTheParameterAndValueItAnswers()
+    {
+        using var serial = new FakeSerial();
+        using var client = new DeviceClient(serial);
+
+        var acks = new List<CommandResponse>();
+        client.MessageReceived += m =>
+        {
+            if (m is CommandResponse r)
+            {
+                lock (acks)
+                {
+                    acks.Add(r);
+                }
+            }
+        };
+
+        AckWhatever(serial, usb_response_status_t.USB_RSP_OK);
+        client.Start();
+        await client.SetSysConfigParamAsync(
+            sysconfig_param_t.SYSCFG_K_P,
+            BitConverter.SingleToUInt32Bits(2.5f)
+        );
+
+        // The RESPONSE frame says only "opcode 1, msg_id N, OK" — on its own that cannot tell a
+        // reader that K_P is now 2.5. The client pairs it back to the write it acks.
+        var ack = Assert.Single(acks);
+        Assert.Equal("sysconfig K_P = 2.5", ack.Request);
+    }
+
+    [Fact]
+    public async Task SetSysConfigParam_AnnouncesTheWrite_AndDoesNotRepeatItPerRetry()
+    {
+        using var serial = new FakeSerial();
+        using var client = new DeviceClient(serial);
+
+        var sent = new List<string>();
+        var failed = new List<string>();
+        client.CommandSent += d => sent.Add(d);
+        client.CommandFailed += (d, _) => failed.Add(d);
+
+        AckWhatever(serial, usb_response_status_t.USB_RSP_OK);
+        client.Start();
+        await client.SetSysConfigParamAsync(
+            sysconfig_param_t.SYSCFG_K_P,
+            BitConverter.SingleToUInt32Bits(2.5f)
+        );
+
+        Assert.Equal("sysconfig K_P = 2.5", Assert.Single(sent));
+        Assert.Empty(failed);
+    }
+
+    [Fact]
+    public async Task Ack_IsPublishedToSubscribers_BeforeTheSenderResumes()
+    {
+        using var serial = new FakeSerial();
+        using var client = new DeviceClient(serial);
+
+        var published = false;
+        client.MessageReceived += m => published |= m is CommandResponse;
+
+        AckWhatever(serial, usb_response_status_t.USB_RSP_OK);
+        client.Start();
+        await client.SetSysConfigParamAsync(
+            sysconfig_param_t.SYSCFG_K_P,
+            BitConverter.SingleToUInt32Bits(2.5f)
+        );
+
+        // The caller resumes to send (and announce) its next write, so a reply still in flight when
+        // it does would be logged behind that announcement — an ack reading as the next parameter's.
+        // Applying a page of edits is exactly that: one write after another down the list.
+        Assert.True(published, "the reply must reach subscribers before its sender continues");
+    }
+
+    [Fact]
+    public async Task SetSysConfigParam_NeverAcked_IsReportedAsUnanswered()
+    {
+        using var serial = new FakeSerial();
+        using var client = new DeviceClient(serial);
+        client.CommandTimeout = TimeSpan.FromMilliseconds(50);
+
+        var sent = new List<string>();
+        var failures = new List<(string Request, Exception Error)>();
+        client.CommandSent += d => sent.Add(d);
+        client.CommandFailed += (d, ex) => failures.Add((d, ex));
+
+        serial.OnWrite = _ => { }; // the device hears it and says nothing
+        client.Start();
+        await Assert.ThrowsAsync<TimeoutException>(() =>
+            client.SetSysConfigParamAsync(
+                sysconfig_param_t.SYSCFG_K_P,
+                BitConverter.SingleToUInt32Bits(2.5f)
+            )
+        );
+
+        // The write is announced once and its silence reported once, however many retries it took:
+        // a write that vanishes must still leave a trace, or the log's silence would look like the
+        // silence of a value that applied cleanly.
+        Assert.Equal("sysconfig K_P = 2.5", Assert.Single(sent));
+        var failure = Assert.Single(failures);
+        Assert.Equal("sysconfig K_P = 2.5", failure.Request);
+        Assert.IsType<TimeoutException>(failure.Error);
+    }
+
+    [Fact]
+    public async Task SetSysConfigParam_Rejected_IsNotAlsoReportedAsUnanswered()
+    {
+        using var serial = new FakeSerial();
+        using var client = new DeviceClient(serial);
+
+        var failed = new List<string>();
+        client.CommandFailed += (d, _) => failed.Add(d);
+
+        AckWhatever(serial, usb_response_status_t.USB_RSP_MALFORMED);
+        client.Start();
+        await Assert.ThrowsAsync<DeviceCommandException>(() =>
+            client.SetSysConfigParamAsync(sysconfig_param_t.SYSCFG_K_P, 0)
+        );
+
+        // The device answered — with a refusal. Raising CommandFailed too would have the log claim
+        // it both refused the value and never heard of it.
+        Assert.Empty(failed);
+    }
+
+    [Fact]
+    public async Task Response_ThatMatchesNoRequest_DescribesNothing()
+    {
+        using var serial = new FakeSerial();
+        using var client = new DeviceClient(serial);
+
+        var acks = new List<CommandResponse>();
+        var seen = new TaskCompletionSource();
+        client.MessageReceived += m =>
+        {
+            if (m is CommandResponse r)
+            {
+                acks.Add(r);
+                seen.TrySetResult();
+            }
+        };
+
+        client.Start();
+        // A reply to a command this host never sent (a duplicate ack, or one that outlived its
+        // command's timeout): there is no request to name, and the client must not invent one.
+        serial.DeviceSend(
+            Wire.Message(
+                usb_msg_type_t.USB_MSG_RESPONSE,
+                task_offset_t.TASK_OFFSET_USB_CONTROLLER,
+                new usb_response_data_t
+                {
+                    opcode = (ushort)usb_controller_command_t.USB_CMD_SET_SYSCONFIG,
+                    msg_id = 9999,
+                    status = (uint)usb_response_status_t.USB_RSP_OK,
+                }
+            )
+        );
+
+        await seen.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Null(Assert.Single(acks).Request);
+    }
+
+    /// <summary>Acks whatever the host writes, echoing its opcode and msg_id like the firmware.</summary>
+    private static void AckWhatever(FakeSerial serial, usb_response_status_t status) =>
+        serial.OnWrite = frame =>
+        {
+            var cmd = MemoryMarshal.Read<usb_cmd_header_t>(
+                frame
+                    .AsSpan()
+                    .Slice(sizeof(ushort) + UsbFrame.HeaderSize, UsbFrame.CommandHeaderSize)
+            );
+            serial.DeviceSend(
+                Wire.Message(
+                    usb_msg_type_t.USB_MSG_RESPONSE,
+                    task_offset_t.TASK_OFFSET_USB_CONTROLLER,
+                    new usb_response_data_t
+                    {
+                        opcode = cmd.opcode,
+                        msg_id = cmd.msg_id,
+                        status = (uint)status,
+                    }
+                )
+            );
+        };
 
     [Fact]
     public async Task SetSysConfigParam_RejectedByFirmware_Throws()
