@@ -15,12 +15,12 @@
     so it rarely needs refreshing — only after the Dockerfile itself changes.
 
 .EXAMPLE
-    .\Scripts\build-docker.ps1                     # Debug
-    .\Scripts\build-docker.ps1 -Config Release
+    .\Scripts\build-docker.ps1                     # Release
+    .\Scripts\build-docker.ps1 -Config Debug
     .\Scripts\build-docker.ps1 -Rebuild            # refresh the toolchain image
 #>
 param(
-    [ValidateSet('Debug', 'Release')] [string]$Config = 'Debug',
+    [ValidateSet('Debug', 'Release')] [string]$Config = 'Release',
     [switch]$Rebuild
 )
 

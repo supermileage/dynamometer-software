@@ -18,6 +18,7 @@
 #   ./Scripts/flash.sh <swd|dfu|uart> [--tool <tool>] --list   # enumerate devices
 #
 # Options:
+#   Debug|Release   which build to flash (default: Release)
 #   --tool <tool>   required (except with --list for uart); see table above
 #   --serial <sn>   target a specific ST-Link probe (swd) or DFU device (dfu)
 #   --index <n>     DFU device index for cubeprog (port=USB<n>); default 1
@@ -31,13 +32,14 @@
 #   uart : --port <port>     (each adapter is a distinct /dev/tty* or COM port)
 #
 # Run on the host (needs USB/serial access; not via Docker). Build first:
-#   cmake --build --preset Debug      # or ./Scripts/build-docker.sh Debug
+#   cmake --build --preset Release    # or ./Scripts/build-docker.sh
 
 set -euo pipefail
 
-CONFIG="Debug"; METHOD=""; TOOL=""; SERIAL=""; PORT=""; BAUD="115200"; INDEX="1"; DO_LIST=0
+CONFIG="Release"; METHOD=""; TOOL=""; SERIAL=""; PORT=""; BAUD="115200"; INDEX="1"; DO_LIST=0
 
-usage() { sed -n '2,42p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+# Print the header comment block above: from line 2 to the blank line that ends it.
+usage() { sed -n '2,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in

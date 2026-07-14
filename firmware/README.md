@@ -59,12 +59,12 @@ Build output is written to `build/<CONFIG>/`:
 Requires only Docker — no host toolchain. The `Dockerfile` pins the Arm GNU
 toolchain, CMake and Ninja, and CI builds inside this same image:
 ```bash
-./Scripts/build-docker.sh            # Debug            (Linux/macOS/Git-Bash)
-./Scripts/build-docker.sh Release
+./Scripts/build-docker.sh            # Release          (Linux/macOS/Git-Bash)
+./Scripts/build-docker.sh Debug
 ```
 ```powershell
-.\Scripts\build-docker.ps1                  # Debug     (Windows/PowerShell)
-.\Scripts\build-docker.ps1 -Config Release
+.\Scripts\build-docker.ps1                  # Release   (Windows/PowerShell)
+.\Scripts\build-docker.ps1 -Config Debug
 ```
 The repo is bind-mounted, so output lands in `build-docker/<CONFIG>/` on the host
 — a separate tree from a native build's `build/<CONFIG>/`, so the two can coexist.
@@ -89,13 +89,15 @@ Build once, then flash the generated binary — **no rebuild needed**. Three met
 (SWD via ST-Link, USB DFU, or UART) work on Linux and Windows; you pick the method
 and tool explicitly.
 
+Both scripts default to the **Release** build, so the pair lines up with no arguments
+(pass `Debug` / `-Config Debug` to build and flash the Debug image instead).
 ```bash
-./Scripts/build-docker.sh Debug                 # build → build-docker/Debug/*.elf,*.bin
-./Scripts/flash.sh Debug swd --tool st-flash    # flash that image (no rebuild)
+./Scripts/build-docker.sh                 # build → build-docker/Release/*.elf,*.bin
+./Scripts/flash.sh swd --tool st-flash    # flash that image (no rebuild)
 ```
 ```powershell
-.\Scripts\build-docker.ps1 -Config Debug
-.\Scripts\flash.ps1 -Config Debug -Method swd -Tool st-flash
+.\Scripts\build-docker.ps1
+.\Scripts\flash.ps1 -Method swd -Tool st-flash
 ```
 
 The open-source tools (`st-flash`, `openocd`, `dfu-util`, `stm32flash`) install
