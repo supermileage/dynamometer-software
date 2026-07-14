@@ -5,16 +5,16 @@
 # build-docker/<CONFIG>/ on the host.
 #
 # Usage: ./Scripts/build-docker.sh [Debug|Release] [--rebuild]
-#   Debug|Release  build configuration (default: Debug)
+#   Debug|Release  build configuration (default: Release)
 #   --rebuild, -r  rebuild the toolchain image (do this after editing the
 #                  Dockerfile; otherwise the existing image is reused)
 #
-# (On Windows, run from Git Bash / WSL, or use the docker commands from the README.)
+# (On Windows, use Scripts/build-docker.ps1 — or run this from Git Bash / WSL.)
 
 set -euo pipefail
 
 IMAGE="stm32-dyno-builder"
-CONFIG="Debug"
+CONFIG="Release"
 REBUILD=0
 
 for arg in "$@"; do
