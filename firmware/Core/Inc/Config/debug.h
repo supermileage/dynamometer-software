@@ -64,4 +64,10 @@
 // Task Monitoring Task
 #define TASK_MONITOR_TASK_ENABLE 1
 
+// See the note at the foot of config.h: the desktop app's overrides land here, applied last so they
+// win over the defaults above. Generated, git-ignored, and absent unless something is overridden.
+#if __has_include("debug_overrides.h")
+#include "debug_overrides.h"
+#endif
+
 #endif /* INC_CONFIG_DEBUG_H_ */

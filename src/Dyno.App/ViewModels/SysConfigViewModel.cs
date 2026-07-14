@@ -324,6 +324,16 @@ public partial class SysConfigViewModel : ObservableObject
 
     private static string Count(int n, string noun) => $"{n} {noun}{(n == 1 ? "" : "s")}";
 
+    /// <summary>The saved compile-time settings that differ from their header — exactly what the
+    /// Firmware page bakes into the next build, and the only thing that connects these two pages.
+    /// Reads the applied values, never the half-typed ones: an edit nobody pressed Apply on has not
+    /// been chosen yet, and silently compiling it in would make Apply meaningless.</summary>
+    public IReadOnlyList<ConfigOverride> CompileTimeOverrides() =>
+        _parameters
+            .Where(p => p.IsOverride)
+            .Select(p => new ConfigOverride(p.Name, p.FileLabel, p.HeaderValue, p.SavedValue))
+            .ToList();
+
     private DeviceClient? ConnectedClient() =>
         _getClient() is { IsHandshaked: true } client ? client : null;
 

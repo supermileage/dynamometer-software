@@ -143,18 +143,63 @@ isn't known to have. One pass therefore serves both cases:
 A write that is never acked is simply never confirmed, so it stays outstanding and goes out again on
 the next pass — which is the only recovery available to a board that cannot remember anything.
 
-### Compile-time settings are remembered, not applied
+### Compile-time settings are saved here, and applied by a build
 The same page also lists the `#define`s from `config.h` / `debug.h` (`FirmwareConfigFile` parses
 them). These *cannot* be applied to a running board — buffer sizes dimension static arrays on a
 heapless firmware, and debug.h decides what code is compiled in at all — so Apply saves them to the
 store's second table (`compiletime`, keyed by define name, values kept as text because
-`ADS1115_RATE_475` and `16 + 1` are as much a `#define` value as `100u`) **and stops there**.
+`ADS1115_RATE_475` and `16 + 1` are as much a `#define` value as `100u`), and the **Firmware page's
+Build** is what carries them into a compiler. See below.
 
-Nothing else reads that table yet: the headers are parsed but **never written**, so the firmware
-keeps whatever it was compiled with. A saved value is a statement of intent, and the page says so —
-it shows what the header actually has beside any setting whose saved value differs, and offers Reset
-to drop the row. A value equal to the header's is stored as no row at all: wanting what you already
-have is not worth remembering, and that is how the row a Reset undid actually disappears.
+The page shows what the header actually has beside any setting whose saved value differs, and offers
+Reset to drop the row. A value equal to the header's is stored as no row at all: wanting what you
+already have is not worth remembering, and that is how the row a Reset undid actually disappears.
+
+## Firmware: build and flash
+`firmware/Scripts/` already knows how this board is built and programmed — the tool matrix, the
+ROM-bootloader rules, which build tree holds the newer image — and it is what CI and the terminal
+use. So the app **drives those scripts** rather than reimplementing any of it: `FirmwareCommands`
+constructs the exact invocation (bash on Linux/macOS, PowerShell on Windows) and `ProcessRunner`
+streams its output line by line, unbuffered, because a Docker build takes minutes and both jobs fail
+in ways only their own output explains. The command is echoed before it runs, so what the app did is
+always something the user could have typed.
+
+The app adds only what a script can't: which tools go with which method (`ToolsFor` — and never
+`cubeprog` first, since it is the one tool needing an ST account), whether the board must be put into
+its bootloader by hand (`NeedsBootloader` — everything but SWD), and which device-selection arguments
+a given method/tool pair actually reads. A DFU index is passed to `cubeprog` and to nothing else,
+because `dfu-util` has no such notion and would ignore it while the user believed it had taken
+effect.
+
+### Getting the compile-time settings into the compiler
+The firmware's `#define`s are not `#ifndef`-guarded, so a `-D` on the command line loses to the
+header. Rather than rewrite the committed headers (which would make every build dirty the working
+tree), `config.h` and `debug.h` each end with:
+
+```c
+#if __has_include("config_overrides.h")
+#include "config_overrides.h"
+#endif
+```
+
+`ConfigOverrides` generates that file — one `#undef`/`#define` pair per changed setting, nothing else
+— immediately before a build. Being included **last**, it wins; the C sources are untouched and still
+read the plain names; and a clean checkout builds exactly what the headers say, because the file is
+absent and `__has_include` is false. It is git-ignored: an override is one machine's intent, not the
+project's.
+
+Three details the tests pin down:
+- **Both files are always written**, even with nothing to override. A file left over from an earlier
+  build would otherwise keep applying a setting the user had since reset — the board would come back
+  holding it, with nothing on screen saying so.
+- **The text is stable and only written when it changes.** Ninja keys off mtimes, so a file that
+  churned would recompile the whole firmware on every build.
+- **A value that could rewrite the header around it is refused.** The generated file is C that nobody
+  reviews; a value carrying `//` or a newline could define anything it liked.
+
+Bad *combinations* are not the app's business: the firmware already enforces them itself (`#error
+"Cannot enable both ADS1115 and ADC Force Sensor modules at the same time!"` and ~19 others), and an
+override that trips one fails the build with that message, which is the right one.
 
 ## Session state
 The dyno streams sensor data **only while a session is running**, so the absence of samples means

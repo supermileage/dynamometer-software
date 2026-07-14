@@ -91,4 +91,13 @@
 
 
 
+// Values changed on the desktop app's SysConfig page are written to config_overrides.h (which is
+// generated, git-ignored, and absent unless something is overridden) and applied last, so they win
+// over the defaults above. Nothing else in the firmware knows the difference: every consumer still
+// reads the plain names below. Delete the file, or build from a clean tree, and you are back to
+// exactly what this header says.
+#if __has_include("config_overrides.h")
+#include "config_overrides.h"
+#endif
+
 #endif /* INC_CONFIG_CONFIG_H_ */

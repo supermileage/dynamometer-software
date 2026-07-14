@@ -3,6 +3,12 @@
 Helper scripts for building and flashing the firmware. All are meant to run on
 the **host** (not inside the Docker build container).
 
+> The desktop app's **Firmware** page runs exactly these scripts — same arguments,
+> output shown verbatim — and additionally writes the compile-time settings saved
+> on its Config page into `Core/Inc/Config/*_overrides.h` before building. Use
+> whichever you prefer; they cannot disagree. A build from this terminal picks up
+> those override files too, and deleting them returns you to the committed headers.
+
 | Script | Purpose |
 |--------|---------|
 | `build-docker.sh` | Build the firmware in the pinned Docker toolchain image on Linux/macOS/Git-Bash (byte-for-byte the CI environment). |

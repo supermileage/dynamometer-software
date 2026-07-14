@@ -195,13 +195,31 @@
                 <TextBlock Text="Config" />
               </StackPanel>
             </Button>
+            <Button
+              Classes="nav"
+              Classes.active="{Binding IsFirmwarePage}"
+              Command="{Binding NavigateCommand}"
+              CommandParameter="{x:Static vm:AppPage.Firmware}"
+              ToolTip.Tip="Firmware — build and flash the board"
+            >
+              <StackPanel Spacing="3">
+                <!-- Microchip -->
+                <Path
+                  Width="24"
+                  Height="24"
+                  Data="M7,7 L17,7 L17,17 L7,17 Z M10,10 L14,10 L14,14 L10,14 Z M9.5,7 L9.5,4 M14.5,7 L14.5,4 M9.5,17 L9.5,20 M14.5,17 L14.5,20 M7,9.5 L4,9.5 M7,14.5 L4,14.5 M17,9.5 L20,9.5 M17,14.5 L20,14.5"
+                />
+                <TextBlock Text="Firmware" />
+              </StackPanel>
+            </Button>
           </StackPanel>
         </Border>
 
-        <!-- Both pages stay alive so Home keeps accumulating events while SysConfig is open. -->
+        <!-- Every page stays alive so Home keeps accumulating events while another is open. -->
         <Panel Grid.Column="1">
           <views:HomeView IsVisible="{Binding IsHomePage}" />
           <views:SysConfigView IsVisible="{Binding IsSysConfigPage}" />
+          <views:FirmwareView IsVisible="{Binding IsFirmwarePage}" />
         </Panel>
       </Grid>
     </Grid>

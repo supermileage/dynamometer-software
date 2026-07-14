@@ -33,18 +33,34 @@ public partial class MainWindowViewModel : ObservableObject
     /// this view model directly for the same reason.</summary>
     public SysConfigViewModel SysConfig { get; }
 
+    /// <summary>The Firmware page: build the firmware (with whatever compile-time settings SysConfig
+    /// has saved) and flash it. It reads those settings from <see cref="SysConfig"/> through
+    /// delegates rather than holding the page itself — all it needs is the answer to "what would a
+    /// build bake in, and is anything not saved yet".</summary>
+    public FirmwareViewModel Firmware { get; }
+
     /// <summary>Which sidebar page is showing. A single value (not a flag per page) so exactly
     /// one page is ever active; the per-page bools below exist only for IsVisible bindings.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsHomePage))]
     [NotifyPropertyChangedFor(nameof(IsSysConfigPage))]
+    [NotifyPropertyChangedFor(nameof(IsFirmwarePage))]
     private AppPage _currentPage = AppPage.Home;
 
     public bool IsHomePage => CurrentPage == AppPage.Home;
     public bool IsSysConfigPage => CurrentPage == AppPage.SysConfig;
+    public bool IsFirmwarePage => CurrentPage == AppPage.Firmware;
 
     [RelayCommand]
-    private void Navigate(AppPage page) => CurrentPage = page;
+    private void Navigate(AppPage page)
+    {
+        CurrentPage = page;
+        if (page == AppPage.Firmware)
+        {
+            // Cheap, and it means the page can never show a stale answer to "what will this build".
+            Firmware.Refresh();
+        }
+    }
 
     /// <summary>Selectable force-sensor sample rates, in ascending SPS.</summary>
     public IReadOnlyList<SampleRateChoice> SampleRates { get; } =
@@ -103,6 +119,10 @@ public partial class MainWindowViewModel : ObservableObject
         // The connect-time restore is the one device write the user never asked for, and the only
         // one they cannot see happen on the page they're not looking at.
         SysConfig.DeviceSyncLogged += line => Dispatcher.UIThread.Post(() => AddEvent(line));
+        Firmware = new FirmwareViewModel(
+            SysConfig.CompileTimeOverrides,
+            () => SysConfig.PendingCount
+        );
         SelectedSampleRate =
             SampleRates.FirstOrDefault(c => c.Value == ForceSensorSampleRate.Sps128)
             ?? SampleRates[0];

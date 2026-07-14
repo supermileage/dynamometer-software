@@ -39,4 +39,21 @@ public static class FirmwareConfigLocator
         }
         return null;
     }
+
+    /// <summary>Absolute path of the <c>firmware/</c> directory — the working directory its
+    /// <c>Scripts/</c> expect — or null when it can't be seen from here. Derived from the config
+    /// directory, then confirmed by the scripts actually being there: the override variable can
+    /// point at a stray copy of the headers with no firmware tree behind it, and a build launched
+    /// from there would fail in a far more confusing way than "not found".</summary>
+    public static string? FindFirmwareDirectory()
+    {
+        if (FindConfigDirectory() is not { } configDir)
+        {
+            return null;
+        }
+
+        // firmware/Core/Inc/Config -> firmware
+        var firmwareDir = Path.GetFullPath(Path.Combine(configDir, "..", "..", ".."));
+        return File.Exists(Path.Combine(firmwareDir, "Scripts", "flash.sh")) ? firmwareDir : null;
+    }
 }

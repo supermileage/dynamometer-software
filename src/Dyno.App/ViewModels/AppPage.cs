@@ -6,4 +6,5 @@ public enum AppPage
 {
     Home,
     SysConfig,
+    Firmware,
 }

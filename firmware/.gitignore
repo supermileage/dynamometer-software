@@ -14,6 +14,11 @@ release/
 build/
 build-docker/
 
+# Compile-time overrides written by the desktop app before a build (config.h / debug.h are the
+# committed defaults; these hold only what the user changed, so they are per-machine, not shared).
+Core/Inc/Config/config_overrides.h
+Core/Inc/Config/debug_overrides.h
+
 # build log
 build_log.txt
 

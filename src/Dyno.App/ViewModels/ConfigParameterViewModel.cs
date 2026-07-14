@@ -29,8 +29,12 @@ public partial class ConfigParameterViewModel : ObservableObject
     public bool IsText => !IsBool;
     public bool HasDescription => Description.Length > 0;
 
-    /// <summary>What the header declares, and so what the firmware was built with.</summary>
+    /// <summary>What the header declares, and so what a clean tree would build.</summary>
     public string HeaderValue { get; }
+
+    /// <summary>The last applied value — what the next firmware build will use. Not the text in the
+    /// box, which may be an edit the user hasn't pressed Apply on.</summary>
+    public string SavedValue => _savedValue;
 
     /// <summary>Shown while the saved value differs from the header, which is the only case where
     /// the two can be confused.</summary>
