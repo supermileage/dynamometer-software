@@ -247,11 +247,11 @@ public enum force_sensor_command_opcode : ushort
 // firmware -- and debug.h's task/peripheral gates) have no ids here on purpose.
 
 /// One id per runtime-tunable parameter. The name matches the config.h #define
-/// that provides its boot default.
+/// that provides its boot default. Ids are positional: append only.
 public enum sysconfig_param_t : ushort
 {
     SYSCFG_DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M = 0,   // float, m
-    SYSCFG_MOMENT_OF_INERTIA_KG_M2 = 1,   // float, kg*m^2
+    SYSCFG_MOMENT_OF_INERTIA_KG_M2 = 1,   // float, kg·m²
     SYSCFG_K_P = 2,   // float
     SYSCFG_K_I = 3,   // float
     SYSCFG_K_D = 4,   // float
@@ -260,8 +260,8 @@ public enum sysconfig_param_t : ushort
     SYSCFG_BRAKE_GAIN = 7,   // float
     SYSCFG_HORIZONTAL_BIAS = 8,   // float
     SYSCFG_VERTICAL_BIAS = 9,   // float
-    SYSCFG_MIN_DUTY_CYCLE_PERCENT = 10,   // float, 0..1
-    SYSCFG_MAX_DUTY_CYCLE_PERCENT = 11,   // float, 0..1
+    SYSCFG_MIN_DUTY_CYCLE_PERCENT = 10,   // float, 0–1
+    SYSCFG_MAX_DUTY_CYCLE_PERCENT = 11,   // float, 0–1
     SYSCFG_MAX_FORCE_LBF = 12,   // float, lbf
     SYSCFG_SESSIONCONTROLLER_TASK_OSDELAY = 13,   // uint32, ms
     SYSCFG_BPM_TASK_OSDELAY = 14,   // uint32, ms
@@ -269,7 +269,7 @@ public enum sysconfig_param_t : ushort
     SYSCFG_FORCESENSOR_COMMAND_POLL_OSDELAY = 16,   // uint32, ms
     SYSCFG_FORCESENSOR_CONVERSION_TIMEOUT_MS = 17,   // uint32, ms
     SYSCFG_OPTICAL_ENCODER_TASK_OSDELAY = 18,   // uint32, ms
-    SYSCFG_NUM_APERTURES = 19,   // uint32, encoder wheel apertures
+    SYSCFG_NUM_APERTURES = 19,   // uint32
     SYSCFG_PID_TASK_OSDELAY = 20,   // uint32, ms
     SYSCFG_USB_TASK_OSDELAY = 21,   // uint32, ms
     SYSCFG_USB_TX_FLUSH_MAX_RETRIES = 22,   // uint32, attempts

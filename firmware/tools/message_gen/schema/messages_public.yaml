@@ -358,44 +358,53 @@ sections:
       settings (circular-buffer sizes -- static array dimensions on a heapless
       firmware -- and debug.h's task/peripheral gates) have no ids here on purpose.
 
-  - kind: enum
+  # One entry per runtime-tunable parameter; this table is the single source for the
+  # sysconfig_param_t enum + SYSCFG_PARAM_COUNT (both languages), the firmware's
+  # validation table (Core/Inc/Config/sysconfig_table.inc) and the host catalog
+  # (src/Dyno.Core/SysConfig/Generated/SysConfigCatalog.cs). Boot defaults are NOT
+  # here: they stay in Config/config.h under the same name, and the C# generator reads
+  # them from there, so a default is defined in exactly one place.
+  #
+  # Ids are positional -- list order is the wire id -- so entries may only be appended,
+  # never reordered or removed. Fields: name (the config.h macro), type (float|uint32),
+  # min/max (the range the firmware accepts; below min for an osDelay would busy-spin a
+  # task, hence min 1 there, and the 60000 cap stops a typo making a task look dead for
+  # minutes), category/unit/description (host UI only).
+  - kind: sysconfig_params
     name: sysconfig_param_t
-    base: uint16_t
     comment: |-
       One id per runtime-tunable parameter. The name matches the config.h #define
-      that provides its boot default.
-    values:
-      - { name: SYSCFG_DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M, value: "0",  comment: "float, m" }
-      - { name: SYSCFG_MOMENT_OF_INERTIA_KG_M2,                         value: "1",  comment: "float, kg*m^2" }
-      - { name: SYSCFG_K_P,                                             value: "2",  comment: "float" }
-      - { name: SYSCFG_K_I,                                             value: "3",  comment: "float" }
-      - { name: SYSCFG_K_D,                                             value: "4",  comment: "float" }
-      - { name: SYSCFG_PID_MAX_OUTPUT,                                  value: "5",  comment: "float" }
-      - { name: SYSCFG_THROTTLE_GAIN,                                   value: "6",  comment: "float" }
-      - { name: SYSCFG_BRAKE_GAIN,                                      value: "7",  comment: "float" }
-      - { name: SYSCFG_HORIZONTAL_BIAS,                                 value: "8",  comment: "float" }
-      - { name: SYSCFG_VERTICAL_BIAS,                                   value: "9",  comment: "float" }
-      - { name: SYSCFG_MIN_DUTY_CYCLE_PERCENT,                          value: "10", comment: "float, 0..1" }
-      - { name: SYSCFG_MAX_DUTY_CYCLE_PERCENT,                          value: "11", comment: "float, 0..1" }
-      - { name: SYSCFG_MAX_FORCE_LBF,                                   value: "12", comment: "float, lbf" }
-      - { name: SYSCFG_SESSIONCONTROLLER_TASK_OSDELAY,                  value: "13", comment: "uint32, ms" }
-      - { name: SYSCFG_BPM_TASK_OSDELAY,                                value: "14", comment: "uint32, ms" }
-      - { name: SYSCFG_FORCESENSOR_TASK_OSDELAY,                        value: "15", comment: "uint32, ms" }
-      - { name: SYSCFG_FORCESENSOR_COMMAND_POLL_OSDELAY,                value: "16", comment: "uint32, ms" }
-      - { name: SYSCFG_FORCESENSOR_CONVERSION_TIMEOUT_MS,               value: "17", comment: "uint32, ms" }
-      - { name: SYSCFG_OPTICAL_ENCODER_TASK_OSDELAY,                    value: "18", comment: "uint32, ms" }
-      - { name: SYSCFG_NUM_APERTURES,                                   value: "19", comment: "uint32, encoder wheel apertures" }
-      - { name: SYSCFG_PID_TASK_OSDELAY,                                value: "20", comment: "uint32, ms" }
-      - { name: SYSCFG_USB_TASK_OSDELAY,                                value: "21", comment: "uint32, ms" }
-      - { name: SYSCFG_USB_TX_FLUSH_MAX_RETRIES,                        value: "22", comment: "uint32, attempts" }
-      - { name: SYSCFG_LCD_TASK_OSDELAY,                                value: "23", comment: "uint32, ms" }
-      - { name: SYSCFG_LED_TASK_OSDELAY,                                value: "24", comment: "uint32, ms" }
-      - { name: SYSCFG_TASK_WARNING_RETRY_OSDELAY,                      value: "25", comment: "uint32, ms" }
-      - { name: SYSCFG_TASK_MONITOR_TASK_OSDELAY,                       value: "26", comment: "uint32, ms" }
+      that provides its boot default. Ids are positional: append only.
+    params:
+      - { name: DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M, type: float, min: 1.0e-6, max: 1000.0, category: "Mechanical", unit: "m", description: "Lever arm from the force sensor to the shaft center, used in the torque calculation." }
+      - { name: MOMENT_OF_INERTIA_KG_M2, type: float, min: 1.0e-9, max: 1.0e6, category: "Mechanical", unit: "kg·m²", description: "Rotating assembly's moment of inertia, used in the torque calculation." }
+      - { name: K_P, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Proportional gain." }
+      - { name: K_I, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Integral gain." }
+      - { name: K_D, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Derivative gain." }
+      - { name: PID_MAX_OUTPUT, type: float, min: 1.0e-6, max: 1.0e6, category: "PID Controller", unit: "", description: "Normalization bound for the PID output before throttle/brake mixing." }
+      - { name: THROTTLE_GAIN, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Gain applied to the throttle half of the PID output mix." }
+      - { name: BRAKE_GAIN, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Gain applied to the brake half of the PID output mix." }
+      - { name: HORIZONTAL_BIAS, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Horizontal offset of the throttle/brake mixing curve." }
+      - { name: VERTICAL_BIAS, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Vertical offset of the throttle/brake mixing curve." }
+      - { name: MIN_DUTY_CYCLE_PERCENT, type: float, min: 0.0, max: 1.0, category: "BPM", unit: "0–1", description: "Lower clamp on the brake PWM duty cycle." }
+      - { name: MAX_DUTY_CYCLE_PERCENT, type: float, min: 0.0, max: 1.0, category: "BPM", unit: "0–1", description: "Upper clamp on the brake PWM duty cycle." }
+      - { name: MAX_FORCE_LBF, type: float, min: 1.0e-3, max: 1.0e5, category: "Force Sensor", unit: "lbf", description: "Full-scale force of the load cell; scales raw ADC counts to newtons." }
+      - { name: SESSIONCONTROLLER_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "Session Controller", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
+      - { name: BPM_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "BPM", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
+      - { name: FORCESENSOR_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "Force Sensor", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
+      - { name: FORCESENSOR_COMMAND_POLL_OSDELAY, type: uint32, min: 1, max: 60000, category: "Force Sensor", unit: "ms", description: "Bounded wait on the enable queue while the sensor is idle, so USB commands still get serviced." }
+      - { name: FORCESENSOR_CONVERSION_TIMEOUT_MS, type: uint32, min: 1, max: 60000, category: "Force Sensor", unit: "ms", description: "How long to wait for the ADS1115 conversion-ready alert before abandoning the sample." }
+      - { name: OPTICAL_ENCODER_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "Optical Encoder", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
+      - { name: NUM_APERTURES, type: uint32, min: 1, max: 100000, category: "Optical Encoder", unit: "", description: "Apertures on the encoder wheel (tied to the physical 3D-printed apparatus)." }
+      - { name: PID_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "PID Controller", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
+      - { name: USB_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "USB", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
+      - { name: USB_TX_FLUSH_MAX_RETRIES, type: uint32, min: 0, max: 1000, category: "USB", unit: "attempts", description: "Bounded retries when flushing a full TX buffer before dropping the batch." }
+      - { name: LCD_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "LCD", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
+      - { name: LED_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "LED", unit: "ms", description: "Blink half-period of the status LED task." }
+      - { name: TASK_WARNING_RETRY_OSDELAY, type: uint32, min: 1, max: 60000, category: "Tasks & Monitoring", unit: "ms", description: "Back-off a task sleeps after reporting a warning before retrying." }
+      - { name: TASK_MONITOR_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "Tasks & Monitoring", unit: "ms", description: "How often the task monitor samples every task's state and free stack." }
 
   - { kind: static_assert, expr: "sizeof(sysconfig_param_t) == 2", message: "Size of sysconfig_param_t must be 2 bytes" }
-
-  - { kind: define, name: SYSCFG_PARAM_COUNT, value: "27u", comment: "one past the highest sysconfig_param_t id; sizes the firmware store" }
 
   - kind: comment
     text: |-

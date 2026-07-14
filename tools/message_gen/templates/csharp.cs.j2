@@ -57,6 +57,19 @@ public struct {{ s.name }}
     public {{ f._cstype }} {{ f.name }};{{ ("   // " ~ f.comment) if f.comment else "" }}
 {% endfor %}
 }
+{% elif s.kind == "sysconfig_params" %}
+
+{% if s.comment %}
+{% for line in s.comment.rstrip("\n").split("\n") %}
+/// {{ line }}
+{% endfor %}
+{% endif %}
+public enum {{ s.name }} : ushort
+{
+{% for p in s.params %}
+    {{ p._enum_name }} = {{ p._csval }},   // {{ p.type }}{{ (", " ~ p.unit) if p.unit else "" }}
+{% endfor %}
+}
 {% endif %}
 {% endfor %}
 

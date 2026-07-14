@@ -38,6 +38,9 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 SCHEMA_DIR = REPO / "firmware" / "tools" / "message_gen" / "schema"
 OUT_DIR = REPO / "src" / "Dyno.Core" / "Messages" / "Generated"
+# Boot defaults for the sysconfig catalog: each runtime parameter's #define, by the
+# same name, in the firmware's config header.
+CONFIG_H = REPO / "firmware" / "Core" / "Inc" / "Config" / "config.h"
 
 # target -> (schema file, template file, default output). One generic template drives
 # every header; add messages_private the same way if the host ever needs those types.
@@ -46,6 +49,14 @@ TARGETS = {
         SCHEMA_DIR / "messages_public.yaml",
         "csharp.cs.j2",
         OUT_DIR / "Messages.cs",
+    ),
+    # The host-side metadata for every runtime parameter (kind, range, category, unit,
+    # description from the schema; boot default from config.h) -- so the app's editor
+    # can never disagree with the firmware about a parameter.
+    "sysconfig_catalog": (
+        SCHEMA_DIR / "messages_public.yaml",
+        "sysconfig_catalog.cs.j2",
+        REPO / "src" / "Dyno.Core" / "SysConfig" / "Generated" / "SysConfigCatalog.cs",
     ),
 }
 
@@ -80,6 +91,72 @@ def _fmt(val: int) -> str:
     return f"0x{val:X}" if val >= 256 else str(val)
 
 
+def _cs_double(value) -> str:
+    """A YAML number as a C# double literal (repr of a Python float is always one)."""
+    return repr(float(value))
+
+
+def _cs_string(text: str) -> str:
+    """A C# string literal."""
+    return '"' + str(text).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _config_defaults() -> dict[str, float]:
+    """Every simple numeric `#define NAME value` in config.h, as name -> value. These are
+    the boot defaults the sysconfig store seeds itself from; baking them into the
+    generated catalog keeps config.h the single place a default is written, and the CI
+    drift guard flags a config.h change whose catalog wasn't regenerated."""
+    defaults: dict[str, float] = {}
+    define = re.compile(r"^\s*#define\s+(\w+)\s+([0-9.+-eE]+)[fFuUlL]*\s*(?://.*)?$")
+    for line in CONFIG_H.read_text().splitlines():
+        m = define.match(line)
+        if m:
+            try:
+                defaults[m.group(1)] = float(m.group(2))
+            except ValueError:
+                pass  # not a plain numeric literal (an expression or token); not a default
+    return defaults
+
+
+def _prepare_sysconfig(schema: dict, symbols: dict[str, int], defines: list) -> None:
+    """Annotates sysconfig_params sections with their C# fields: enum member names and
+    positional ids, plus the typed literals the catalog rows need. Also registers the
+    derived SYSCFG_PARAM_COUNT constant so it lands in MessageConstants like any
+    schema #define."""
+    defaults = None
+    for s in schema["sections"]:
+        if s.get("kind") != "sysconfig_params":
+            continue
+        defaults = _config_defaults() if defaults is None else defaults
+        for i, p in enumerate(s["params"]):
+            name = p["name"]
+            if name not in defaults:
+                raise KeyError(
+                    f"sysconfig param {name} has no numeric #define in {CONFIG_H}; "
+                    "every runtime parameter needs its boot default there"
+                )
+            p["_enum_name"] = "SYSCFG_" + name
+            p["_csval"] = str(i)
+            p["_cs_isfloat"] = "true" if p["type"] == "float" else "false"
+            p["_cs_default"] = _cs_double(defaults[name])
+            p["_cs_min"] = _cs_double(p["min"])
+            p["_cs_max"] = _cs_double(p["max"])
+            p["_cs_category"] = _cs_string(p["category"])
+            p["_cs_unit"] = _cs_string(p["unit"])
+            p["_cs_desc"] = _cs_string(p["description"])
+            symbols[p["_enum_name"]] = i
+        count = len(s["params"])
+        symbols["SYSCFG_PARAM_COUNT"] = count
+        defines.append(
+            {
+                "name": "SYSCFG_PARAM_COUNT",
+                "value": f"{count}u",
+                "comment": "one past the highest sysconfig_param_t id; sizes the firmware store",
+                "_csval": _fmt(count) + "u",
+            }
+        )
+
+
 def prepare(schema: dict) -> tuple[list, list]:
     """Annotate the schema in place with computed C# literals/types and return
     (defines, sizes) for the template. `symbols` accumulates every #define and enum
@@ -112,6 +189,8 @@ def prepare(schema: dict) -> tuple[list, list]:
                         f"{s['name']}.{f['name']}"
                     )
                 f["_cstype"] = _CS_TYPES.get(f["type"], f["type"])
+
+    _prepare_sysconfig(schema, symbols, defines)
 
     sizes: list = []
     for s in schema["sections"]:

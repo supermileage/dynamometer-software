@@ -26,41 +26,13 @@ typedef struct
 #define SYSCFG_F32(deflt, mn, mx) { .is_float = true,  .def = { .f = (deflt) }, .min = { .f = (mn) }, .max = { .f = (mx) }, .raw = 0u }
 #define SYSCFG_U32(deflt, mn, mx) { .is_float = false, .def = { .u = (deflt) }, .min = { .u = (mn) }, .max = { .u = (mx) }, .raw = 0u }
 
-/* osDelay(0) only yields, so a 0 here would turn a task loop into a near-busy spin that
- * starves lower-priority tasks; 1 tick is the smallest honest delay. The 60s cap stops a
- * mistyped value from making a task look dead for minutes. */
-#define OSDELAY_MIN 1u
-#define OSDELAY_MAX 60000u
-
+/* The entries are generated from the sysconfig_params section of the message schema
+ * (tools/message_gen/schema/messages_public.yaml) -- the same source that defines
+ * sysconfig_param_t and the host's catalog -- so id, kind and range can never drift
+ * between firmware and host. Defaults are the config.h macros, expanded here. */
 static sysconfig_entry_t s_table[SYSCFG_PARAM_COUNT] =
 {
-    [SYSCFG_DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M] = SYSCFG_F32(DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M, 1e-6f, 1000.0f),
-    [SYSCFG_MOMENT_OF_INERTIA_KG_M2]                         = SYSCFG_F32(MOMENT_OF_INERTIA_KG_M2, 1e-9f, 1e6f),
-    [SYSCFG_K_P]                                             = SYSCFG_F32(K_P, -1e6f, 1e6f),
-    [SYSCFG_K_I]                                             = SYSCFG_F32(K_I, -1e6f, 1e6f),
-    [SYSCFG_K_D]                                             = SYSCFG_F32(K_D, -1e6f, 1e6f),
-    [SYSCFG_PID_MAX_OUTPUT]                                  = SYSCFG_F32(PID_MAX_OUTPUT, 1e-6f, 1e6f),
-    [SYSCFG_THROTTLE_GAIN]                                   = SYSCFG_F32(THROTTLE_GAIN, -1e6f, 1e6f),
-    [SYSCFG_BRAKE_GAIN]                                      = SYSCFG_F32(BRAKE_GAIN, -1e6f, 1e6f),
-    [SYSCFG_HORIZONTAL_BIAS]                                 = SYSCFG_F32(HORIZONTAL_BIAS, -1e6f, 1e6f),
-    [SYSCFG_VERTICAL_BIAS]                                   = SYSCFG_F32(VERTICAL_BIAS, -1e6f, 1e6f),
-    [SYSCFG_MIN_DUTY_CYCLE_PERCENT]                          = SYSCFG_F32(MIN_DUTY_CYCLE_PERCENT, 0.0f, 1.0f),
-    [SYSCFG_MAX_DUTY_CYCLE_PERCENT]                          = SYSCFG_F32(MAX_DUTY_CYCLE_PERCENT, 0.0f, 1.0f),
-    [SYSCFG_MAX_FORCE_LBF]                                   = SYSCFG_F32(MAX_FORCE_LBF, 1e-3f, 1e5f),
-    [SYSCFG_SESSIONCONTROLLER_TASK_OSDELAY]                  = SYSCFG_U32(SESSIONCONTROLLER_TASK_OSDELAY, OSDELAY_MIN, OSDELAY_MAX),
-    [SYSCFG_BPM_TASK_OSDELAY]                                = SYSCFG_U32(BPM_TASK_OSDELAY, OSDELAY_MIN, OSDELAY_MAX),
-    [SYSCFG_FORCESENSOR_TASK_OSDELAY]                        = SYSCFG_U32(FORCESENSOR_TASK_OSDELAY, OSDELAY_MIN, OSDELAY_MAX),
-    [SYSCFG_FORCESENSOR_COMMAND_POLL_OSDELAY]                = SYSCFG_U32(FORCESENSOR_COMMAND_POLL_OSDELAY, OSDELAY_MIN, OSDELAY_MAX),
-    [SYSCFG_FORCESENSOR_CONVERSION_TIMEOUT_MS]               = SYSCFG_U32(FORCESENSOR_CONVERSION_TIMEOUT_MS, 1u, OSDELAY_MAX),
-    [SYSCFG_OPTICAL_ENCODER_TASK_OSDELAY]                    = SYSCFG_U32(OPTICAL_ENCODER_TASK_OSDELAY, OSDELAY_MIN, OSDELAY_MAX),
-    [SYSCFG_NUM_APERTURES]                                   = SYSCFG_U32(NUM_APERTURES, 1u, 100000u),
-    [SYSCFG_PID_TASK_OSDELAY]                                = SYSCFG_U32(PID_TASK_OSDELAY, OSDELAY_MIN, OSDELAY_MAX),
-    [SYSCFG_USB_TASK_OSDELAY]                                = SYSCFG_U32(USB_TASK_OSDELAY, OSDELAY_MIN, OSDELAY_MAX),
-    [SYSCFG_USB_TX_FLUSH_MAX_RETRIES]                        = SYSCFG_U32(USB_TX_FLUSH_MAX_RETRIES, 0u, 1000u),
-    [SYSCFG_LCD_TASK_OSDELAY]                                = SYSCFG_U32(LCD_TASK_OSDELAY, OSDELAY_MIN, OSDELAY_MAX),
-    [SYSCFG_LED_TASK_OSDELAY]                                = SYSCFG_U32(LED_TASK_OSDELAY, OSDELAY_MIN, OSDELAY_MAX),
-    [SYSCFG_TASK_WARNING_RETRY_OSDELAY]                      = SYSCFG_U32(TASK_WARNING_RETRY_OSDELAY, OSDELAY_MIN, OSDELAY_MAX),
-    [SYSCFG_TASK_MONITOR_TASK_OSDELAY]                       = SYSCFG_U32(TASK_MONITOR_TASK_OSDELAY, OSDELAY_MIN, OSDELAY_MAX),
+#include "Config/sysconfig_table.inc"
 };
 
 void sysconfig_init(void)
