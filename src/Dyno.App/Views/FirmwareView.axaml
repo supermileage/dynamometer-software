@@ -2,6 +2,7 @@
   xmlns="https://github.com/avaloniaui"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
   xmlns:vm="using:Dyno.App.ViewModels"
+  xmlns:fw="using:Dyno.Core.Firmware"
   x:Class="Dyno.App.Views.FirmwareView"
   x:DataType="vm:MainWindowViewModel"
 >
@@ -81,12 +82,6 @@
           Margin="4,0,10,0"
         />
         <TextBlock
-          Grid.Column="1"
-          Classes="paramdesc"
-          Text="Build the firmware and put it on the board. Runs firmware/Scripts — the same commands CI and the terminal use."
-          VerticalAlignment="Center"
-        />
-        <TextBlock
           Grid.Column="2"
           Text="{Binding Firmware.BusyText}"
           IsVisible="{Binding Firmware.IsBusy}"
@@ -118,11 +113,6 @@
               <TextBlock Text="1" />
             </Border>
             <TextBlock Classes="sectiontitle" Text="BUILD" VerticalAlignment="Center" />
-            <TextBlock
-              Classes="paramdesc"
-              Text="in the pinned Docker toolchain — the same image CI uses"
-              VerticalAlignment="Center"
-            />
           </StackPanel>
 
           <Border Classes="card">
@@ -190,11 +180,6 @@
               <TextBlock Text="2" />
             </Border>
             <TextBlock Classes="sectiontitle" Text="FLASH" VerticalAlignment="Center" />
-            <TextBlock
-              Classes="paramdesc"
-              Text="programs the built image to 0x08000000"
-              VerticalAlignment="Center"
-            />
           </StackPanel>
 
           <Border Classes="card">
@@ -240,12 +225,46 @@
                 />
                 <TextBlock Classes="paramdesc" Text="{Binding Firmware.ToolHint}" />
 
+                <!-- Pick the board by clicking, not by copying a serial number out of a log. -->
+                <Button
+                  Content="Scan for devices"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Center"
+                  Command="{Binding Firmware.ScanCommand}"
+                  ToolTip.Tip="List the probes / DFU devices / serial ports that are plugged in, so you can click the one to flash"
+                />
+                <TextBlock Classes="paramdesc" Text="{Binding Firmware.DeviceStatus}" />
+
+                <ListBox
+                  Classes="methods"
+                  ItemsSource="{Binding Firmware.Devices}"
+                  SelectedItem="{Binding Firmware.SelectedDevice}"
+                  IsVisible="{Binding Firmware.Devices.Count}"
+                  MaxHeight="160"
+                >
+                  <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="fw:FlashTarget">
+                      <StackPanel Spacing="1">
+                        <TextBlock Text="{Binding Label}" FontSize="12.5" FontWeight="SemiBold" />
+                        <TextBlock
+                          Text="{Binding Detail}"
+                          FontFamily="{StaticResource MonoFont}"
+                          FontSize="11"
+                          Foreground="{StaticResource TextMutedBrush}"
+                        />
+                      </StackPanel>
+                    </DataTemplate>
+                  </ListBox.ItemTemplate>
+                </ListBox>
+
+                <!-- The picked value, also typeable for a device a scan can't see (behind a
+                     permission wall, or only present once in the bootloader). -->
                 <StackPanel Spacing="4" IsVisible="{Binding Firmware.ShowSerial}">
                   <TextBlock Classes="paramdesc" Text="Serial number (optional)" />
                   <TextBox
                     Classes="compact"
                     Text="{Binding Firmware.Serial}"
-                    Watermark="only if several are attached"
+                    Watermark="click a device above, or type it"
                   />
                 </StackPanel>
 
@@ -261,25 +280,15 @@
                   <TextBox Classes="compact" Text="{Binding Firmware.Baud}" />
                 </StackPanel>
 
-                <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
-                  <Button
-                    Grid.Column="0"
-                    Content="Scan"
-                    HorizontalAlignment="Stretch"
-                    HorizontalContentAlignment="Center"
-                    Command="{Binding Firmware.ScanCommand}"
-                    ToolTip.Tip="List what's plugged in — probes, DFU devices or serial ports — with the serial numbers the box above wants"
-                  />
-                  <Button
-                    Grid.Column="1"
-                    Classes="accent"
-                    Content="Flash"
-                    HorizontalAlignment="Stretch"
-                    HorizontalContentAlignment="Center"
-                    Command="{Binding Firmware.FlashCommand}"
-                    ToolTip.Tip="Program the built image to the board. Does not rebuild — press Build first if you changed anything."
-                  />
-                </Grid>
+                <Button
+                  Classes="accent"
+                  Content="Flash"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Center"
+                  Margin="0,4,0,0"
+                  Command="{Binding Firmware.FlashCommand}"
+                  ToolTip.Tip="Program the built image to the board. Does not rebuild — press Build first if you changed anything."
+                />
               </StackPanel>
             </Grid>
           </Border>

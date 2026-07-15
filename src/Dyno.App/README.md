@@ -90,9 +90,13 @@ does, and warns when the Config page holds edits nobody pressed Apply on (those 
 **Flash** offers the three methods as what they physically are — a probe, a USB cable, a serial
 adapter — because that, not a protocol name, is what decides which one a user can actually use. The
 tool list follows the method, the device boxes follow the tool (a DFU index only means something to
-`cubeprog`), and **Scan** lists what is plugged in, since the serial numbers it prints are what the
-Serial box wants. DFU and UART go through the chip's ROM bootloader, which the board does not enter
-on its own, so the page says so rather than letting the flash fail at it.
+`cubeprog`), and **Scan** turns the chosen tool's `--list` output into a **clickable list of the
+boards you can flash** (`DeviceScanParser`) — click one and it fills the serial / index / port, so a
+board is a choice rather than a serial number to copy. Each tool prints its own format, so parsing is
+per (method, tool) and deliberately lax; the raw output still goes to the Console tab as the ground
+truth, and the box is still typeable for a device the tool can't quite name. DFU and UART go through
+the chip's ROM bootloader, which the board does not enter on its own, so the page says so rather than
+letting the flash fail at it.
 
 Nothing is reimplemented here: both buttons run `firmware/Scripts/`, echo the command first, and
 stream the output unedited into the log panel's **Console** tab (the page no longer shows it itself —

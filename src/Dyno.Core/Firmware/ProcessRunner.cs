@@ -68,6 +68,11 @@ public static class ProcessRunner
             throw;
         }
 
+        // WaitForExitAsync returns on exit, but async output events can still be in flight. The
+        // parameterless WaitForExit drains them, so a caller that parses the output (a device scan)
+        // has every line before this returns, not all-but-the-last.
+        process.WaitForExit();
+
         return process.ExitCode;
 
         void Emit(string? line)

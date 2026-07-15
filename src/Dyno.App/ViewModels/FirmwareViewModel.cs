@@ -80,6 +80,19 @@ public partial class FirmwareViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(ShowIndex))]
     private string _selectedTool = string.Empty;
 
+    /// <summary>Devices a Scan found, for the user to click instead of typing a serial or a port.
+    /// The raw scan output still goes to the Console tab; this is the convenient view of it.</summary>
+    public ObservableCollection<FlashTarget> Devices { get; } = new();
+
+    /// <summary>The device the user clicked. Setting it fills whichever field it targets (serial,
+    /// index or port), so a pick and a hand-typed value end up in the same place.</summary>
+    [ObservableProperty]
+    private FlashTarget? _selectedDevice;
+
+    /// <summary>A line under the Scan button: how many devices were found, or why none were.</summary>
+    [ObservableProperty]
+    private string _deviceStatus = "Scan to list the boards you can flash to.";
+
     /// <summary>Which ST-Link probe / DFU device, when more than one is attached.</summary>
     [ObservableProperty]
     private string _serial = string.Empty;
@@ -208,6 +221,35 @@ public partial class FirmwareViewModel : ObservableObject
     {
         // The tool lists don't overlap between methods, so a stale selection would be invalid.
         SelectedTool = Tools[0];
+        // A scan is method-and-tool specific; what it found no longer applies.
+        ClearDevices();
+    }
+
+    partial void OnSelectedToolChanged(string value) => ClearDevices();
+
+    /// <summary>Applying a clicked device is just filling the field it targets — so the manual box
+    /// shows what was picked, and a scan-then-click lands in the same place as typing would.</summary>
+    partial void OnSelectedDeviceChanged(FlashTarget? value)
+    {
+        switch (value?.Field)
+        {
+            case FlashTargetField.Serial:
+                Serial = value.Value;
+                break;
+            case FlashTargetField.Index:
+                Index = value.Value;
+                break;
+            case FlashTargetField.Port:
+                Port = value.Value;
+                break;
+        }
+    }
+
+    private void ClearDevices()
+    {
+        Devices.Clear();
+        SelectedDevice = null;
+        DeviceStatus = "Scan to list the boards you can flash to.";
     }
 
     private bool CanRun => IsAvailable && !IsBusy;
@@ -285,9 +327,10 @@ public partial class FirmwareViewModel : ObservableObject
         );
     }
 
-    /// <summary>Ask the chosen tool what it can see: probes, DFU devices, or serial ports. The
-    /// serial numbers it prints are what the Serial box wants, so this is the step that makes
-    /// "which board am I about to overwrite" answerable.</summary>
+    /// <summary>Ask the chosen tool what it can see and turn the answer into a list the user clicks,
+    /// so "which board am I about to overwrite" is a choice rather than a serial number to copy. The
+    /// raw output still goes to the Console tab — the list is a convenience over it, and the fallback
+    /// when a device the tool can't quite name still shows up there.</summary>
     [RelayCommand(CanExecute = nameof(CanRun))]
     private async Task Scan()
     {
@@ -296,11 +339,74 @@ public partial class FirmwareViewModel : ObservableObject
             return;
         }
 
-        await ExecuteAsync(
-            "Scanning",
-            FirmwareCommands.ListDevices(_firmwareDirectory, SelectedMethod.Method, SelectedTool)
-        );
+        var method = SelectedMethod.Method;
+        var tool = SelectedTool;
+        var command = FirmwareCommands.ListDevices(_firmwareDirectory, method, tool);
+
+        IsBusy = true;
+        BusyText = "Scanning…";
+        _running = new CancellationTokenSource();
+        Append($"$ {command.DisplayLine}");
+
+        // Captured on the read thread (the sole writer, so no lock) and parsed after; the Console
+        // copy is marshalled to the UI thread. A scan does not reveal the Console the way a build
+        // does — its result is the on-page list, not the raw text.
+        var captured = new List<string>();
+        try
+        {
+            var exit = await ProcessRunner.RunAsync(
+                command,
+                line =>
+                {
+                    captured.Add(line);
+                    Dispatcher.UIThread.Post(() => Append(line));
+                },
+                _running.Token
+            );
+
+            var found = DeviceScanParser.Parse(method, tool, captured);
+            Devices.Clear();
+            foreach (var device in found)
+            {
+                Devices.Add(device);
+            }
+            // Keep a prior hand-typed value if the scan re-found it; otherwise pick the first.
+            SelectedDevice =
+                found.FirstOrDefault(d => d.Value == ValueFor(d.Field)) ?? found.FirstOrDefault();
+
+            DeviceStatus = (found.Count, tool) switch
+            {
+                (> 0, _) => $"{Count(found.Count, "device")} found — click one to select it.",
+                // openocd is the one tool with no list mode; the scan just prints as much.
+                (_, "openocd") =>
+                    "openocd can't list devices — scan with st-flash instead, or type the serial below.",
+                _ when exit != 0 => "Scan failed — see the Console tab.",
+                _ when NeedsBootloader =>
+                    "No devices found. Check it's connected and in bootloader mode (BOOT0 high, then reset).",
+                _ => "No devices found. Check it's connected.",
+            };
+        }
+        catch (OperationCanceledException)
+        {
+            DeviceStatus = "Scan cancelled.";
+        }
+        finally
+        {
+            _running.Dispose();
+            _running = null;
+            IsBusy = false;
+            BusyText = string.Empty;
+        }
     }
+
+    private string ValueFor(FlashTargetField field) =>
+        field switch
+        {
+            FlashTargetField.Serial => Serial,
+            FlashTargetField.Index => Index,
+            FlashTargetField.Port => Port,
+            _ => string.Empty,
+        };
 
     private bool CanCancel => IsBusy;
 
@@ -350,6 +456,8 @@ public partial class FirmwareViewModel : ObservableObject
             Output.RemoveAt(0);
         }
     }
+
+    private static string Count(int n, string noun) => $"{n} {noun}{(n == 1 ? "" : "s")}";
 
     private string DescribeBuild()
     {
