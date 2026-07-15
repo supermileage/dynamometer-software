@@ -110,7 +110,14 @@
     </Style>
   </Window.Styles>
 
-  <Panel>
+  <!--
+    When the window maximizes with an extended client area, the OS sizes it a little larger than
+    the screen on every edge (with native chrome that overhang is the invisible resize border).
+    Our borderless chrome has nothing to spare there, so the title bar, window buttons, and bottom
+    panel would be clipped off-screen. OffScreenMargin reports exactly that overhang — zero when
+    not maximized — so binding it here insets the whole UI back onto the screen.
+  -->
+  <Panel Margin="{Binding $parent[Window].OffScreenMargin}">
     <Grid RowDefinitions="Auto,*">
       <!-- Custom title bar -->
       <Border
