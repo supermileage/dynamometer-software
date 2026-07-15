@@ -66,10 +66,11 @@ done
 
 [[ -n "$METHOD" ]] || { echo "ERROR: choose a method: swd | dfu | uart (see --help)"; exit 1; }
 
-# Bundled tools (Scripts/tools/<platform>/, populated by Scripts/get-tools.sh) are preferred over
-# PATH, so a machine with nothing installed still flashes. PATH is the fallback only: a system
-# install is used when nothing is bundled, and neither shadows the other by surprise. cubeprog is
-# never bundled (proprietary, no redistribution), so it always comes from PATH.
+# The open-source tools are committed under Scripts/tools/<platform>/ (see its README; refresh them
+# with Scripts/get-tools.sh). They are preferred over PATH, so a clone with nothing installed still
+# flashes. PATH is the fallback only: a system install is used when nothing is bundled, and neither
+# shadows the other by surprise. cubeprog is never bundled (proprietary, no redistribution), so it
+# always comes from PATH.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENDOR_DIR="$SCRIPT_DIR/tools/$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
 # So a bundled binary finds the libs bundled next to it (st-flash needs libstlink.so.1) with no

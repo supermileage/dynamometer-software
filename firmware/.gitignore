@@ -71,6 +71,11 @@ MXTmpFiles/
 
 # vscode files
 .vscode/
-# Flashing tools fetched by Scripts/get-tools.sh / .ps1 — downloaded per machine, never committed
-# (proprietary cubeprog is never here; the OSS ones are pulled from upstream on demand).
-Scripts/tools/
+# The open-source flashing tools under Scripts/tools/ ARE committed (see its README) so a clone can
+# flash with nothing installed. The blanket *.so / *.dll / *.exe rules above would hide them, so
+# re-include everything under Scripts/tools/ ...
+!Scripts/tools/**
+# ... except STM32CubeProgrammer, which is proprietary and must never be committed, whatever
+# platform dir someone drops it in. (Listed last so it wins over the re-include above.)
+Scripts/tools/**/STM32_Programmer_CLI*
+Scripts/tools/**/*cubeprog*

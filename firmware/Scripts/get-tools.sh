@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Scripts/get-tools.sh
-# Download the open-source flashing tools into Scripts/tools/<platform>/, so nobody has to hunt
-# down installers. flash.sh prefers these bundled copies over anything on PATH (see its resolve()).
+# Regenerate the bundled flashing tools under Scripts/tools/<platform>/. These binaries are already
+# committed, so END USERS DO NOT RUN THIS — a clone already has them, and flash.sh uses them ahead
+# of PATH (see its resolve()). This is the maintainer's tool for adding a platform or bumping a
+# version: it downloads the pinned releases, verifies each SHA-256, and lays out the directory for
+# you to commit.
 #
 # What this fetches (Linux x86_64):
 #   st-flash / st-info   SWD     from the stlink release .deb (BSD-3-Clause)

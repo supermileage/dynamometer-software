@@ -1,7 +1,9 @@
 <#
 .SYNOPSIS
-    Download the open-source flashing tools into Scripts\tools\windows-x86_64\, so nobody has to
-    hunt down installers. flash.ps1 prefers these bundled copies over anything on PATH.
+    Regenerate the bundled Windows flashing tools under Scripts\tools\windows-x86_64\. These are
+    already committed, so END USERS DO NOT RUN THIS — a clone already has them, and flash.ps1 uses
+    them ahead of PATH. This is the maintainer's tool for bumping a version: it downloads the pinned
+    releases, verifies each SHA-256, and lays out the directory for you to commit.
 
 .DESCRIPTION
     What this fetches (Windows x86_64):

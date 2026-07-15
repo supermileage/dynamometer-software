@@ -80,33 +80,28 @@ arguments; pass `Debug` explicitly to work with the Debug build instead.
 
 Run `./Scripts/flash.sh --help` for the full option list.
 
-### Getting the tools without installing anything (`get-tools`)
-```bash
-./Scripts/get-tools.sh          # Linux x86_64
-```
-```powershell
-.\Scripts\get-tools.ps1         # Windows x86_64
-```
-This downloads the three open-source tools (`st-flash`/`st-info`, `dfu-util`,
-`stm32flash`) into `Scripts/tools/<platform>/`, each pinned to a version and
-verified against a SHA-256. **`flash.sh`/`flash.ps1` prefer a bundled copy over
-anything on `PATH`** (`resolve()` / `Resolve-Tool`), so once you've run this you
-can flash with no system install at all — and a tool you *do* have installed still
-works, as the fallback.
+### The tools are bundled — you don't install anything
+The three open-source tools (`st-flash`/`st-info`, `dfu-util`, `stm32flash`) are
+**committed under `Scripts/tools/<platform>/`**, so a fresh clone can flash with
+nothing installed. `flash.sh`/`flash.ps1` prefer a bundled copy over anything on
+`PATH` (`resolve()` / `Resolve-Tool`); a tool you *do* have installed still works,
+as the fallback. See `Scripts/tools/README.md` for versions, provenance and
+licenses.
 
-The bundled directory is git-ignored (per-machine, not committed): the binaries
-are fetched from upstream on demand, so nothing here redistributes them. Only
-`cubeprog` is left out — it's proprietary and can't be bundled — but every method
-has an open-source tool above, so you never need it.
+Bundled for `linux-x86_64` and `windows-x86_64`. On macOS or other architectures
+(no prebuilt upstream binaries) the scripts fall back to `PATH` — install a tool
+below. `cubeprog` is never bundled (proprietary), but every method has an
+open-source tool, so you never need it.
 
-*Not covered:* macOS (upstream ships no prebuilt macOS binaries — use Homebrew) and
-non-x86_64. On those, fall back to installing a tool below; `flash.sh` finds it on
-`PATH`.
+To **update** a bundled tool, bump the pin in `get-tools.sh`/`get-tools.ps1` and
+re-run it — it re-downloads the pinned release, checks its SHA-256, and rewrites
+the platform dir for you to commit. (End users never run this; the binaries are
+already in the repo.)
 
-### Installing a tool
-If you'd rather not bundle, the open-source tools come from your package manager
-with no account. **STM32CubeProgrammer (`cubeprog`) is _not_ in apt/dnf** and
-requires a free ST (myST) account to download.
+### Installing a tool (only if the bundle doesn't cover your platform)
+The open-source tools come from your package manager with no account.
+**STM32CubeProgrammer (`cubeprog`) is _not_ in apt/dnf** and requires a free ST
+(myST) account to download.
 
 | Tool | Linux | Windows | ST account? |
 |------|-------|---------|-------------|
