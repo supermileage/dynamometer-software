@@ -47,6 +47,25 @@ $ErrorActionPreference = 'Stop'
 # to set. cubeprog is never bundled (proprietary), so it always comes from PATH or its install dir.
 $script:VendorDir = Join-Path $PSScriptRoot 'tools\windows-x86_64'
 
+# What to tell the user when a tool is missing. cubeprog is the one we cannot ship (proprietary);
+# the OSS tools are bundled, so a miss there means an unsupported platform.
+function Get-InstallHint($tool) {
+    switch ($tool) {
+        'cubeprog' {
+            @(
+                "  STM32CubeProgrammer is proprietary, so it cannot be bundled with this repo. To use it:",
+                "    1. Download it from https://www.st.com/en/development-tools/stm32cubeprog.html",
+                "       (a free ST 'myST' account is required).",
+                "    2. Install it, then either add its bin\ folder to PATH or use its default location.",
+                "  Or skip it entirely - every method has a bundled open-source tool that needs no install:",
+                "    swd -> -Tool st-flash,  dfu -> -Tool dfu-util,  uart -> -Tool stm32flash."
+            ) -join "`n"
+        }
+        'openocd' { "  openocd is not bundled. Install it (no account) - an xpack OpenOCD build, or 'choco install openocd' - and put it on PATH. Or use the bundled swd tool: -Tool st-flash." }
+        default   { "  '$tool' ships bundled for windows-x86_64, but wasn't found. Reinstall it with .\Scripts\get-tools.ps1, or install it yourself and put it on PATH." }
+    }
+}
+
 # Map a tool keyword to its executable name and resolve it: bundled, then PATH.
 function Resolve-Tool($tool) {
     $exe = if ($tool -eq 'cubeprog') { 'STM32_Programmer_CLI' } else { $tool }
@@ -60,7 +79,7 @@ function Resolve-Tool($tool) {
             'STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe'
         if (Test-Path $def) { return $def }
     }
-    throw "'$exe' not found — not bundled and not on PATH. Run .\Scripts\get-tools.ps1, or install it (see README)."
+    throw "'$exe' is not available (not bundled, not on PATH).`n$(Get-InstallHint $tool)"
 }
 
 $valid = @{ swd = @('cubeprog','st-flash','openocd'); dfu = @('cubeprog','dfu-util'); uart = @('cubeprog','stm32flash') }

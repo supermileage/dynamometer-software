@@ -85,7 +85,45 @@ resolve() {
     if [[ -x "$VENDOR_DIR/$b" ]]; then printf '%s' "$VENDOR_DIR/$b"; else printf '%s' "$b"; fi
 }
 have()    { command -v "$(resolve "$1")" >/dev/null 2>&1; }
-require() { have "$1" || { echo "ERROR: '$(tool_bin "$1")' not found — not bundled and not on PATH. Run Scripts/get-tools.sh, or install it (see README)."; exit 1; }; }
+
+# What to tell the user when a tool is missing. cubeprog is the one we cannot ship (proprietary);
+# the OSS tools are bundled for linux-x86_64 / windows-x86_64, so a miss there means some other
+# platform, where a package-manager install (no account) is the fix.
+install_hint() {
+    case "$1" in
+        cubeprog)
+            echo "  STM32CubeProgrammer is proprietary, so it cannot be bundled with this repo. To use it:"
+            echo "    1. Download it from https://www.st.com/en/development-tools/stm32cubeprog.html"
+            echo "       (a free ST 'myST' account is required)."
+            echo "    2. Add its bin/ directory (containing STM32_Programmer_CLI) to your PATH."
+            echo "  Or skip it entirely — every method has a bundled open-source tool that needs no install:"
+            echo "    swd -> --tool st-flash,  dfu -> --tool dfu-util,  uart -> --tool stm32flash." ;;
+        openocd)
+            echo "  openocd is not bundled. Install it (no account needed) and put it on your PATH:"
+            echo "    dnf install openocd  ·  apt install openocd  ·  brew install openocd  ·  or an xpack build."
+            echo "  Or use the bundled swd tool instead: --tool st-flash." ;;
+        st-flash|st-info)
+            echo "  st-flash (stlink) ships bundled for linux-x86_64 and windows-x86_64, but not for your platform."
+            echo "  Install it yourself (no account needed) and put it on your PATH:"
+            echo "    dnf install stlink  ·  apt install stlink-tools  ·  brew install stlink." ;;
+        dfu-util)
+            echo "  dfu-util ships bundled for linux-x86_64 and windows-x86_64, but not for your platform."
+            echo "  Install it yourself (no account needed) and put it on your PATH:"
+            echo "    dnf install dfu-util  ·  apt install dfu-util  ·  brew install dfu-util." ;;
+        stm32flash)
+            echo "  stm32flash ships bundled for linux-x86_64 and windows-x86_64, but not for your platform."
+            echo "  Install it yourself (no account needed) and put it on your PATH:"
+            echo "    dnf install stm32flash  ·  apt install stm32flash  ·  brew install stm32flash." ;;
+        *)
+            echo "  Install '$1' and put it on your PATH (see Scripts/README.md)." ;;
+    esac
+}
+require() {
+    have "$1" && return 0
+    echo "ERROR: '$(tool_bin "$1")' is not available (not bundled for this platform, not on PATH)."
+    install_hint "$1"
+    exit 1
+}
 
 # Which tools are valid for each method (no fallback — exactly the one you name).
 case "$METHOD" in
