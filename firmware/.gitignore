@@ -71,3 +71,6 @@ MXTmpFiles/
 
 # vscode files
 .vscode/
+# Flashing tools fetched by Scripts/get-tools.sh / .ps1 — downloaded per machine, never committed
+# (proprietary cubeprog is never here; the OSS ones are pulled from upstream on demand).
+Scripts/tools/

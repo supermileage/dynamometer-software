@@ -66,10 +66,25 @@ done
 
 [[ -n "$METHOD" ]] || { echo "ERROR: choose a method: swd | dfu | uart (see --help)"; exit 1; }
 
+# Bundled tools (Scripts/tools/<platform>/, populated by Scripts/get-tools.sh) are preferred over
+# PATH, so a machine with nothing installed still flashes. PATH is the fallback only: a system
+# install is used when nothing is bundled, and neither shadows the other by surprise. cubeprog is
+# never bundled (proprietary, no redistribution), so it always comes from PATH.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENDOR_DIR="$SCRIPT_DIR/tools/$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
+# So a bundled binary finds the libs bundled next to it (st-flash needs libstlink.so.1) with no
+# rpath patching. Harmless when nothing is bundled — the directory just isn't there.
+export LD_LIBRARY_PATH="$VENDOR_DIR:${LD_LIBRARY_PATH:-}"
+
 # Map a tool keyword to its executable name.
-bin_for() { case "$1" in cubeprog) echo "STM32_Programmer_CLI" ;; *) echo "$1" ;; esac; }
-have()    { command -v "$1" >/dev/null 2>&1; }
-require() { have "$(bin_for "$1")" || { echo "ERROR: '$(bin_for "$1")' not found on PATH. Install it (see README)."; exit 1; }; }
+tool_bin() { case "$1" in cubeprog) echo "STM32_Programmer_CLI" ;; *) echo "$1" ;; esac; }
+# The bundled copy's absolute path if present, else the bare name for a PATH lookup.
+resolve() {
+    local b; b="$(tool_bin "$1")"
+    if [[ -x "$VENDOR_DIR/$b" ]]; then printf '%s' "$VENDOR_DIR/$b"; else printf '%s' "$b"; fi
+}
+have()    { command -v "$(resolve "$1")" >/dev/null 2>&1; }
+require() { have "$1" || { echo "ERROR: '$(tool_bin "$1")' not found — not bundled and not on PATH. Run Scripts/get-tools.sh, or install it (see README)."; exit 1; }; }
 
 # Which tools are valid for each method (no fallback — exactly the one you name).
 case "$METHOD" in
@@ -83,15 +98,15 @@ if [[ $DO_LIST -eq 1 ]]; then
     case "$METHOD" in
         swd)
             case "${TOOL:-cubeprog}" in
-                cubeprog) require cubeprog; exec STM32_Programmer_CLI -l ;;
-                st-flash) require st-flash; have st-info && exec st-info --probe || exec st-flash --list ;;
+                cubeprog) require cubeprog; exec "$(resolve cubeprog)" -l ;;
+                st-flash) require st-flash; have st-info && exec "$(resolve st-info)" --probe || exec "$(resolve st-flash)" --list ;;
                 openocd)  echo "openocd has no list mode; use: $0 swd --tool st-flash --list"; exit 0 ;;
                 *) echo "ERROR: --list for swd needs --tool cubeprog|st-flash"; exit 1 ;;
             esac ;;
         dfu)
             case "${TOOL:-dfu-util}" in
-                cubeprog) require cubeprog; exec STM32_Programmer_CLI -l usb ;;
-                dfu-util) require dfu-util; exec dfu-util -l ;;
+                cubeprog) require cubeprog; exec "$(resolve cubeprog)" -l usb ;;
+                dfu-util) require dfu-util; exec "$(resolve dfu-util)" -l ;;
                 *) echo "ERROR: --list for dfu needs --tool cubeprog|dfu-util"; exit 1 ;;
             esac ;;
         uart)
@@ -136,24 +151,24 @@ cmd=()
 case "$METHOD:$TOOL" in
     swd:cubeprog)
         conn=(port=SWD); [[ -n "$SERIAL" ]] && conn+=(sn="$SERIAL")
-        cmd=(STM32_Programmer_CLI -c "${conn[@]}" -d "$ELF" -rst) ;;
+        cmd=("$(resolve cubeprog)" -c "${conn[@]}" -d "$ELF" -rst) ;;
     swd:st-flash)
-        cmd=(st-flash); [[ -n "$SERIAL" ]] && cmd+=(--serial "$SERIAL")
+        cmd=("$(resolve st-flash)"); [[ -n "$SERIAL" ]] && cmd+=(--serial "$SERIAL")
         cmd+=(--reset write "$BIN" 0x08000000) ;;
     swd:openocd)
-        cmd=(openocd -f interface/stlink.cfg)
+        cmd=("$(resolve openocd)" -f interface/stlink.cfg)
         [[ -n "$SERIAL" ]] && cmd+=(-c "adapter serial $SERIAL")
         cmd+=(-f target/stm32h7x.cfg -c "program $ELF verify reset exit") ;;
     dfu:cubeprog)
         conn=(port=USB"$INDEX"); [[ -n "$SERIAL" ]] && conn+=(sn="$SERIAL")
-        cmd=(STM32_Programmer_CLI -c "${conn[@]}" -d "$ELF" -rst) ;;
+        cmd=("$(resolve cubeprog)" -c "${conn[@]}" -d "$ELF" -rst) ;;
     dfu:dfu-util)
-        cmd=(dfu-util -a 0); [[ -n "$SERIAL" ]] && cmd+=(-S "$SERIAL")
+        cmd=("$(resolve dfu-util)" -a 0); [[ -n "$SERIAL" ]] && cmd+=(-S "$SERIAL")
         cmd+=(-s 0x08000000:leave -D "$BIN") ;;
     uart:cubeprog)
-        cmd=(STM32_Programmer_CLI -c port="$PORT" br="$BAUD" -d "$ELF" -rst) ;;
+        cmd=("$(resolve cubeprog)" -c port="$PORT" br="$BAUD" -d "$ELF" -rst) ;;
     uart:stm32flash)
-        cmd=(stm32flash -b "$BAUD" -w "$BIN" -v -g 0x08000000 "$PORT") ;;
+        cmd=("$(resolve stm32flash)" -b "$BAUD" -w "$BIN" -v -g 0x08000000 "$PORT") ;;
 esac
 
 echo "Flashing $CONFIG via $TOOL ($METHOD)..."

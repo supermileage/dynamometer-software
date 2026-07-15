@@ -41,9 +41,17 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# Map a tool keyword to its executable name and resolve it (no fallback).
+# Bundled tools (Scripts\tools\windows-x86_64\, populated by get-tools.ps1) are preferred over PATH,
+# so a machine with nothing installed still flashes. A bundled .exe finds the DLLs shipped beside it
+# automatically (Windows searches the app directory first), so there is nothing like LD_LIBRARY_PATH
+# to set. cubeprog is never bundled (proprietary), so it always comes from PATH or its install dir.
+$script:VendorDir = Join-Path $PSScriptRoot 'tools\windows-x86_64'
+
+# Map a tool keyword to its executable name and resolve it: bundled, then PATH.
 function Resolve-Tool($tool) {
     $exe = if ($tool -eq 'cubeprog') { 'STM32_Programmer_CLI' } else { $tool }
+    $bundled = Join-Path $script:VendorDir "$exe.exe"
+    if (Test-Path $bundled) { return $bundled }
     $cmd = Get-Command $exe -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
     # STM32CubeProgrammer usually isn't on PATH on Windows; check its default dir.
@@ -52,7 +60,7 @@ function Resolve-Tool($tool) {
             'STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe'
         if (Test-Path $def) { return $def }
     }
-    throw "'$exe' not found. Install it (see README)."
+    throw "'$exe' not found — not bundled and not on PATH. Run .\Scripts\get-tools.ps1, or install it (see README)."
 }
 
 $valid = @{ swd = @('cubeprog','st-flash','openocd'); dfu = @('cubeprog','dfu-util'); uart = @('cubeprog','stm32flash') }
@@ -64,9 +72,10 @@ if ($List) {
             switch ($(if ($Tool) { $Tool } else { 'cubeprog' })) {
                 'cubeprog' { & (Resolve-Tool 'cubeprog') -l }
                 'st-flash' {
-                    # st-info (ships with stlink) is the universal probe lister.
-                    $si = Get-Command st-info -ErrorAction SilentlyContinue
-                    if ($si) { & $si.Source --probe } else { & (Resolve-Tool 'st-flash') --list }
+                    # st-info (ships with stlink) is the universal probe lister — bundled first.
+                    $si = Join-Path $script:VendorDir 'st-info.exe'
+                    if (-not (Test-Path $si)) { $si = (Get-Command st-info -ErrorAction SilentlyContinue).Source }
+                    if ($si) { & $si --probe } else { & (Resolve-Tool 'st-flash') --list }
                 }
                 default    { Write-Host "openocd has no list mode; use -Tool st-flash -List" }
             }

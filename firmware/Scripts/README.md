@@ -80,10 +80,33 @@ arguments; pass `Debug` explicitly to work with the Debug build instead.
 
 Run `./Scripts/flash.sh --help` for the full option list.
 
+### Getting the tools without installing anything (`get-tools`)
+```bash
+./Scripts/get-tools.sh          # Linux x86_64
+```
+```powershell
+.\Scripts\get-tools.ps1         # Windows x86_64
+```
+This downloads the three open-source tools (`st-flash`/`st-info`, `dfu-util`,
+`stm32flash`) into `Scripts/tools/<platform>/`, each pinned to a version and
+verified against a SHA-256. **`flash.sh`/`flash.ps1` prefer a bundled copy over
+anything on `PATH`** (`resolve()` / `Resolve-Tool`), so once you've run this you
+can flash with no system install at all — and a tool you *do* have installed still
+works, as the fallback.
+
+The bundled directory is git-ignored (per-machine, not committed): the binaries
+are fetched from upstream on demand, so nothing here redistributes them. Only
+`cubeprog` is left out — it's proprietary and can't be bundled — but every method
+has an open-source tool above, so you never need it.
+
+*Not covered:* macOS (upstream ships no prebuilt macOS binaries — use Homebrew) and
+non-x86_64. On those, fall back to installing a tool below; `flash.sh` finds it on
+`PATH`.
+
 ### Installing a tool
-The open-source tools come from your package manager with no account.
-**STM32CubeProgrammer (`cubeprog`) is _not_ in apt/dnf** and requires a free ST
-(myST) account to download.
+If you'd rather not bundle, the open-source tools come from your package manager
+with no account. **STM32CubeProgrammer (`cubeprog`) is _not_ in apt/dnf** and
+requires a free ST (myST) account to download.
 
 | Tool | Linux | Windows | ST account? |
 |------|-------|---------|-------------|
