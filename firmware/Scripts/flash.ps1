@@ -20,7 +20,7 @@
         uart -Port <COMx>   (each adapter is a distinct COM port)
 
     Run on the host (needs USB/serial access; not via Docker). Build first:
-        cmake --build --preset Debug
+        cmake --build --preset Release      # or .\Scripts\build-docker.ps1
 
 .EXAMPLE
     .\Scripts\flash.ps1 -Method swd -Tool st-flash
@@ -29,7 +29,7 @@
     .\Scripts\flash.ps1 -Method uart -Tool stm32flash -Port COM5
 #>
 param(
-    [ValidateSet('Debug', 'Release')]                 [string]$Config = 'Debug',
+    [ValidateSet('Debug', 'Release')]                 [string]$Config = 'Release',
     [Parameter(Mandatory)][ValidateSet('swd','dfu','uart')] [string]$Method,
     [ValidateSet('cubeprog','st-flash','openocd','dfu-util','stm32flash')] [string]$Tool,
     [string]$Serial = '',
@@ -103,7 +103,7 @@ $BuildDir = @("build-docker/$Config", "build/$Config") |
     Select-Object -First 1
 
 if (-not $BuildDir) {
-    throw "No $Config firmware found in build-docker/$Config/ or build/$Config/. Build first: ./Scripts/build-docker.sh $Config"
+    throw "No $Config firmware found in build-docker/$Config/ or build/$Config/. Build first: .\Scripts\build-docker.ps1 -Config $Config"
 }
 
 $Elf = Join-Path $BuildDir "$Name.elf"
