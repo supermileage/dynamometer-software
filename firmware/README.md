@@ -78,7 +78,24 @@ STM32CubeMX, click **Generate Code** to refresh the HAL/driver sources and
 `cmake/stm32cubemx/CMakeLists.txt`. Your edits in the top-level `CMakeLists.txt`
 (and inside `USER CODE BEGIN/END` blocks) are preserved.
 
-To regenerate headlessly from the command line, drive STM32CubeMX with a script:
+To regenerate headlessly from the command line, use the wrapper script — it
+finds STM32CubeMX, feeds it a `config load … / project generate` script, and (on
+Linux) wraps the run in `xvfb-run` for headless hosts:
+```bash
+./Scripts/regen-cube.sh                                   # auto-find CubeMX + the .ioc
+./Scripts/regen-cube.sh --cubemx ~/STM32CubeMX/STM32CubeMX # or point at the binary
+./Scripts/regen-cube.sh --check                           # regenerate, then fail on drift
+```
+```powershell
+.\Scripts\regen-cube.ps1
+.\Scripts\regen-cube.ps1 -Cubemx "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeMX\STM32CubeMX.exe"
+```
+CubeMX is located via `--cubemx`/`-Cubemx`, then `$STM32CUBEMX`, then common
+install dirs, then `STM32CubeMX` on `PATH`. On a headless Linux host, install the
+virtual-display helper (`dnf install xorg-x11-server-Xvfb` / `apt install xvfb`).
+
+Under the hood it just drives CubeMX's own scripting mode, which you can also run
+by hand:
 ```bash
 printf 'config load %s/stm32_dyno_firmware_v2.ioc\nproject generate\nexit\n' "$PWD" > /tmp/gen.txt
 /path/to/STM32CubeMX -q /tmp/gen.txt
