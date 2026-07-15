@@ -81,6 +81,30 @@ if ($Cubemx -like '*.jar') {
     $exe = $Cubemx; $preArgs = @()
 }
 
+# --- verify the firmware pack the .ioc needs is installed --------------------
+# If the HAL/firmware package the .ioc references isn't in the local repository,
+# 'config load' hangs for many minutes while CubeMX tries to fetch it. Fail fast.
+$repo = if ($env:STM32CUBE_REPO) { $env:STM32CUBE_REPO } else { Join-Path $env:USERPROFILE 'STM32Cube\Repository' }
+$packLine = Select-String -LiteralPath $Ioc -Pattern '^ProjectManager\.FirmwarePackage=(.+)$' | Select-Object -First 1
+if ($packLine) {
+    $pack = $packLine.Matches[0].Groups[1].Value.Trim()
+    $packDir = Join-Path $repo ($pack -replace ' ', '_')
+    if ($pack -and -not (Test-Path -LiteralPath $packDir -PathType Container)) {
+        Write-Host "ERROR: the firmware package this .ioc needs is not installed:"
+        Write-Host "         $pack"
+        Write-Host "       expected at: $packDir"
+        Write-Host ""
+        Write-Host "Without it, CubeMX hangs in 'config load' trying to download it. Install it first:"
+        Write-Host '  headless (downloads from ST — needs internet + a free myST login the first time):'
+        Write-Host ('     ''swmgr install "{0}" ask'',''exit'' | Set-Content inst.txt' -f $pack)
+        Write-Host ('     & "{0}" -q inst.txt' -f $Cubemx)
+        Write-Host '  from a pre-downloaded pack .zip (no login):  swmgr install C:\path\to\pack.zip deny'
+        Write-Host '  or GUI: Help -> Manage embedded software packages -> STM32H7 -> tick it -> Install'
+        Write-Host '  (set $env:STM32CUBE_REPO if your repository lives elsewhere)'
+        exit 1
+    }
+}
+
 # --- generate ----------------------------------------------------------------
 $script = New-TemporaryFile
 try {
@@ -95,12 +119,14 @@ try {
 
 # --- optional drift check ----------------------------------------------------
 if ($Check) {
-    git -C $ProjectPath diff --quiet
+    # Ignore .mxproject: CubeMX rewrites this bookkeeping file on every generate,
+    # so it churns even when no source changed, and it isn't compiled.
+    git -C $ProjectPath diff --quiet -- . ':(exclude).mxproject'
     if ($LASTEXITCODE -ne 0) {
         Write-Host ""
-        Write-Host "ERROR: regeneration changed tracked files — the committed generated"
-        Write-Host "       code is out of date with the .ioc. Regenerate and commit:"
-        git -C $ProjectPath --no-pager diff --stat
+        Write-Host "ERROR: regeneration changed committed files — the generated code is"
+        Write-Host "       out of date with the .ioc. Regenerate and commit:"
+        git -C $ProjectPath --no-pager diff --stat -- . ':(exclude).mxproject'
         exit 1
     }
     Write-Host "Drift check passed: generated code matches the .ioc."

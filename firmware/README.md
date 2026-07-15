@@ -94,6 +94,26 @@ CubeMX is located via `--cubemx`/`-Cubemx`, then `$STM32CUBEMX`, then common
 install dirs, then `STM32CubeMX` on `PATH`. On a headless Linux host, install the
 virtual-display helper (`dnf install xorg-x11-server-Xvfb` / `apt install xvfb`).
 
+**Prerequisite — the STM32Cube firmware package.** Generation needs the HAL/driver
+package named in the `.ioc` (`ProjectManager.FirmwarePackage`, currently
+**`STM32Cube FW_H7 V1.12.1`**) present in the local repository
+(`~/STM32Cube/Repository/`). A fresh CubeMX install does **not** include it, and if
+it's missing `config load` **hangs for minutes** silently trying to fetch it — so
+the script checks first and fails fast with instructions. Install it once via the
+GUI (**Help → Manage embedded software packages → STM32H7**, needs a free myST
+login), or headlessly:
+```bash
+# downloads from ST (needs internet + a myST login the first time):
+printf 'swmgr install "STM32Cube FW_H7 V1.12.1" ask\nexit\n' > /tmp/inst.txt
+/path/to/STM32CubeMX -q /tmp/inst.txt
+# ...or install a pack .zip you already downloaded (no login needed then):
+printf 'swmgr install /path/to/en.stm32cube_fw_h7_v1.12.1.zip deny\nexit\n' > /tmp/inst.txt
+/path/to/STM32CubeMX -q /tmp/inst.txt
+```
+For a build box or container, install the pack once and reuse the populated
+`~/STM32Cube/Repository/` (e.g. bake it into a private image) — ST credentials are
+needed only to *download* the pack, never to run generation afterward.
+
 Under the hood it just drives CubeMX's own scripting mode, which you can also run
 by hand:
 ```bash
@@ -127,8 +147,29 @@ tool, choosing among multiple connected probes, device discovery, the CMake
 `flash` targets, and **Linux USB permissions**.
 
 ## Continuous Integration
-`.github/workflows/build.yml` builds both `Debug` and `Release` with CMake on every
-push/PR and uploads the resulting firmware as workflow artifacts.
+`.github/workflows/firmware.yml` runs on every push/PR:
+- **build** — builds `Debug` and `Release` with CMake in the pinned Docker image
+  and uploads the firmware as workflow artifacts.
+- **generated-headers** — verifies the committed MessagePassing headers still
+  match their YAML schema.
+- **ioc-drift** — regenerates from the `.ioc` with STM32CubeMX and fails if the
+  committed generated code drifted (i.e. the `.ioc` was edited without running
+  `Scripts/regen-cube.sh`). `.mxproject` churn is ignored. **Off by default** —
+  see below to enable it.
+
+### Enabling the `ioc-drift` check
+It needs STM32CubeMX **plus** the ST-licensed `STM32Cube FW_H7` pack, which can't
+live in a public image. It stays **skipped** until you point it at a private image:
+
+1. Build the image once from `cubemx.Dockerfile` (bundles your CubeMX install and
+   `~/STM32Cube/Repository`) and push it to a **private** registry. The Dockerfile
+   header has the exact `docker build`/`push` recipe. ST credentials are used only
+   here, at build time — never in CI.
+2. In the repo's **Settings → Secrets and variables → Actions**, set:
+   - variable **`CUBEMX_IMAGE`** = the image ref (e.g. `ghcr.io/<org>/cubemx-h7:6.18.0`)
+   - secret **`CUBEMX_IMAGE_TOKEN`** = a token that can pull that private image
+
+Once both are set the job runs on every push/PR; leave them unset and it's a no-op.
 
 ## Notes
 - Ensure all submodules are initialized and updated before building.

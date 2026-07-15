@@ -22,6 +22,33 @@ jobs:
       - name: Verify committed headers match their schema
         run: python firmware/tools/message_gen/check.py
 
+  ioc-drift:
+    name: generated firmware in sync with .ioc
+    # Regenerates from the .ioc with STM32CubeMX and fails if the committed
+    # generated code drifted from what the .ioc produces. Needs a PRIVATE image
+    # containing CubeMX + the ST-licensed FW_H7 pack (see firmware/cubemx.Dockerfile).
+    # Skipped until the CUBEMX_IMAGE repo variable is set, so it never blocks the
+    # build for forks or a repo that hasn't provisioned the image.
+    if: ${{ vars.CUBEMX_IMAGE != '' }}
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ vars.CUBEMX_IMAGE }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.CUBEMX_IMAGE_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The job runs as root inside the container; mark the checkout trusted so
+      # the drift check's `git diff` doesn't bail on "dubious ownership".
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # STM32CUBEMX / STM32CUBE_REPO come from the image's ENV; regen-cube.sh
+      # auto-wraps CubeMX in xvfb-run since the container has no display.
+      - name: Regenerate from the .ioc and fail on drift
+        run: firmware/Scripts/regen-cube.sh --check
+
   build:
     name: build (${{ matrix.config }})
     runs-on: ubuntu-latest

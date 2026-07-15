@@ -88,6 +88,32 @@ if [[ -z "${DISPLAY:-}" ]] && command -v xvfb-run >/dev/null 2>&1; then
     RUN=(xvfb-run -a "${RUN[@]}")
 fi
 
+# --- verify the firmware pack the .ioc needs is installed --------------------
+# If the HAL/firmware package the .ioc references isn't in the local repository,
+# 'config load' hangs for many minutes, silently, while CubeMX tries to fetch it
+# (and offline it just never finishes). Fail fast with an actionable message.
+REPO="${STM32CUBE_REPO:-$HOME/STM32Cube/Repository}"
+PACK="$(sed -n 's/^ProjectManager\.FirmwarePackage=//p' "$IOC" | tr -d '\r' | head -1)"
+if [[ -n "$PACK" && ! -d "$REPO/${PACK// /_}" ]]; then
+    echo "ERROR: the firmware package this .ioc needs is not installed:"
+    echo "         $PACK"
+    echo "       expected at: $REPO/${PACK// /_}"
+    echo
+    echo "Without it, CubeMX hangs in 'config load' trying to download it. Install it first:"
+    echo "  headless (downloads from ST — needs internet + a free myST login the first time):"
+    echo "     printf 'swmgr install \"%s\" ask\\nexit\\n' \"$PACK\" > /tmp/inst.txt && \\"
+    echo "     '$CUBEMX' -q /tmp/inst.txt"
+    echo "  from a pre-downloaded pack .zip (no login needed at install time):"
+    echo "     printf 'swmgr install /path/to/pack.zip deny\\nexit\\n' > /tmp/inst.txt && '$CUBEMX' -q /tmp/inst.txt"
+    echo "  or in the GUI: Help -> Manage embedded software packages -> STM32H7 -> tick it -> Install"
+    echo "  (set \$STM32CUBE_REPO if your repository lives elsewhere)"
+    if [[ -d "$REPO" ]]; then
+        echo "  firmware packs currently installed in $REPO:"
+        find "$REPO" -maxdepth 1 -mindepth 1 -type d -name '*_FW_*' -printf '     %f\n' 2>/dev/null | head || echo "     (none)"
+    fi
+    exit 1
+fi
+
 # --- generate ----------------------------------------------------------------
 SCRIPT="$(mktemp)"
 trap 'rm -f "$SCRIPT"' EXIT
@@ -98,11 +124,14 @@ echo "Regenerating from ${IOC#"$PROJECT_PATH"/} using ${RUN[*]}..."
 
 # --- optional drift check ----------------------------------------------------
 if [[ $CHECK -eq 1 ]]; then
-    if ! git -C "$PROJECT_PATH" diff --quiet; then
+    # Ignore .mxproject: CubeMX rewrites this bookkeeping file on every generate,
+    # so it churns even when no source changed, and it isn't compiled.
+    DRIFT_SPEC=(-- . ':(exclude).mxproject')
+    if ! git -C "$PROJECT_PATH" diff --quiet "${DRIFT_SPEC[@]}"; then
         echo
-        echo "ERROR: regeneration changed tracked files — the committed generated"
-        echo "       code is out of date with the .ioc. Regenerate and commit:"
-        git -C "$PROJECT_PATH" --no-pager diff --stat
+        echo "ERROR: regeneration changed committed files — the generated code is"
+        echo "       out of date with the .ioc. Regenerate and commit:"
+        git -C "$PROJECT_PATH" --no-pager diff --stat "${DRIFT_SPEC[@]}"
         exit 1
     fi
     echo "Drift check passed: generated code matches the .ioc."
