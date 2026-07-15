@@ -49,8 +49,14 @@ public partial class FirmwareViewModel : ObservableObject
     public IReadOnlyList<FlashMethodChoice> Methods { get; } = FlashMethodChoice.All;
 
     /// <summary>Everything the two scripts print, in arrival order. Capped, because a Docker image
-    /// rebuild prints thousands of lines and nobody scrolls back through them.</summary>
+    /// rebuild prints thousands of lines and nobody scrolls back through them. This is shown in the
+    /// window's log panel (the Console tab), not on this page.</summary>
     public ObservableCollection<string> Output { get; } = new();
+
+    /// <summary>Raised when a build, flash or scan begins. The window uses it to reveal the Console
+    /// tab, so output the user just triggered is never off-screen just because they were on another
+    /// tab or had the panel collapsed.</summary>
+    public event Action? OutputStarted;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(BuildStatusText))]
@@ -301,14 +307,12 @@ public partial class FirmwareViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(CanCancel))]
     private void Cancel() => _running?.Cancel();
 
-    [RelayCommand]
-    private void ClearOutput() => Output.Clear();
-
     private async Task ExecuteAsync(string what, ProcessCommand command)
     {
         IsBusy = true;
         BusyText = $"{what}…";
         _running = new CancellationTokenSource();
+        OutputStarted?.Invoke();
 
         // Echo the command first: everything the page does is something the user could have typed,
         // and showing it keeps that promise checkable.

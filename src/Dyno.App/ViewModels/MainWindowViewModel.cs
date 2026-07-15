@@ -27,6 +27,17 @@ public partial class MainWindowViewModel : ObservableObject
     public ObservableCollection<TaskMonitorRow> Tasks { get; } = new();
     public ObservableCollection<string> Events { get; } = new();
 
+    // ---- Log panel tabs ------------------------------------------------------------------------
+    // The bottom panel holds one tab per stream it can show. Two today — the Errors/Events log, and
+    // the Console (build/flash output, which used to live on the Firmware page). Each is a
+    // LogTabViewModel over an existing collection, so the panel's chrome is indifferent to what a
+    // tab actually is, and a third stream is a fourth constructor call rather than new plumbing.
+
+    public ObservableCollection<LogTabViewModel> LogTabs { get; } = new();
+
+    [ObservableProperty]
+    private LogTabViewModel _selectedLogTab = null!;
+
     // ---- Event log placement -------------------------------------------------------------------
     // The log is a window onto the link, not a feature of the Home page: a sysconfig write is
     // rejected, or the board drops off, while you are on SysConfig or Firmware — which is exactly
@@ -200,6 +211,39 @@ public partial class MainWindowViewModel : ObservableObject
             SysConfig.CompileTimeOverrides,
             () => SysConfig.PendingCount
         );
+
+        var eventsTab = new LogTabViewModel(
+            "Errors / Events",
+            Events,
+            colorize: true,
+            newestFirst: true,
+            "Nothing logged yet.",
+            BuildEventReport,
+            ClearEvents
+        );
+        var consoleTab = new LogTabViewModel(
+            "Console",
+            Firmware.Output,
+            colorize: false,
+            newestFirst: false,
+            "Nothing has run yet. Build and flash output appears here, exactly as the tools print it.",
+            lines => string.Join(Environment.NewLine, lines),
+            Firmware.Output.Clear
+        );
+        LogTabs.Add(eventsTab);
+        LogTabs.Add(consoleTab);
+        SelectedLogTab = eventsTab;
+
+        // The Firmware page no longer shows its own output, so a build the user just started would
+        // otherwise vanish. Surface the Console the moment one runs — whichever page they are on,
+        // and whether or not the panel was open.
+        Firmware.OutputStarted += () =>
+            Dispatcher.UIThread.Post(() =>
+            {
+                SelectedLogTab = consoleTab;
+                IsEventLogVisible = true;
+            });
+
         SelectedSampleRate =
             SampleRates.FirstOrDefault(c => c.Value == ForceSensorSampleRate.Sps128)
             ?? SampleRates[0];
@@ -534,7 +578,8 @@ public partial class MainWindowViewModel : ObservableObject
         row.Timestamp = data.timestamp;
     }
 
-    [RelayCommand]
+    /// <summary>The Errors/Events tab's Clear action (see <see cref="LogTabViewModel"/>). Also
+    /// resets the collapsed bar, since there is no longer a latest event or a missed one.</summary>
     private void ClearEvents()
     {
         Events.Clear();

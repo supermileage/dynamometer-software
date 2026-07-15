@@ -50,6 +50,27 @@
       <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
       <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
     </Style>
+    <!-- Tab headers. A TabStrip is a row of these with a SelectedItem and no content of its own,
+         which is exactly what a shared panel wants: the content is one list below, swapped by
+         selection. -->
+    <Style Selector="TabStrip">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="TabStripItem">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Padding" Value="10,4" />
+      <Setter Property="Margin" Value="0,0,4,0" />
+      <Setter Property="CornerRadius" Value="7" />
+      <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+    </Style>
+    <Style Selector="TabStripItem:selected">
+      <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+      <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+    </Style>
+    <Style Selector="TabStripItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#1AFFFFFF" />
+    </Style>
   </UserControl.Styles>
 
   <Border Classes="card" Padding="12,8,12,12">
@@ -63,12 +84,18 @@
       />
 
       <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" Margin="0,0,0,8">
-        <TextBlock
+        <TabStrip
           Grid.Column="0"
-          Classes="heading"
-          Text="ERRORS / EVENTS"
+          ItemsSource="{Binding LogTabs}"
+          SelectedItem="{Binding SelectedLogTab}"
           VerticalAlignment="Center"
-        />
+        >
+          <TabStrip.ItemTemplate>
+            <DataTemplate x:DataType="vm:LogTabViewModel">
+              <TextBlock Text="{Binding Title}" />
+            </DataTemplate>
+          </TabStrip.ItemTemplate>
+        </TabStrip>
         <Button
           x:Name="CopyEventsButton"
           Grid.Column="2"
@@ -76,15 +103,15 @@
           Content="Copy"
           Margin="0,0,6,0"
           Click="OnCopyEvents"
-          ToolTip.Tip="Copy the selected lines — or all of them, if none are selected (Ctrl+C)"
+          ToolTip.Tip="Copy the selected lines from this tab — or all of them, if none are selected (Ctrl+C)"
         />
         <Button
           Grid.Column="3"
           Classes="logaction"
           Content="Clear"
           Margin="0,0,6,0"
-          Command="{Binding ClearEventsCommand}"
-          ToolTip.Tip="Empty the list, e.g. before reproducing a problem"
+          Command="{Binding SelectedLogTab.ClearCommand}"
+          ToolTip.Tip="Empty this tab"
         />
         <ToggleButton
           Grid.Column="4"
@@ -103,23 +130,38 @@
         />
       </Grid>
 
-      <ListBox
-        x:Name="EventList"
-        ItemsSource="{Binding Events}"
-        SelectionMode="Multiple"
-        KeyDown="OnEventListKeyDown"
-      >
-        <ListBox.ItemTemplate>
-          <DataTemplate>
-            <TextBlock
-              Text="{Binding}"
-              FontFamily="{StaticResource MonoFont}"
-              FontSize="12"
-              Foreground="{Binding Converter={x:Static conv:EventLevelToBrushConverter.Instance}}"
-            />
-          </DataTemplate>
-        </ListBox.ItemTemplate>
-      </ListBox>
+      <Panel>
+        <TextBlock
+          Text="{Binding SelectedLogTab.EmptyText}"
+          FontSize="11.5"
+          Foreground="{StaticResource TextMutedBrush}"
+          TextWrapping="Wrap"
+          VerticalAlignment="Top"
+          IsVisible="{Binding !SelectedLogTab.Lines.Count}"
+        />
+        <ListBox
+          x:Name="EventList"
+          ItemsSource="{Binding SelectedLogTab.Lines}"
+          Tag="{Binding SelectedLogTab.Colorize}"
+          SelectionMode="Multiple"
+          KeyDown="OnEventListKeyDown"
+        >
+          <ListBox.ItemTemplate>
+            <!-- Non-compiled on purpose: the foreground is a MultiBinding of the line and the tab's
+                 colour flag, which is simpler without a per-item x:DataType. -->
+            <DataTemplate>
+              <TextBlock FontFamily="{StaticResource MonoFont}" FontSize="12" Text="{Binding}">
+                <TextBlock.Foreground>
+                  <MultiBinding Converter="{x:Static conv:LogLineBrushConverter.Instance}">
+                    <Binding Path="." />
+                    <Binding Path="Tag" RelativeSource="{RelativeSource AncestorType=ListBox}" />
+                  </MultiBinding>
+                </TextBlock.Foreground>
+              </TextBlock>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </Panel>
     </DockPanel>
   </Border>
 </UserControl>

@@ -55,13 +55,24 @@ sits idle.
 Every page stays alive while another is showing, so Home keeps accumulating telemetry in the
 background.
 
-### The event log belongs to the window, not to a page
+### The log panel belongs to the window, not to a page
 `EventLogView` is hosted by `MainWindow`, beneath whichever page is showing, because the events worth
 seeing happen while you are on the page that caused them: a sysconfig write is *rejected* while you
 are on Config, a link drops while you are flashing. It used to be the bottom row of Home, which is
 the one page you are not on when that matters.
 
-Three placements, and the log is resizable in each (drag the grip on its top edge):
+It holds **tabs**, one per stream it can show — the same window furniture (tab strip, Copy, Clear,
+pin, hide, resize) serving all of them. Each tab is a `LogTabViewModel` over an existing collection,
+so the panel is indifferent to what a tab actually is and a third is a constructor call, not new
+plumbing. Two exist today:
+- **Errors / Events** — the device link log, newest first, coloured by severity.
+- **Console** — build/flash/scan output, appended and followed, plain text. It used to live on the
+  Firmware page; moving it here means output is watchable from any page, and the panel reveals this
+  tab automatically the moment a command runs (`FirmwareViewModel.OutputStarted`) so output the user
+  just triggered is never off-screen. What the two tabs share is only their shape; what differs —
+  read order, colouring, how a copy is rendered — is two flags and a delegate on the tab.
+
+Three placements, and the panel is resizable in each (drag the grip on its top edge):
 - **Pinned** (default) — it takes a strip at the foot of the window and the page ends above it, so
   nothing is ever covered.
 - **Floating** — it hovers over the foot of the page instead of shortening it. The dense pages are
@@ -84,8 +95,10 @@ Serial box wants. DFU and UART go through the chip's ROM bootloader, which the b
 on its own, so the page says so rather than letting the flash fail at it.
 
 Nothing is reimplemented here: both buttons run `firmware/Scripts/`, echo the command first, and
-stream the output unedited. On Linux the page also names the udev/`dialout` permissions up front —
-the failure otherwise reads as a mysterious `libusb open failed` and sends people to `sudo`.
+stream the output unedited into the log panel's **Console** tab (the page no longer shows it itself —
+the panel opens that tab on its own when a command runs). On Linux the page also names the
+udev/`dialout` permissions up front — the failure otherwise reads as a mysterious `libusb open
+failed` and sends people to `sudo`.
 
 ## Logging
 Serilog → console + a rolling file under `logs/`, bridged to `Microsoft.Extensions.Logging`
