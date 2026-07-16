@@ -89,11 +89,12 @@
           FontSize="12"
           VerticalAlignment="Center"
         />
+        <!-- Always present, so the toolbar never reflows: its CancelCommand (CanExecute = IsBusy)
+             greys it out when nothing is running rather than making the button come and go. -->
         <Button
           Grid.Column="3"
           Content="Stop"
           Command="{Binding Firmware.CancelCommand}"
-          IsVisible="{Binding Firmware.IsBusy}"
           ToolTip.Tip="Kill the running command and everything it started"
         />
       </Grid>
