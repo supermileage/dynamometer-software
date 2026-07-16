@@ -81,28 +81,51 @@ if ($Cubemx -like '*.jar') {
     $exe = $Cubemx; $preArgs = @()
 }
 
-# --- verify the firmware pack the .ioc needs is installed --------------------
-# If the HAL/firmware package the .ioc references isn't in the local repository,
-# 'config load' hangs for many minutes while CubeMX tries to fetch it. Fail fast.
+# --- provide the firmware pack from the bundled submodule --------------------
+# The HAL/firmware pack is vendored as the STM32CubeH7 submodule, pinned to the
+# version the .ioc names, so regenerating needs no myST account. CubeMX only
+# looks for packs in its own repository, so link the submodule in there under the
+# exact directory name it expects (a junction needs no elevation). A real pack
+# already installed there wins. With no pack at all CubeMX hangs in 'config
+# load' rather than reporting anything, so bail out early instead.
 $repo = if ($env:STM32CUBE_REPO) { $env:STM32CUBE_REPO } else { Join-Path $env:USERPROFILE 'STM32Cube\Repository' }
 $packLine = Select-String -LiteralPath $Ioc -Pattern '^ProjectManager\.FirmwarePackage=(.+)$' | Select-Object -First 1
 if ($packLine) {
     $pack = $packLine.Matches[0].Groups[1].Value.Trim()
     $packDir = Join-Path $repo ($pack -replace ' ', '_')
+    $submod = Join-Path $ProjectPath 'third_party\STM32CubeH7'
     if ($pack -and -not (Test-Path -LiteralPath $packDir -PathType Container)) {
-        Write-Host "ERROR: the firmware package this .ioc needs is not installed:"
-        Write-Host "         $pack"
-        Write-Host "       expected at: $packDir"
-        Write-Host ""
-        Write-Host "Without it, CubeMX hangs in 'config load' trying to download it. Install it first:"
-        Write-Host '  headless (downloads from ST — needs internet + a free myST login the first time):'
-        Write-Host ('     ''swmgr install "{0}" ask'',''exit'' | Set-Content inst.txt' -f $pack)
-        Write-Host ('     & "{0}" -q inst.txt' -f $Cubemx)
-        Write-Host '  from a pre-downloaded pack .zip (no login):  swmgr install C:\path\to\pack.zip deny'
-        Write-Host '  or GUI: Help -> Manage embedded software packages -> STM32H7 -> tick it -> Install'
-        Write-Host '  (set $env:STM32CUBE_REPO if your repository lives elsewhere)'
-        exit 1
+        if (Test-Path -LiteralPath (Join-Path $submod 'package.xml') -PathType Leaf) {
+            # STM32CubeH7 is a meta-repo whose sources are nested submodules: a
+            # plain clone leaves Drivers/ empty, which stalls CubeMX exactly like
+            # a missing pack. Populate the two it needs.
+            $halSrc = Join-Path $submod 'Drivers\STM32H7xx_HAL_Driver\Src'
+            if (-not (Test-Path $halSrc) -or -not (Get-ChildItem $halSrc -ErrorAction SilentlyContinue)) {
+                Write-Host "Populating STM32CubeH7 HAL/CMSIS sources..."
+                git -C $submod submodule update --init --depth 1 -- `
+                    Drivers/CMSIS/Device/ST/STM32H7xx Drivers/STM32H7xx_HAL_Driver
+            }
+            New-Item -ItemType Directory -Force -Path $repo | Out-Null
+            New-Item -ItemType Junction -Path $packDir -Target $submod | Out-Null
+            Write-Host "Using bundled pack: $packDir -> third_party\STM32CubeH7"
+        } else {
+            Write-Host "ERROR: the firmware pack this .ioc needs is not available:"
+            Write-Host "         $pack"
+            Write-Host ""
+            Write-Host "It is vendored as a submodule — initialise it:"
+            Write-Host "     git submodule update --init firmware/third_party/STM32CubeH7"
+            Write-Host "  (or install the pack into $repo yourself, or set `$env:STM32CUBE_REPO.)"
+            exit 1
+        }
     }
+}
+
+# CubeMX shows a migration prompt when its version differs from the one that
+# wrote the .ioc. Headless there is nobody to answer it, so the run just hangs at
+# 'config load' with no output — surface the expected version up front.
+$verLine = Select-String -LiteralPath $Ioc -Pattern '^MxCube\.Version=(.+)$' | Select-Object -First 1
+if ($verLine) {
+    Write-Host ("Note: this .ioc was written by STM32CubeMX {0}; a different version will stall on a migration prompt." -f $verLine.Matches[0].Groups[1].Value.Trim())
 }
 
 # --- generate ----------------------------------------------------------------

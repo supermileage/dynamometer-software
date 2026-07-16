@@ -1,32 +1,33 @@
 # PRIVATE image for the .ioc drift-check CI job (.github/workflows/firmware.yml,
-# job "ioc-drift"). It bundles STM32CubeMX and the STM32Cube FW_H7 pack.
+# job "ioc-drift"). It bundles STM32CubeMX only.
 #
 # ============================ LICENSING — READ THIS ==========================
-# STM32CubeMX and the STM32Cube firmware packs are ST-licensed and MUST NOT be
-# redistributed publicly. Build this image and push it to a PRIVATE registry
-# only. An ST/myST account is needed to obtain CubeMX + the pack; those
-# credentials are used here, at image-build time — NEVER in CI.
+# STM32CubeMX is ST-licensed and MUST NOT be redistributed publicly. Build this
+# image and push it to a PRIVATE registry only. An ST/myST account is needed to
+# obtain CubeMX; those credentials are used here, at image-build time — NEVER in
+# CI. The firmware *pack* is deliberately NOT baked in: it comes from the public
+# STM32CubeH7 submodule at run time, so CubeMX is the only licensed thing here.
 # =============================================================================
 #
-# CubeMX bundles its own JRE, so no Java is installed here — only the native X
-# libraries its SWT UI links against, a virtual display (xvfb), and git for the
-# drift check.
+# The CubeMX version MUST match the .ioc's MxCube.Version. If it doesn't, CubeMX
+# raises a migration prompt that nothing can answer headlessly, and every run
+# stalls silently at 'config load'. Tag the image with the version it contains.
 #
-# Build context must contain (they are ST-licensed, so they live outside the
-# repo — assemble a scratch context, do not copy them into the source tree):
+# CubeMX bundles its own JRE, so no Java is installed here — only the native X
+# libraries its SWT UI links against, a virtual display (xvfb), and git (for the
+# drift check and to populate the pack submodule).
+#
+# Build context must contain:
 #   ./STM32CubeMX/    a full STM32CubeMX install   (your ~/STM32CubeMX)
-#   ./Repository/     firmware packs               (your ~/STM32Cube/Repository,
-#                     must include STM32Cube_FW_H7_V1.12.1)
 #
 # Build & push (example — GitHub Container Registry, kept PRIVATE):
 #   ctx="$(mktemp -d)"
 #   cp firmware/cubemx.Dockerfile "$ctx/Dockerfile"
 #   cp -r ~/STM32CubeMX          "$ctx/STM32CubeMX"
-#   cp -r ~/STM32Cube/Repository "$ctx/Repository"
-#   docker build -t ghcr.io/<org>/cubemx-h7:6.18.0 "$ctx"
-#   docker push  ghcr.io/<org>/cubemx-h7:6.18.0
+#   docker build -t ghcr.io/<org>/cubemx:6.15.0 "$ctx"
+#   docker push  ghcr.io/<org>/cubemx:6.15.0
 #   # keep the package PRIVATE, then wire it up (see firmware/README.md):
-#   #   repo variable CUBEMX_IMAGE      = ghcr.io/<org>/cubemx-h7:6.18.0
+#   #   repo variable CUBEMX_IMAGE       = ghcr.io/<org>/cubemx:6.15.0
 #   #   repo secret   CUBEMX_IMAGE_TOKEN = a token that can pull that package
 
 FROM ubuntu:24.04
@@ -46,14 +47,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ST-licensed payload, supplied via the build context (see header).
 COPY STM32CubeMX/ /opt/STM32CubeMX/
-COPY Repository/  /opt/STM32Cube/Repository/
 
-# regen-cube.sh reads these to find CubeMX and the pack repository.
-ENV STM32CUBEMX=/opt/STM32CubeMX/STM32CubeMX \
-    STM32CUBE_REPO=/opt/STM32Cube/Repository
+# regen-cube.sh reads this to find CubeMX. It links the pack in from the
+# submodule itself, so no repository is baked into the image.
+ENV STM32CUBEMX=/opt/STM32CubeMX/STM32CubeMX
 
-# Fail the build early (not silently in CI) if the required pack is absent.
+# Fail the build early (not silently in CI) if CubeMX didn't come through.
 RUN test -x "$STM32CUBEMX" \
-      || (echo "ERROR: $STM32CUBEMX missing/not executable in build context" >&2; exit 1) \
- && test -d "$STM32CUBE_REPO/STM32Cube_FW_H7_V1.12.1" \
-      || (echo "ERROR: STM32Cube_FW_H7_V1.12.1 missing from Repository/ build context" >&2; exit 1)
+      || (echo "ERROR: $STM32CUBEMX missing/not executable in build context" >&2; exit 1)

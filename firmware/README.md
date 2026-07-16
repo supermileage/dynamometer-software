@@ -94,25 +94,29 @@ CubeMX is located via `--cubemx`/`-Cubemx`, then `$STM32CUBEMX`, then common
 install dirs, then `STM32CubeMX` on `PATH`. On a headless Linux host, install the
 virtual-display helper (`dnf install xorg-x11-server-Xvfb` / `apt install xvfb`).
 
-**Prerequisite — the STM32Cube firmware package.** Generation needs the HAL/driver
-package named in the `.ioc` (`ProjectManager.FirmwarePackage`, currently
-**`STM32Cube FW_H7 V1.12.1`**) present in the local repository
-(`~/STM32Cube/Repository/`). A fresh CubeMX install does **not** include it, and if
-it's missing `config load` **hangs for minutes** silently trying to fetch it — so
-the script checks first and fails fast with instructions. Install it once via the
-GUI (**Help → Manage embedded software packages → STM32H7**, needs a free myST
-login), or headlessly:
+### The firmware pack (no ST account needed)
+Generation needs the HAL/driver package the `.ioc` names
+(`ProjectManager.FirmwarePackage`, currently **`STM32Cube FW_H7 V1.12.1`**). Rather
+than downloading it from ST behind a myST login, it is **vendored as a submodule**
+— [`STM32CubeH7`](https://github.com/STMicroelectronics/STM32CubeH7) pinned to tag
+`v1.12.1`, which is the same package ST ships, public and cloneable:
 ```bash
-# downloads from ST (needs internet + a myST login the first time):
-printf 'swmgr install "STM32Cube FW_H7 V1.12.1" ask\nexit\n' > /tmp/inst.txt
-/path/to/STM32CubeMX -q /tmp/inst.txt
-# ...or install a pack .zip you already downloaded (no login needed then):
-printf 'swmgr install /path/to/en.stm32cube_fw_h7_v1.12.1.zip deny\nexit\n' > /tmp/inst.txt
-/path/to/STM32CubeMX -q /tmp/inst.txt
+git submodule update --init firmware/third_party/STM32CubeH7
 ```
-For a build box or container, install the pack once and reuse the populated
-`~/STM32Cube/Repository/` (e.g. bake it into a private image) — ST credentials are
-needed only to *download* the pack, never to run generation afterward.
+`regen-cube.sh` links it into CubeMX's repository under the exact name CubeMX
+expects, so no pack install is required. Two things worth knowing:
+- The submodule is only needed to **regenerate** — never to *build*, since the
+  generated HAL is committed. It's ~2 GB, so skip initialising it unless you're
+  regenerating.
+- `STM32CubeH7` is a **meta-repo** whose sources are themselves nested submodules;
+  a plain clone leaves `Drivers/` empty and CubeMX stalls exactly as if the pack
+  were missing. The script populates the two that matter
+  (`STM32H7xx_HAL_Driver`, `CMSIS/Device`) and ignores the ~40 eval-board BSPs.
+
+> **Match the CubeMX version.** CubeMX prompts to migrate when its version differs
+> from the `.ioc`'s `MxCube.Version`. Headless there's nobody to answer, so the run
+> hangs at `config load` with no output and no error. Keep your CubeMX in step with
+> the `.ioc` (and pin the same version in CI).
 
 Under the hood it just drives CubeMX's own scripting mode, which you can also run
 by hand:

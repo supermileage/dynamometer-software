@@ -1,0 +1,4 @@
+[submodule "firmware/third_party/STM32CubeH7"]
+	path = firmware/third_party/STM32CubeH7
+	url = https://github.com/STMicroelectronics/STM32CubeH7
+	shallow = true

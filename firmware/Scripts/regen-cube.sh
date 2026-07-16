@@ -88,31 +88,48 @@ if [[ -z "${DISPLAY:-}" ]] && command -v xvfb-run >/dev/null 2>&1; then
     RUN=(xvfb-run -a "${RUN[@]}")
 fi
 
-# --- verify the firmware pack the .ioc needs is installed --------------------
-# If the HAL/firmware package the .ioc references isn't in the local repository,
-# 'config load' hangs for many minutes, silently, while CubeMX tries to fetch it
-# (and offline it just never finishes). Fail fast with an actionable message.
+# --- provide the firmware pack from the bundled submodule --------------------
+# The HAL/firmware pack is vendored as the STM32CubeH7 submodule, pinned to the
+# version the .ioc names, so regenerating needs no myST account. CubeMX only
+# looks for packs in its own repository, so link the submodule in there under the
+# exact directory name it expects. A real pack already installed there wins.
+# If no pack is found at all, CubeMX hangs in 'config load' for minutes rather
+# than reporting anything, so bail out early instead.
 REPO="${STM32CUBE_REPO:-$HOME/STM32Cube/Repository}"
 PACK="$(sed -n 's/^ProjectManager\.FirmwarePackage=//p' "$IOC" | tr -d '\r' | head -1)"
-if [[ -n "$PACK" && ! -d "$REPO/${PACK// /_}" ]]; then
-    echo "ERROR: the firmware package this .ioc needs is not installed:"
-    echo "         $PACK"
-    echo "       expected at: $REPO/${PACK// /_}"
-    echo
-    echo "Without it, CubeMX hangs in 'config load' trying to download it. Install it first:"
-    echo "  headless (downloads from ST — needs internet + a free myST login the first time):"
-    echo "     printf 'swmgr install \"%s\" ask\\nexit\\n' \"$PACK\" > /tmp/inst.txt && \\"
-    echo "     '$CUBEMX' -q /tmp/inst.txt"
-    echo "  from a pre-downloaded pack .zip (no login needed at install time):"
-    echo "     printf 'swmgr install /path/to/pack.zip deny\\nexit\\n' > /tmp/inst.txt && '$CUBEMX' -q /tmp/inst.txt"
-    echo "  or in the GUI: Help -> Manage embedded software packages -> STM32H7 -> tick it -> Install"
-    echo "  (set \$STM32CUBE_REPO if your repository lives elsewhere)"
-    if [[ -d "$REPO" ]]; then
-        echo "  firmware packs currently installed in $REPO:"
-        find "$REPO" -maxdepth 1 -mindepth 1 -type d -name '*_FW_*' -printf '     %f\n' 2>/dev/null | head || echo "     (none)"
+PACK_DIR="$REPO/${PACK// /_}"
+SUBMOD="$PROJECT_PATH/third_party/STM32CubeH7"
+
+if [[ -n "$PACK" && ! -d "$PACK_DIR" ]]; then
+    if [[ -f "$SUBMOD/package.xml" ]]; then
+        # STM32CubeH7 is a meta-repo whose sources are nested submodules: a plain
+        # clone leaves Drivers/ empty, which stalls CubeMX exactly like a missing
+        # pack. Populate the two it needs (the ~40 eval-board BSPs are not used).
+        if [[ -z "$(ls -A "$SUBMOD/Drivers/STM32H7xx_HAL_Driver/Src" 2>/dev/null)" ]]; then
+            echo "Populating STM32CubeH7 HAL/CMSIS sources..."
+            git -C "$SUBMOD" submodule update --init --depth 1 -- \
+                Drivers/CMSIS/Device/ST/STM32H7xx \
+                Drivers/STM32H7xx_HAL_Driver
+        fi
+        mkdir -p "$REPO"
+        ln -sfn "$SUBMOD" "$PACK_DIR"
+        echo "Using bundled pack: ${PACK_DIR/#$HOME/\~} -> firmware/third_party/STM32CubeH7"
+    else
+        echo "ERROR: the firmware pack this .ioc needs is not available:"
+        echo "         $PACK"
+        echo
+        echo "It is vendored as a submodule — initialise it:"
+        echo "     git submodule update --init firmware/third_party/STM32CubeH7"
+        echo "  (or install the pack into $REPO yourself, or set \$STM32CUBE_REPO.)"
+        exit 1
     fi
-    exit 1
 fi
+
+# CubeMX shows a migration prompt when its version differs from the one that
+# wrote the .ioc. Headless there is nobody to answer it, so the run just hangs at
+# 'config load' with no output — surface the expected version up front.
+IOC_MX_VER="$(sed -n 's/^MxCube\.Version=//p' "$IOC" | tr -d '\r' | head -1)"
+[[ -n "$IOC_MX_VER" ]] && echo "Note: this .ioc was written by STM32CubeMX $IOC_MX_VER; a different version will stall on a migration prompt."
 
 # --- generate ----------------------------------------------------------------
 SCRIPT="$(mktemp)"

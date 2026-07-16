@@ -37,15 +37,20 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.CUBEMX_IMAGE_TOKEN }}
     steps:
+      # submodules: true (not recursive) fetches STM32CubeH7 — the firmware pack —
+      # at its pinned tag, without dragging in its ~40 eval-board BSP submodules.
+      # regen-cube.sh then populates just the HAL/CMSIS ones CubeMX needs.
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       # The job runs as root inside the container; mark the checkout trusted so
-      # the drift check's `git diff` doesn't bail on "dubious ownership".
+      # git operations don't bail on "dubious ownership".
       - name: Trust the checkout
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+        run: git config --global --add safe.directory '*'
 
-      # STM32CUBEMX / STM32CUBE_REPO come from the image's ENV; regen-cube.sh
-      # auto-wraps CubeMX in xvfb-run since the container has no display.
+      # STM32CUBEMX comes from the image's ENV; regen-cube.sh links the pack in
+      # from the submodule and wraps CubeMX in xvfb-run (no display in CI).
       - name: Regenerate from the .ioc and fail on drift
         run: firmware/Scripts/regen-cube.sh --check
 
