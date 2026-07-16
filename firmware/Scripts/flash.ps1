@@ -153,5 +153,25 @@ $cmdArgs = switch ("$Method`:$Tool") {
 }
 
 Write-Host "Flashing $Config via $Tool ($Method)..."
+
+# dfu-util with ':leave' (see the dfu:dfu-util case above) tells the board to exit DFU and boot the
+# app the instant the download completes - so dfu-util's final get_status read hits a device that is
+# already gone and it exits non-zero, even though the write itself succeeded ("File downloaded
+# successfully"). That is the one tool/exit combination where a good flash looks like a failure, so
+# special-case it: report success when the download is confirmed, but keep the real exit code for a
+# genuine failure - which never prints that line. Mirrors the same handling in flash.sh.
+if ($Method -eq 'dfu' -and $Tool -eq 'dfu-util') {
+    & $exe @cmdArgs 2>&1 | Tee-Object -Variable captured
+    $code = $LASTEXITCODE
+    if ($code -ne 0 -and ($captured -match 'File downloaded successfully')) {
+        Write-Host ''
+        Write-Host "Note: dfu-util exited $code on its post-download status read, which fails because"
+        Write-Host "':leave' already reset the board out of DFU. The 'File downloaded successfully' above"
+        Write-Host 'is dfu-util confirming the write - this flash succeeded.'
+        exit 0
+    }
+    exit $code
+}
+
 & $exe @cmdArgs
 exit $LASTEXITCODE

@@ -211,4 +211,28 @@ case "$METHOD:$TOOL" in
 esac
 
 echo "Flashing $CONFIG via $TOOL ($METHOD)..."
+
+# dfu-util with ':leave' (the dfu:dfu-util case above) tells the board to exit DFU and boot the app
+# the instant the download completes -- so dfu-util's final get_status read hits a device that is
+# already gone and it exits non-zero, even though the write itself succeeded ("File downloaded
+# successfully"). That is the one tool/exit combination where a good flash looks like a failure, so
+# special-case it: report success when the download is confirmed, but keep the real exit code for a
+# genuine failure -- which never prints that line. Every other tool execs and stands by its own code.
+if [[ "$METHOD:$TOOL" == dfu:dfu-util ]]; then
+    out=$(mktemp)
+    set +e
+    "${cmd[@]}" 2>&1 | tee "$out"
+    status=${PIPESTATUS[0]}
+    set -e
+    if [[ $status -ne 0 ]] && grep -q "File downloaded successfully" "$out"; then
+        echo
+        echo "Note: dfu-util exited $status on its post-download status read, which fails because"
+        echo "':leave' already reset the board out of DFU. The 'File downloaded successfully' above is"
+        echo "dfu-util confirming the write -- this flash succeeded."
+        status=0
+    fi
+    rm -f "$out"
+    exit "$status"
+fi
+
 exec "${cmd[@]}"
