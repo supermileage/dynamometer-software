@@ -139,8 +139,19 @@ def _prepare_sysconfig(schema: dict, symbols: dict[str, int], defines: list) -> 
             p["_csval"] = str(i)
             p["_cs_isfloat"] = "true" if p["type"] == "float" else "false"
             p["_cs_default"] = _cs_double(defaults[name])
-            p["_cs_min"] = _cs_double(p["min"])
-            p["_cs_max"] = _cs_double(p["max"])
+            if p["type"] == "enum":
+                # A uint32 whose value is one of `options` (contiguous codes from 0). The
+                # host range-checks it 0..last like the firmware and emits the labels so the
+                # UI can offer a dropdown.
+                opts = p["options"]
+                p["_cs_min"] = _cs_double(0)
+                p["_cs_max"] = _cs_double(len(opts) - 1)
+                p["_cs_options"] = ", ".join(
+                    f'new({o["value"]}u, {_cs_string(o["label"])})' for o in opts
+                )
+            else:
+                p["_cs_min"] = _cs_double(p["min"])
+                p["_cs_max"] = _cs_double(p["max"])
             p["_cs_category"] = _cs_string(p["category"])
             p["_cs_unit"] = _cs_string(p["unit"])
             p["_cs_desc"] = _cs_string(p["description"])

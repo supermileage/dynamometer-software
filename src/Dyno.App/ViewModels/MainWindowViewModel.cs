@@ -150,12 +150,6 @@ public partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    /// <summary>Selectable force-sensor sample rates, in ascending SPS.</summary>
-    public IReadOnlyList<SampleRateChoice> SampleRates { get; } =
-        Enum.GetValues<ForceSensorSampleRate>()
-            .Select(r => new SampleRateChoice(r, r.ToLabel()))
-            .ToList();
-
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(ConnectCommand))]
     private string? _selectedPort;
@@ -163,7 +157,6 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(ConnectCommand))]
     [NotifyCanExecuteChangedFor(nameof(DisconnectCommand))]
-    [NotifyCanExecuteChangedFor(nameof(SetSampleRateCommand))]
     private bool _isConnected;
 
     [ObservableProperty]
@@ -192,10 +185,6 @@ public partial class MainWindowViewModel : ObservableObject
 
     [ObservableProperty]
     private uint _lastTimestamp;
-
-    [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(SetSampleRateCommand))]
-    private SampleRateChoice? _selectedSampleRate;
 
     public MainWindowViewModel(ILoggerFactory loggerFactory)
     {
@@ -241,9 +230,6 @@ public partial class MainWindowViewModel : ObservableObject
                 IsEventLogVisible = true;
             });
 
-        SelectedSampleRate =
-            SampleRates.FirstOrDefault(c => c.Value == ForceSensorSampleRate.Sps128)
-            ?? SampleRates[0];
         RefreshPorts();
     }
 
@@ -358,30 +344,6 @@ public partial class MainWindowViewModel : ObservableObject
         client.CommandSent -= OnCommandSent;
         client.CommandFailed -= OnCommandFailed;
         client.StreamResynced -= OnStreamResynced;
-    }
-
-    private bool CanSetSampleRate => IsConnected && SelectedSampleRate is not null;
-
-    [RelayCommand(CanExecute = nameof(CanSetSampleRate))]
-    private async Task SetSampleRate()
-    {
-        if (_client is null || SelectedSampleRate is null)
-        {
-            return;
-        }
-
-        try
-        {
-            // Succeeds only on a USB_RSP_OK ack; a timeout or firmware rejection throws. Every
-            // outcome — sent, applied, rejected, unanswered — is already logged by the client's
-            // command events, so this catch exists to keep a rejection from faulting the command,
-            // not to report it a second time.
-            await _client.SetForceSensorSampleRateAsync(SelectedSampleRate.Value);
-        }
-        catch (Exception)
-        {
-            // reported through CommandFailed / the response's status
-        }
     }
 
     private void OnHandshaked()

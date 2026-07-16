@@ -333,29 +333,6 @@ public sealed class DeviceClient : IDisposable
     }
 
     /// <summary>
-    /// Sets the force-sensor ADC (ADS1115) sample rate and awaits the firmware's RESPONSE.
-    /// A convenience wrapper over <see cref="SendCommandAsync"/> that fills in the owning task
-    /// and opcode; throws <see cref="TimeoutException"/> if no reply arrives, or
-    /// <see cref="DeviceCommandException"/> if the firmware rejects the command (non-OK status).
-    /// </summary>
-    public Task<usb_response_data_t> SetForceSensorSampleRateAsync(
-        ForceSensorSampleRate rate,
-        TimeSpan? timeout = null,
-        CancellationToken cancellationToken = default
-    ) =>
-        SendCommandAsync(
-            task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115,
-            (ushort)force_sensor_command_opcode.FORCE_SENSOR_CMD_SET_DATA_RATE,
-            [(byte)rate],
-            description: $"force sensor sample rate = {rate.ToLabel()}",
-            throwOnError: true,
-            timeout: timeout,
-            // Setting a data rate is idempotent, so it is safe to re-send if a completion ack is lost.
-            retries: 2,
-            cancellationToken: cancellationToken
-        );
-
-    /// <summary>
     /// Writes one runtime sysconfig parameter into the device's store and awaits the firmware's
     /// RESPONSE. <paramref name="rawValue"/> is the parameter's 32 bits (IEEE-754 bits for float
     /// parameters — see <c>SysConfigParameterDef.ToRawBits</c>). Sent as a CONFIG frame to the

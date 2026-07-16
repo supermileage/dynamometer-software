@@ -31,11 +31,6 @@ namespace Dyno.App.ViewModels;
 /// </summary>
 public partial class SysConfigViewModel : ObservableObject
 {
-    /// <summary>Search text that should also reveal the sample-rate card, which is a routed
-    /// device command rather than a store parameter or a parsed define.</summary>
-    private const string SampleRateCardHaystack =
-        "device runtime force sensor sample rate sps usb ads1115 live";
-
     /// <summary>config.h defines that are runtime-managed now: their #define is only the boot
     /// default, so the compile-time section hides them in favour of the runtime section above
     /// it.</summary>
@@ -84,10 +79,6 @@ public partial class SysConfigViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _loadFailed;
-
-    /// <summary>Whether the sample-rate card matches the current search.</summary>
-    [ObservableProperty]
-    private bool _showRuntimeCard = true;
 
     [ObservableProperty]
     private bool _hasNoMatches;
@@ -462,11 +453,7 @@ public partial class SysConfigViewModel : ObservableObject
             }
         }
 
-        ShowRuntimeCard = terms.Length == 0 || terms.All(SampleRateCardHaystack.Contains);
         HasNoMatches =
-            FilteredRuntimeCategories.Count == 0
-            && FilteredCategories.Count == 0
-            && !ShowRuntimeCard
-            && !LoadFailed;
+            FilteredRuntimeCategories.Count == 0 && FilteredCategories.Count == 0 && !LoadFailed;
     }
 }

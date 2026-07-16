@@ -51,8 +51,19 @@
 // which would otherwise starve host command servicing/acks.
 #define FORCESENSOR_CONVERSION_TIMEOUT_MS 250
 
-// ADS1115 I2C Config
-#define ADS1115_SAMPLE_SPEED ADS1115_RATE_475
+// ADS1115 I2C config registers -- runtime-tunable via sysconfig. The force-sensor task
+// re-applies a change over I2C on its next loop pass (ForceSensorADS1115::ReconcileConfig),
+// so these are the *boot defaults* like the quantities above, not the only place they live.
+// Each value is the register code from Drivers/ADS1115/ADS1115_main.h; the trailing comment
+// names the code this default maps to (kept numeric so the host catalog can read the default).
+#define ADS1115_MUX       4  // ADS1115_MUX_P0_NG            (AIN0 measured against GND)
+#define ADS1115_GAIN      0  // ADS1115_PGA_6P144            (+/-6.144 V full scale)
+#define ADS1115_MODE      1  // ADS1115_MODE_SINGLESHOT      (the read loop triggers each conversion)
+#define ADS1115_RATE      6  // ADS1115_RATE_475            (475 SPS)
+#define ADS1115_COMP_MODE 0  // ADS1115_COMP_MODE_HYSTERESIS
+#define ADS1115_COMP_POL  0  // ADS1115_COMP_POL_ACTIVE_LOW
+#define ADS1115_COMP_LAT  0  // ADS1115_COMP_LAT_NON_LATCHING
+#define ADS1115_COMP_QUE  3  // ADS1115_COMP_QUE_DISABLE
 
 
 // Optical Encoder Config

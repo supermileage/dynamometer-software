@@ -113,7 +113,8 @@ typedef enum : uint32_t
 {
     ERROR_FORCE_SENSOR_ADS1115_INIT_FAILURE = 0,
     WARNING_FORCE_SENSOR_ADS1115_TRIGGER_CONVERSION_FAILURE = WARNING_FLAG,
-    WARNING_FORCE_SENSOR_ADS1115_GET_CONVERSION_FAILURE
+    WARNING_FORCE_SENSOR_ADS1115_GET_CONVERSION_FAILURE,
+    WARNING_FORCE_SENSOR_ADS1115_CONFIG_FAILURE
 } force_sensor_ads1115_error_ids;
 
 _Static_assert(sizeof(force_sensor_ads1115_error_ids) == 4, "Size of force_sensor_ads1115_error_ids must be 4 bytes");
@@ -274,12 +275,6 @@ typedef struct {
 
 _Static_assert(sizeof(session_state_event) == 4 + 4, "Size of session_state_event must be 8 bytes");
 
-// Force-sensor (ADS1115) commands: frames addressed to TASK_OFFSET_FORCE_SENSOR_ADS1115.
-typedef enum : uint16_t
-{
-    FORCE_SENSOR_CMD_SET_DATA_RATE = 0   // body[0] = ADS1115_RATE_* code (0..7)
-} force_sensor_command_opcode;
-
 // ---- Runtime system configuration -----------------------------------------
 // The tunable quantities from Config/config.h (gains, task delays, thresholds)
 // live in a RAM store (Config/sysconfig.h) seeded from those #defines at boot;
@@ -323,9 +318,17 @@ typedef enum : uint16_t
     SYSCFG_LED_TASK_OSDELAY = 24,   // uint32, ms
     SYSCFG_TASK_WARNING_RETRY_OSDELAY = 25,   // uint32, ms
     SYSCFG_TASK_MONITOR_TASK_OSDELAY = 26,   // uint32, ms
+    SYSCFG_ADS1115_RATE = 27,   // enum
+    SYSCFG_ADS1115_GAIN = 28,   // enum
+    SYSCFG_ADS1115_MUX = 29,   // enum
+    SYSCFG_ADS1115_MODE = 30,   // enum
+    SYSCFG_ADS1115_COMP_MODE = 31,   // enum
+    SYSCFG_ADS1115_COMP_POL = 32,   // enum
+    SYSCFG_ADS1115_COMP_LAT = 33,   // enum
+    SYSCFG_ADS1115_COMP_QUE = 34,   // enum
 } sysconfig_param_t;
 
-#define SYSCFG_PARAM_COUNT 27u              // one past the highest sysconfig_param_t id; sizes the firmware store
+#define SYSCFG_PARAM_COUNT 35u              // one past the highest sysconfig_param_t id; sizes the firmware store
 
 _Static_assert(sizeof(sysconfig_param_t) == 2, "Size of sysconfig_param_t must be 2 bytes");
 

@@ -30,7 +30,8 @@ public static class SysConfigCatalog
                 Default: {{ p._cs_default }},
                 Min: {{ p._cs_min }},
                 Max: {{ p._cs_max }}{% if p._cs_subsection %},
-                Subsection: {{ p._cs_subsection }}{% endif %}
+                Subsection: {{ p._cs_subsection }}{% endif %}{% if p._cs_options %},
+                Options: new SysConfigEnumOption[] { {{ p._cs_options }} }{% endif %}
 
             ),
 {% endfor %}

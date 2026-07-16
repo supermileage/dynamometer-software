@@ -147,6 +147,7 @@ sections:
       - { name: ERROR_FORCE_SENSOR_ADS1115_INIT_FAILURE, value: "0" }
       - { name: WARNING_FORCE_SENSOR_ADS1115_TRIGGER_CONVERSION_FAILURE, value: "WARNING_FLAG" }
       - { name: WARNING_FORCE_SENSOR_ADS1115_GET_CONVERSION_FAILURE }
+      - { name: WARNING_FORCE_SENSOR_ADS1115_CONFIG_FAILURE }
 
   - { kind: static_assert, expr: "sizeof(force_sensor_ads1115_error_ids) == 4", message: "Size of force_sensor_ads1115_error_ids must be 4 bytes" }
 
@@ -336,13 +337,8 @@ sections:
 
   - { kind: static_assert, expr: "sizeof(session_state_event) == 4 + 4", message: "Size of session_state_event must be 8 bytes" }
 
-  - kind: enum
-    name: force_sensor_command_opcode
-    base: uint16_t
-    comment: |-
-      Force-sensor (ADS1115) commands: frames addressed to TASK_OFFSET_FORCE_SENSOR_ADS1115.
-    values:
-      - { name: FORCE_SENSOR_CMD_SET_DATA_RATE, value: "0", comment: "body[0] = ADS1115_RATE_* code (0..7)" }
+  # (The force-sensor task defines no host command opcodes: its ADS1115 config is now runtime
+  # sysconfig -- ADS1115_RATE and the other ADS1115_* params -- applied by ReconcileConfig.)
 
   - kind: comment
     text: |-
@@ -366,12 +362,17 @@ sections:
   # them from there, so a default is defined in exactly one place.
   #
   # Ids are positional -- list order is the wire id -- so entries may only be appended,
-  # never reordered or removed. Fields: name (the config.h macro), type (float|uint32),
+  # never reordered or removed. Fields: name (the config.h macro), type (float|uint32|enum),
   # min/max (the range the firmware accepts; below min for an osDelay would busy-spin a
   # task, hence min 1 there, and the 60000 cap stops a typo making a task look dead for
   # minutes), category/unit/description (host UI only). An optional subsection (also host
   # UI only) groups a category's parameters by the sensing path they apply to -- e.g. the
   # force sensor's "All" vs "I2C" (ADS1115) vs "ADC" (STM32 internal) sub-headers.
+  #
+  # type: enum is a uint32 whose value is one of an `options: [{value,label}, ...]` list
+  # (contiguous codes from 0). The firmware treats it exactly like a uint32 with min 0 and
+  # max = last code; the labels are host-only and turn the field into a dropdown. min/max
+  # are omitted for enums -- the generators derive them from the option count.
   - kind: sysconfig_params
     name: sysconfig_param_t
     comment: |-
@@ -405,6 +406,18 @@ sections:
       - { name: LED_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "LED", unit: "ms", description: "Blink half-period of the status LED task." }
       - { name: TASK_WARNING_RETRY_OSDELAY, type: uint32, min: 1, max: 60000, category: "Tasks & Monitoring", unit: "ms", description: "Back-off a task sleeps after reporting a warning before retrying." }
       - { name: TASK_MONITOR_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "Tasks & Monitoring", unit: "ms", description: "How often the task monitor samples every task's state and free stack." }
+      # ADS1115 config registers (I2C force-sensor path). Appended here to keep wire ids stable;
+      # the host groups them under Force Sensor > I2C by category/subsection, not by position. The
+      # force-sensor task re-applies any change over I2C on its next loop (ReconcileConfig). Codes
+      # and defaults mirror Drivers/ADS1115/ADS1115_main.h and the config.h #defines.
+      - { name: ADS1115_RATE, type: enum, category: "Force Sensor", subsection: "I2C", unit: "", description: "ADS1115 output data rate. Faster rates sample sooner but are noisier.", options: [ {value: 0, label: "8 SPS"}, {value: 1, label: "16 SPS"}, {value: 2, label: "32 SPS"}, {value: 3, label: "64 SPS"}, {value: 4, label: "128 SPS"}, {value: 5, label: "250 SPS"}, {value: 6, label: "475 SPS"}, {value: 7, label: "860 SPS"} ] }
+      - { name: ADS1115_GAIN, type: enum, category: "Force Sensor", subsection: "I2C", unit: "", description: "ADS1115 programmable-gain amplifier full-scale range. Must exceed the load cell's output span.", options: [ {value: 0, label: "±6.144 V"}, {value: 1, label: "±4.096 V"}, {value: 2, label: "±2.048 V"}, {value: 3, label: "±1.024 V"}, {value: 4, label: "±0.512 V"}, {value: 5, label: "±0.256 V"}, {value: 6, label: "±0.256 V (B)"}, {value: 7, label: "±0.256 V (C)"} ] }
+      - { name: ADS1115_MUX, type: enum, category: "Force Sensor", subsection: "I2C", unit: "", description: "ADS1115 input multiplexer: which pin(s) the conversion measures.", options: [ {value: 0, label: "AIN0 / AIN1"}, {value: 1, label: "AIN0 / AIN3"}, {value: 2, label: "AIN1 / AIN3"}, {value: 3, label: "AIN2 / AIN3"}, {value: 4, label: "AIN0 / GND"}, {value: 5, label: "AIN1 / GND"}, {value: 6, label: "AIN2 / GND"}, {value: 7, label: "AIN3 / GND"} ] }
+      - { name: ADS1115_MODE, type: enum, category: "Force Sensor", subsection: "I2C", unit: "", description: "ADS1115 conversion mode. The read loop triggers each conversion, so single-shot is expected.", options: [ {value: 0, label: "Continuous"}, {value: 1, label: "Single-shot"} ] }
+      - { name: ADS1115_COMP_MODE, type: enum, category: "Force Sensor", subsection: "I2C", unit: "", description: "ADS1115 comparator mode (drives the ALERT/RDY pin used as conversion-ready).", options: [ {value: 0, label: "Traditional"}, {value: 1, label: "Window"} ] }
+      - { name: ADS1115_COMP_POL, type: enum, category: "Force Sensor", subsection: "I2C", unit: "", description: "ADS1115 ALERT/RDY pin active polarity.", options: [ {value: 0, label: "Active low"}, {value: 1, label: "Active high"} ] }
+      - { name: ADS1115_COMP_LAT, type: enum, category: "Force Sensor", subsection: "I2C", unit: "", description: "ADS1115 comparator latching of the ALERT/RDY pin.", options: [ {value: 0, label: "Non-latching"}, {value: 1, label: "Latching"} ] }
+      - { name: ADS1115_COMP_QUE, type: enum, category: "Force Sensor", subsection: "I2C", unit: "", description: "ADS1115 comparator queue: conversions before ALERT asserts (or disable the comparator).", options: [ {value: 0, label: "Assert after 1"}, {value: 1, label: "Assert after 2"}, {value: 2, label: "Assert after 4"}, {value: 3, label: "Disabled"} ] }
 
   - { kind: static_assert, expr: "sizeof(sysconfig_param_t) == 2", message: "Size of sysconfig_param_t must be 2 bytes" }
 

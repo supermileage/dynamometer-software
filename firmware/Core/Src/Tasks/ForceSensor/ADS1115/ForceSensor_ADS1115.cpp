@@ -30,27 +30,15 @@ ForceSensorADS1115::ForceSensorADS1115(osMessageQueueId_t sessionControllerToFor
 
 bool ForceSensorADS1115::Init()
 {
-    bool status = true;
-    
+    // Lay down the ADS1115 config (multiplexer, gain, data rate, mode, comparator settings)
+    // from the sysconfig store rather than hard-coded constants, so the same registers are
+    // owned by ReconcileConfig and stay tunable at runtime. sysconfig_init() has already
+    // seeded the store from the config.h defaults, and the host may have pushed overrides.
+    bool status = ReconcileConfig();
 
-    status &= _ads1115.setMultiplexer(ADS1115_MUX_P0_NG);
-
-    status &= _ads1115.setComparatorMode(ADS1115_COMP_MODE_HYSTERESIS);
-    status &= _ads1115.setComparatorPolarity(ADS1115_COMP_POL_ACTIVE_LOW);
-
-    status &= _ads1115.setComparatorLatchEnabled(ADS1115_COMP_LAT_NON_LATCHING);
-    status &= _ads1115.setComparatorQueueMode(ADS1115_COMP_QUE_DISABLE);
-
-    
-    // Set device mode to single-shot
-	status &= _ads1115.setMode(ADS1115_MODE_SINGLESHOT);
-
-    // Set data rate (slow for demonstration or high depending on application)
-	status &= _ads1115.setRate(ADS1115_SAMPLE_SPEED);
-
-    // Set PGA (programmable gain amplifier)
-	status &= _ads1115.setGain(ADS1115_PGA_6P144);
-
+    // Route the ALERT/RDY pin as a conversion-ready output. This takes no tunable argument,
+    // so it stays a fixed one-time setup rather than a sysconfig parameter, and runs after the
+    // config registers exactly as before.
 	status &= _ads1115.setConversionReadyPinMode();
 
     if (!status)
@@ -64,6 +52,54 @@ bool ForceSensorADS1115::Init()
     }
 
     return status;
+}
+
+// Apply one uint8-valued ADS1115 register from sysconfig, but only when it differs from what
+// the chip already holds (_applied), so an unchanged parameter costs nothing on the I2C bus.
+bool ForceSensorADS1115::ApplyIfChanged(uint8_t& applied, uint8_t target,
+                                        bool (ADS1115::*setter)(uint8_t))
+{
+    if (target == applied)
+    {
+        return true;
+    }
+    if (!(_ads1115.*setter)(target))
+    {
+        return false;   // leave _applied stale so the next reconcile retries this register
+    }
+    applied = target;
+    return true;
+}
+
+// Same, for the boolean-valued registers (mode, comparator mode/polarity/latch). The stored
+// code is 0/1; the driver takes a bool.
+bool ForceSensorADS1115::ApplyIfChanged(uint8_t& applied, uint8_t target,
+                                        bool (ADS1115::*setter)(bool))
+{
+    if (target == applied)
+    {
+        return true;
+    }
+    if (!(_ads1115.*setter)(target != 0))
+    {
+        return false;
+    }
+    applied = target;
+    return true;
+}
+
+bool ForceSensorADS1115::ReconcileConfig()
+{
+    bool ok = true;
+    ok &= ApplyIfChanged(_applied.mux,       static_cast<uint8_t>(sysconfig_get_u32(SYSCFG_ADS1115_MUX)),       &ADS1115::setMultiplexer);
+    ok &= ApplyIfChanged(_applied.gain,      static_cast<uint8_t>(sysconfig_get_u32(SYSCFG_ADS1115_GAIN)),      &ADS1115::setGain);
+    ok &= ApplyIfChanged(_applied.rate,      static_cast<uint8_t>(sysconfig_get_u32(SYSCFG_ADS1115_RATE)),      &ADS1115::setRate);
+    ok &= ApplyIfChanged(_applied.comp_que,  static_cast<uint8_t>(sysconfig_get_u32(SYSCFG_ADS1115_COMP_QUE)),  &ADS1115::setComparatorQueueMode);
+    ok &= ApplyIfChanged(_applied.mode,      static_cast<uint8_t>(sysconfig_get_u32(SYSCFG_ADS1115_MODE)),      &ADS1115::setMode);
+    ok &= ApplyIfChanged(_applied.comp_mode, static_cast<uint8_t>(sysconfig_get_u32(SYSCFG_ADS1115_COMP_MODE)), &ADS1115::setComparatorMode);
+    ok &= ApplyIfChanged(_applied.comp_pol,  static_cast<uint8_t>(sysconfig_get_u32(SYSCFG_ADS1115_COMP_POL)),  &ADS1115::setComparatorPolarity);
+    ok &= ApplyIfChanged(_applied.comp_lat,  static_cast<uint8_t>(sysconfig_get_u32(SYSCFG_ADS1115_COMP_LAT)),  &ADS1115::setComparatorLatchEnabled);
+    return ok;
 }
 
 void ForceSensorADS1115::Run(void)
@@ -81,8 +117,24 @@ void ForceSensorADS1115::Run(void)
                                             sizeof(enableADS1115),
                                             enableADS1115 ? 0 : sysconfig_get_u32(SYSCFG_FORCESENSOR_COMMAND_POLL_OSDELAY));
 
-        // Apply any host setting commands (data rate, ...) and ack them, in any state.
+        // Drain and ack any queued host commands (the force sensor defines none now), in any state.
         ProcessCommands();
+
+        // Re-apply any ADS1115 config the host changed (data rate, gain, ...) before sampling, in
+        // any state, so a setting takes effect even while the sensor is idle. Only a register whose
+        // value actually changed hits the I2C bus, so in steady state this is a few RAM compares.
+        // On a write failure, back off and retry next pass instead of sampling with stale config.
+        if (!ReconcileConfig())
+        {
+            task_error_data error_data = PopulateTaskErrorDataStruct(
+                get_timestamp(),
+                TASK_OFFSET_FORCE_SENSOR_ADS1115,
+                static_cast<uint32_t>(WARNING_FORCE_SENSOR_ADS1115_CONFIG_FAILURE)
+            );
+            _task_error_buffer_writer.WriteElementAndIncrementIndex(error_data);
+            osDelay(sysconfig_get_u32(SYSCFG_TASK_WARNING_RETRY_OSDELAY));
+            continue;
+        }
 
         // If the latest message says disabled, skip sampling
         if (!enableADS1115)
@@ -168,38 +220,19 @@ void ForceSensorADS1115::ProcessCommands()
     usb_task_command cmd;
     while (osMessageQueueGet(_usbToForceSensorCommandHandle, &cmd, NULL, 0) == osOK)
     {
-        uint32_t status = ApplyCommand(cmd);
-
-        // Host commands (msg_id != 0) get the applied-result ack relayed to the PC.
-        // Internal commands (msg_id 0) are fire-and-forget.
+        // The force sensor defines no command opcodes now -- its ADS1115 config is runtime
+        // sysconfig applied by ReconcileConfig, not a routed command -- so a host-originated
+        // command (msg_id != 0) is acked UNKNOWN rather than silently dropped. Draining the
+        // queue keeps the generic per-task command path here for whatever settings come next.
         if (cmd.msg_id != 0)
         {
             usb_task_completion done;
             done.task_offset = TASK_OFFSET_FORCE_SENSOR_ADS1115;
             done.opcode = cmd.opcode;
             done.msg_id = cmd.msg_id;
-            done.status = status;
+            done.status = USB_RSP_UNKNOWN_COMMAND;
             osMessageQueuePut(_taskCompletionHandle, &done, 0, 0);
         }
-    }
-}
-
-uint32_t ForceSensorADS1115::ApplyCommand(const usb_task_command& cmd)
-{
-    switch (cmd.opcode)
-    {
-        case FORCE_SENSOR_CMD_SET_DATA_RATE:
-        {
-            if (cmd.body_len < 1 || cmd.body[0] > ADS1115_RATE_860)
-            {
-                return USB_RSP_MALFORMED;
-            }
-            // setRate is an I2C config write; reflect its real result back to the host.
-            return _ads1115.setRate(cmd.body[0]) ? USB_RSP_OK : USB_RSP_DEVICE_ERROR;
-        }
-
-        default:
-            return USB_RSP_UNKNOWN_COMMAND;
     }
 }
 

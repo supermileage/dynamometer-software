@@ -16,10 +16,6 @@ public class CommandOpcodeTests
             CommandOpcodes.Name(task_offset_t.TASK_OFFSET_USB_CONTROLLER, 1)
         );
         Assert.Equal(
-            "FORCE_SENSOR_CMD_SET_DATA_RATE",
-            CommandOpcodes.Name(task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115, 0)
-        );
-        Assert.Equal(
             "USB_CMD_ACK",
             CommandOpcodes.Name(task_offset_t.TASK_OFFSET_USB_CONTROLLER, 0)
         );
@@ -35,6 +31,12 @@ public class CommandOpcodeTests
             CommandOpcodes.Name(task_offset_t.TASK_OFFSET_USB_CONTROLLER, 99)
         );
         Assert.Equal("opcode 1", CommandOpcodes.Name(task_offset_t.TASK_OFFSET_LUMEX_LCD, 1));
+        // The force sensor defines no command opcodes now (its ADS1115 config is sysconfig), so
+        // anything addressed to it is a plain number too.
+        Assert.Equal(
+            "opcode 0",
+            CommandOpcodes.Name(task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115, 0)
+        );
     }
 
     [Fact]
@@ -50,6 +52,6 @@ public class CommandOpcodeTests
             .OrderBy(n => n, StringComparer.Ordinal)
             .ToArray();
 
-        Assert.Equal(["force_sensor_command_opcode", "usb_controller_command_t"], commandEnums);
+        Assert.Equal(["usb_controller_command_t"], commandEnums);
     }
 }

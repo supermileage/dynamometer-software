@@ -27,9 +27,26 @@ public partial class RuntimeParameterViewModel : ObservableObject
     public bool HasUnit => Def.Unit.Length > 0;
     public string Unit => Def.Unit;
 
-    /// <summary>Shown as the edit hint: the firmware default and accepted range.</summary>
+    /// <summary>True when this parameter is picked from a fixed set of labelled codes, shown as a
+    /// dropdown rather than a number box.</summary>
+    public bool IsEnum => Def.IsEnum;
+
+    /// <summary>The selectable codes for an <see cref="IsEnum"/> parameter (empty otherwise).</summary>
+    public IReadOnlyList<SysConfigEnumOption> Options =>
+        Def.Options ?? Array.Empty<SysConfigEnumOption>();
+
+    /// <summary>Shown as the edit hint: the firmware default — and, for a number, the accepted
+    /// range. For an enum it names the default option so the dropdown's baseline is clear.</summary>
     public string RangeText =>
-        $"default {Def.Format(Def.Default)} · {Def.Format(Def.Min)} to {Def.Format(Def.Max)}";
+        IsEnum
+            ? $"default {LabelFor(Def.Default)}"
+            : $"default {Def.Format(Def.Default)} · {Def.Format(Def.Min)} to {Def.Format(Def.Max)}";
+
+    private string LabelFor(double value) =>
+        Options.FirstOrDefault(o => o.Value == (uint)value)?.Label ?? Def.Format(value);
+
+    private SysConfigEnumOption? OptionFor(double value) =>
+        Options.FirstOrDefault(o => o.Value == (uint)value);
 
     /// <summary>Stages a return to the firmware default. Like typing a value, it only fills the
     /// editor and marks the row changed — Apply is what saves it.</summary>
@@ -63,6 +80,16 @@ public partial class RuntimeParameterViewModel : ObservableObject
     [ObservableProperty]
     private bool _isOverride;
 
+    /// <summary>The dropdown selection for an <see cref="IsEnum"/> parameter. Two-way bound; a user
+    /// pick drives the same <see cref="Text"/> pipeline a typed value would, so dirty tracking,
+    /// validation and reset behave identically for enums and numbers.</summary>
+    [ObservableProperty]
+    private SysConfigEnumOption? _selectedOption;
+
+    /// <summary>True while <see cref="SelectedOption"/> is being synced from the value rather than
+    /// chosen by the user — the guard that keeps the option/text bridge from looping.</summary>
+    private bool _settingOption;
+
     public RuntimeParameterViewModel(SysConfigParameterDef def, double? savedValue, Action edited)
     {
         Def = def;
@@ -70,6 +97,7 @@ public partial class RuntimeParameterViewModel : ObservableObject
         _savedValue = savedValue ?? def.Default;
         _isOverride = savedValue is not null;
         _text = def.Format(_savedValue);
+        _selectedOption = def.IsEnum ? OptionFor(_savedValue) : null;
         ResetCommand = new RelayCommand(RequestReset);
     }
 
@@ -106,6 +134,35 @@ public partial class RuntimeParameterViewModel : ObservableObject
             ResetRequested = false;
         }
         RefreshDirty();
+        SyncSelectedOption();
+    }
+
+    /// <summary>User picked a dropdown option: route it through <see cref="Text"/> so it behaves
+    /// exactly like a typed value. Ignored while the option is being synced back from the value.</summary>
+    partial void OnSelectedOptionChanged(SysConfigEnumOption? value)
+    {
+        if (_settingOption || value is null)
+        {
+            return;
+        }
+        Text = Def.Format(value.Value);
+    }
+
+    /// <summary>Keeps the dropdown selection matching the current value after any Text change
+    /// (typed, reset, or restored), without re-triggering the option handler.</summary>
+    private void SyncSelectedOption()
+    {
+        if (!IsEnum)
+        {
+            return;
+        }
+        var match = EditedValue is double v ? OptionFor(v) : null;
+        if (!ReferenceEquals(match, SelectedOption))
+        {
+            _settingOption = true;
+            SelectedOption = match;
+            _settingOption = false;
+        }
     }
 
     private void RefreshDirty()
@@ -150,6 +207,7 @@ public partial class RuntimeParameterViewModel : ObservableObject
                 Subsection,
                 Description,
                 Unit,
+                string.Join(' ', Options.Select(o => o.Label)),
                 "runtime device live"
             )
             .ToLowerInvariant();

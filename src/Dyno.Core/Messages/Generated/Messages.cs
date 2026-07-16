@@ -23,7 +23,7 @@ public static class MessageConstants
     public const uint USB_FRAME_CRC_POLY = 0x1021u;   // 0x1021u
     public const uint USB_RX_MAX_PAYLOAD = 128u;   // 128u
     public const uint USB_PROTOCOL_VERSION = 3u;   // 3u
-    public const uint SYSCFG_PARAM_COUNT = 27u;   // 27u  -- one past the highest sysconfig_param_t id; sizes the firmware store
+    public const uint SYSCFG_PARAM_COUNT = 35u;   // 35u  -- one past the highest sysconfig_param_t id; sizes the firmware store
 }
 
 // A task error/warning is reported as a single 32-bit code:
@@ -99,6 +99,7 @@ public enum force_sensor_ads1115_error_ids : uint
     ERROR_FORCE_SENSOR_ADS1115_INIT_FAILURE = 0,
     WARNING_FORCE_SENSOR_ADS1115_TRIGGER_CONVERSION_FAILURE = 0x8000,
     WARNING_FORCE_SENSOR_ADS1115_GET_CONVERSION_FAILURE = 0x8001,
+    WARNING_FORCE_SENSOR_ADS1115_CONFIG_FAILURE = 0x8002,
 }
 
 // ****************************************************
@@ -228,12 +229,6 @@ public struct session_state_event
     public uint in_session;   // 1 = session running, 0 = idle
 }
 
-/// Force-sensor (ADS1115) commands: frames addressed to TASK_OFFSET_FORCE_SENSOR_ADS1115.
-public enum force_sensor_command_opcode : ushort
-{
-    FORCE_SENSOR_CMD_SET_DATA_RATE = 0,   // body[0] = ADS1115_RATE_* code (0..7)
-}
-
 // ---- Runtime system configuration -----------------------------------------
 // The tunable quantities from Config/config.h (gains, task delays, thresholds)
 // live in a RAM store (Config/sysconfig.h) seeded from those #defines at boot;
@@ -277,6 +272,14 @@ public enum sysconfig_param_t : ushort
     SYSCFG_LED_TASK_OSDELAY = 24,   // uint32, ms
     SYSCFG_TASK_WARNING_RETRY_OSDELAY = 25,   // uint32, ms
     SYSCFG_TASK_MONITOR_TASK_OSDELAY = 26,   // uint32, ms
+    SYSCFG_ADS1115_RATE = 27,   // enum
+    SYSCFG_ADS1115_GAIN = 28,   // enum
+    SYSCFG_ADS1115_MUX = 29,   // enum
+    SYSCFG_ADS1115_MODE = 30,   // enum
+    SYSCFG_ADS1115_COMP_MODE = 31,   // enum
+    SYSCFG_ADS1115_COMP_POL = 32,   // enum
+    SYSCFG_ADS1115_COMP_LAT = 33,   // enum
+    SYSCFG_ADS1115_COMP_QUE = 34,   // enum
 }
 
 // Body of USB_CMD_SET_SYSCONFIG (after the usb_cmd_header_t). raw_value carries the

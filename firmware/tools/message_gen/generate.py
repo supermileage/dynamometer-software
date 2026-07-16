@@ -74,6 +74,12 @@ def _annotate_sysconfig(schema: dict) -> None:
                 p["_c_macro"] = "SYSCFG_U32"
                 p["_c_min"] = f"{int(p['min'])}u"
                 p["_c_max"] = f"{int(p['max'])}u"
+            elif p["type"] == "enum":
+                # A uint32 restricted to its option codes (contiguous from 0), so the store
+                # range-checks it exactly like any other uint32; the labels are host-only.
+                p["_c_macro"] = "SYSCFG_U32"
+                p["_c_min"] = "0u"
+                p["_c_max"] = f"{len(p['options']) - 1}u"
             else:
                 raise ValueError(f"sysconfig param {p['name']}: unknown type {p['type']!r}")
 

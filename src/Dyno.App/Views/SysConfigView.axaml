@@ -2,6 +2,7 @@
   xmlns="https://github.com/avaloniaui"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
   xmlns:vm="using:Dyno.App.ViewModels"
+  xmlns:core="using:Dyno.Core.SysConfig"
   x:Class="Dyno.App.Views.SysConfigView"
   x:DataType="vm:MainWindowViewModel"
 >
@@ -121,34 +122,8 @@
           Margin="4,-6,4,0"
         />
 
-        <!-- The one runtime setting with its own routed command: applied via the force-sensor
-             task (an I2C write), unlike the store parameters below. -->
-        <Border Classes="card" IsVisible="{Binding SysConfig.ShowRuntimeCard}">
-          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-            <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
-              <TextBlock Classes="definename" Text="Force sensor sample rate" />
-              <TextBlock
-                Classes="paramdesc"
-                Text="ADS1115 data rate, applied immediately on the running device. Requires a connection."
-              />
-            </StackPanel>
-            <StackPanel
-              Grid.Column="1"
-              Orientation="Horizontal"
-              Spacing="8"
-              VerticalAlignment="Center"
-            >
-              <ComboBox
-                ItemsSource="{Binding SampleRates}"
-                SelectedItem="{Binding SelectedSampleRate}"
-                MinWidth="140"
-              />
-              <Button Classes="accent" Content="Set" Command="{Binding SetSampleRateCommand}" />
-            </StackPanel>
-          </Grid>
-        </Border>
-
-        <!-- One card per runtime category. -->
+        <!-- One card per runtime category. The force-sensor sample rate lives in the Force Sensor
+             card now (ADS1115_RATE under the I2C sub-header), like every other tunable. -->
         <ItemsControl ItemsSource="{Binding SysConfig.FilteredRuntimeCategories}">
           <ItemsControl.ItemsPanel>
             <ItemsPanelTemplate>
@@ -227,13 +202,29 @@
                                       FontSize="10.5"
                                     />
                                   </StackPanel>
-                                  <TextBox
-                                    Grid.Column="3"
-                                    Classes="definevalue"
-                                    Classes.invalid="{Binding IsInvalid}"
-                                    Text="{Binding Text}"
-                                    VerticalAlignment="Center"
-                                  />
+                                  <Panel Grid.Column="3" VerticalAlignment="Center">
+                                    <!-- Enum params (e.g. the ADS1115 registers) pick from labelled
+                                         codes; everything else is a free number box. -->
+                                    <ComboBox
+                                      IsVisible="{Binding IsEnum}"
+                                      ItemsSource="{Binding Options}"
+                                      SelectedItem="{Binding SelectedOption}"
+                                      MinWidth="150"
+                                      CornerRadius="7"
+                                    >
+                                      <ComboBox.ItemTemplate>
+                                        <DataTemplate x:DataType="core:SysConfigEnumOption">
+                                          <TextBlock Text="{Binding Label}" />
+                                        </DataTemplate>
+                                      </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                    <TextBox
+                                      Classes="definevalue"
+                                      Classes.invalid="{Binding IsInvalid}"
+                                      IsVisible="{Binding !IsEnum}"
+                                      Text="{Binding Text}"
+                                    />
+                                  </Panel>
                                   <Button
                                     Grid.Column="4"
                                     Content="Reset"

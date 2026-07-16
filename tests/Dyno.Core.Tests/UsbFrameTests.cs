@@ -22,9 +22,9 @@ public class UsbFrameTests
     {
         byte[] body = [0x05];
         byte[] frame = UsbFrame.BuildCommandFrame(
-            task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115,
+            task_offset_t.TASK_OFFSET_USB_CONTROLLER,
             usb_msg_type_t.USB_MSG_COMMAND,
-            opcode: (ushort)force_sensor_command_opcode.FORCE_SENSOR_CMD_SET_DATA_RATE,
+            opcode: (ushort)usb_controller_command_t.USB_CMD_SET_SYSCONFIG,
             msgId: 7,
             body
         );
@@ -39,14 +39,11 @@ public class UsbFrameTests
 
         var header = MemoryMarshal.Read<usb_msg_header_t>(span.Slice(2, headerSize));
         Assert.Equal(usb_msg_type_t.USB_MSG_COMMAND, header.msg_type);
-        Assert.Equal(task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115, header.task_offset);
+        Assert.Equal(task_offset_t.TASK_OFFSET_USB_CONTROLLER, header.task_offset);
         Assert.Equal((uint)payloadLen, header.payload_len);
 
         var cmd = MemoryMarshal.Read<usb_cmd_header_t>(span.Slice(2 + headerSize, cmdSize));
-        Assert.Equal(
-            (ushort)force_sensor_command_opcode.FORCE_SENSOR_CMD_SET_DATA_RATE,
-            cmd.opcode
-        );
+        Assert.Equal((ushort)usb_controller_command_t.USB_CMD_SET_SYSCONFIG, cmd.opcode);
         Assert.Equal((ushort)7, cmd.msg_id);
         Assert.Equal(body[0], frame[2 + headerSize + cmdSize]);
 

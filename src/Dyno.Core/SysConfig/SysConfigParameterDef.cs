@@ -3,6 +3,10 @@ using Dyno.Core.Messages;
 
 namespace Dyno.Core.SysConfig;
 
+/// <summary>One selectable code of an <c>enum</c>-typed parameter: the raw value the firmware
+/// stores and the human label the UI shows for it (e.g. code 6 → "475 SPS").</summary>
+public sealed record SysConfigEnumOption(uint Value, string Label);
+
 /// <summary>Host-side metadata for one runtime-tunable firmware parameter: what the wire id
 /// means, how to edit it, and the firmware's boot default and accepted range.</summary>
 /// <remarks>Rows live in the generated <see cref="SysConfigCatalog"/> (from the YAML schema's
@@ -19,13 +23,19 @@ public sealed record SysConfigParameterDef(
     double Default,
     double Min,
     double Max,
-    string Subsection = ""
+    string Subsection = "",
+    IReadOnlyList<SysConfigEnumOption>? Options = null
 )
 {
     /// <summary>Whether this parameter belongs to a labelled sub-group of its category (e.g. the
     /// force sensor's I2C vs ADC sensing paths). When empty it sits directly under the category.
     /// </summary>
     public bool HasSubsection => Subsection.Length > 0;
+
+    /// <summary>True when this parameter is an enumeration: its value is one of <see cref="Options"/>
+    /// (a uint32 code), which the UI presents as a labelled dropdown rather than a number box.
+    /// </summary>
+    public bool IsEnum => Options is { Count: > 0 };
 
     /// <summary>True when <paramref name="value"/> is representable and inside the firmware's
     /// accepted range for this parameter.</summary>
