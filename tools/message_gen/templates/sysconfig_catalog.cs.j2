@@ -29,7 +29,9 @@ public static class SysConfigCatalog
                 IsFloat: {{ p._cs_isfloat }},
                 Default: {{ p._cs_default }},
                 Min: {{ p._cs_min }},
-                Max: {{ p._cs_max }}
+                Max: {{ p._cs_max }}{% if p._cs_subsection %},
+                Subsection: {{ p._cs_subsection }}{% endif %}
+
             ),
 {% endfor %}
 {% endif %}

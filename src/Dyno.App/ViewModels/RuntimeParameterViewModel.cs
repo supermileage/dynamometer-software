@@ -19,6 +19,10 @@ public partial class RuntimeParameterViewModel : ObservableObject
     public SysConfigParameterDef Def { get; }
     public string Name => Def.Name;
     public string Category => Def.Category;
+
+    /// <summary>Which sensing-path sub-group of the category this belongs to (e.g. the force
+    /// sensor's "I2C"/"ADC"), or empty when it sits directly under the category.</summary>
+    public string Subsection => Def.Subsection;
     public string Description => Def.Description;
     public bool HasUnit => Def.Unit.Length > 0;
     public string Unit => Def.Unit;
@@ -143,6 +147,7 @@ public partial class RuntimeParameterViewModel : ObservableObject
                 Name,
                 Name.Replace('_', ' '),
                 Category,
+                Subsection,
                 Description,
                 Unit,
                 "runtime device live"

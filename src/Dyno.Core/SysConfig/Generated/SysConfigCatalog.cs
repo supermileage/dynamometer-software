@@ -153,7 +153,8 @@ public static class SysConfigCatalog
                 IsFloat: true,
                 Default: 25.0,
                 Min: 0.001,
-                Max: 100000.0
+                Max: 100000.0,
+                Subsection: "All"
             ),
             new(
                 sysconfig_param_t.SYSCFG_SESSIONCONTROLLER_TASK_OSDELAY,
@@ -186,7 +187,8 @@ public static class SysConfigCatalog
                 IsFloat: false,
                 Default: 1.0,
                 Min: 1.0,
-                Max: 60000.0
+                Max: 60000.0,
+                Subsection: "All"
             ),
             new(
                 sysconfig_param_t.SYSCFG_FORCESENSOR_COMMAND_POLL_OSDELAY,
@@ -197,7 +199,8 @@ public static class SysConfigCatalog
                 IsFloat: false,
                 Default: 50.0,
                 Min: 1.0,
-                Max: 60000.0
+                Max: 60000.0,
+                Subsection: "All"
             ),
             new(
                 sysconfig_param_t.SYSCFG_FORCESENSOR_CONVERSION_TIMEOUT_MS,
@@ -208,7 +211,8 @@ public static class SysConfigCatalog
                 IsFloat: false,
                 Default: 250.0,
                 Min: 1.0,
-                Max: 60000.0
+                Max: 60000.0,
+                Subsection: "I2C"
             ),
             new(
                 sysconfig_param_t.SYSCFG_OPTICAL_ENCODER_TASK_OSDELAY,

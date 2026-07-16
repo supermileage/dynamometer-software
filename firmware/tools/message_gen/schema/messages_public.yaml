@@ -369,7 +369,9 @@ sections:
   # never reordered or removed. Fields: name (the config.h macro), type (float|uint32),
   # min/max (the range the firmware accepts; below min for an osDelay would busy-spin a
   # task, hence min 1 there, and the 60000 cap stops a typo making a task look dead for
-  # minutes), category/unit/description (host UI only).
+  # minutes), category/unit/description (host UI only). An optional subsection (also host
+  # UI only) groups a category's parameters by the sensing path they apply to -- e.g. the
+  # force sensor's "All" vs "I2C" (ADS1115) vs "ADC" (STM32 internal) sub-headers.
   - kind: sysconfig_params
     name: sysconfig_param_t
     comment: |-
@@ -388,12 +390,12 @@ sections:
       - { name: VERTICAL_BIAS, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Vertical offset of the throttle/brake mixing curve." }
       - { name: MIN_DUTY_CYCLE_PERCENT, type: float, min: 0.0, max: 1.0, category: "BPM", unit: "0–1", description: "Lower clamp on the brake PWM duty cycle." }
       - { name: MAX_DUTY_CYCLE_PERCENT, type: float, min: 0.0, max: 1.0, category: "BPM", unit: "0–1", description: "Upper clamp on the brake PWM duty cycle." }
-      - { name: MAX_FORCE_LBF, type: float, min: 1.0e-3, max: 1.0e5, category: "Force Sensor", unit: "lbf", description: "Full-scale force of the load cell; scales raw ADC counts to newtons." }
+      - { name: MAX_FORCE_LBF, type: float, min: 1.0e-3, max: 1.0e5, category: "Force Sensor", subsection: "All", unit: "lbf", description: "Full-scale force of the load cell; scales raw ADC counts to newtons." }
       - { name: SESSIONCONTROLLER_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "Session Controller", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
       - { name: BPM_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "BPM", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
-      - { name: FORCESENSOR_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "Force Sensor", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
-      - { name: FORCESENSOR_COMMAND_POLL_OSDELAY, type: uint32, min: 1, max: 60000, category: "Force Sensor", unit: "ms", description: "Bounded wait on the enable queue while the sensor is idle, so USB commands still get serviced." }
-      - { name: FORCESENSOR_CONVERSION_TIMEOUT_MS, type: uint32, min: 1, max: 60000, category: "Force Sensor", unit: "ms", description: "How long to wait for the ADS1115 conversion-ready alert before abandoning the sample." }
+      - { name: FORCESENSOR_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "Force Sensor", subsection: "All", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
+      - { name: FORCESENSOR_COMMAND_POLL_OSDELAY, type: uint32, min: 1, max: 60000, category: "Force Sensor", subsection: "All", unit: "ms", description: "Bounded wait on the enable queue while the sensor is idle, so USB commands still get serviced." }
+      - { name: FORCESENSOR_CONVERSION_TIMEOUT_MS, type: uint32, min: 1, max: 60000, category: "Force Sensor", subsection: "I2C", unit: "ms", description: "How long to wait for the ADS1115 conversion-ready alert before abandoning the sample." }
       - { name: OPTICAL_ENCODER_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "Optical Encoder", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
       - { name: NUM_APERTURES, type: uint32, min: 1, max: 100000, category: "Optical Encoder", unit: "", description: "Apertures on the encoder wheel (tied to the physical 3D-printed apparatus)." }
       - { name: PID_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "PID Controller", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }

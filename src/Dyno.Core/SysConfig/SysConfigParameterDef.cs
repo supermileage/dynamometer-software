@@ -18,9 +18,15 @@ public sealed record SysConfigParameterDef(
     bool IsFloat,
     double Default,
     double Min,
-    double Max
+    double Max,
+    string Subsection = ""
 )
 {
+    /// <summary>Whether this parameter belongs to a labelled sub-group of its category (e.g. the
+    /// force sensor's I2C vs ADC sensing paths). When empty it sits directly under the category.
+    /// </summary>
+    public bool HasSubsection => Subsection.Length > 0;
+
     /// <summary>True when <paramref name="value"/> is representable and inside the firmware's
     /// accepted range for this parameter.</summary>
     public bool IsValid(double value) =>

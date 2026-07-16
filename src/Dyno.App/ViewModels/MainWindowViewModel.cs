@@ -188,9 +188,6 @@ public partial class MainWindowViewModel : ObservableObject
     private double _force;
 
     [ObservableProperty]
-    private string _forceSource = "—";
-
-    [ObservableProperty]
     private double _dutyCycle;
 
     [ObservableProperty]
@@ -431,7 +428,6 @@ public partial class MainWindowViewModel : ObservableObject
         Force = 0;
         DutyCycle = 0;
         LastTimestamp = 0;
-        ForceSource = "—";
     }
 
     /// <summary>The port opened but nothing announced itself in time. Like a lost connection, this
@@ -518,7 +514,6 @@ public partial class MainWindowViewModel : ObservableObject
                 break;
             case ForceSensorSample s:
                 Force = s.Data.force;
-                ForceSource = Friendly(s.Source);
                 break;
             case BpmSample s:
                 DutyCycle = s.Data.duty_cycle;

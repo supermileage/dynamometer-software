@@ -55,6 +55,13 @@
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="LetterSpacing" Value="1.2" />
     </Style>
+    <!-- Sub-group label inside a category card (the force sensor's All / I2C / ADC). -->
+    <Style Selector="TextBlock.subsectionlabel">
+      <Setter Property="FontSize" Value="10.5" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="LetterSpacing" Value="1" />
+      <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+    </Style>
   </UserControl.Styles>
 
   <Grid RowDefinitions="Auto,*" Margin="16" RowSpacing="14">
@@ -153,61 +160,95 @@
               <Border Classes="card">
                 <StackPanel Spacing="4">
                   <TextBlock Classes="heading" Text="{Binding Name}" Margin="0,0,0,6" />
-                  <ItemsControl ItemsSource="{Binding Parameters}">
+                  <!-- One block per subsection (force sensor: All / I2C / ADC). Categories with no
+                       subsection have a single untitled group, so its header is hidden and the card
+                       looks exactly as it did before. -->
+                  <ItemsControl ItemsSource="{Binding Subsections}">
                     <ItemsControl.ItemTemplate>
-                      <DataTemplate x:DataType="vm:RuntimeParameterViewModel">
-                        <Grid
-                          ColumnDefinitions="Auto,*,Auto,Auto,Auto"
-                          ColumnSpacing="10"
-                          Margin="0,5"
-                        >
-                          <!-- Pending-change marker -->
-                          <Ellipse
-                            Grid.Column="0"
-                            Width="7"
-                            Height="7"
-                            VerticalAlignment="Center"
-                            Fill="{StaticResource AccentBrush}"
-                            IsVisible="{Binding IsDirty}"
-                            ToolTip.Tip="Changed — not yet applied"
-                          />
-                          <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                              <TextBlock Classes="definename" Text="{Binding Name}" />
-                              <Border Classes="filebadge" IsVisible="{Binding HasUnit}">
-                                <TextBlock Text="{Binding Unit}" />
-                              </Border>
-                            </StackPanel>
+                      <DataTemplate x:DataType="vm:RuntimeSubsectionViewModel">
+                        <StackPanel Spacing="2">
+                          <!-- Labelled divider naming the sensing path this group applies to. -->
+                          <Grid
+                            ColumnDefinitions="Auto,*"
+                            ColumnSpacing="8"
+                            Margin="0,8,0,2"
+                            IsVisible="{Binding HasTitle}"
+                          >
                             <TextBlock
-                              Classes="paramdesc"
-                              Text="{Binding Description}"
-                              MaxWidth="520"
-                              HorizontalAlignment="Left"
+                              Classes="subsectionlabel"
+                              Text="{Binding Title}"
+                              VerticalAlignment="Center"
                             />
-                            <TextBlock
-                              Classes="paramdesc"
-                              Text="{Binding RangeText}"
-                              FontSize="10.5"
+                            <Border
+                              Grid.Column="1"
+                              Height="1"
+                              Background="{StaticResource StrokeBrush}"
+                              VerticalAlignment="Center"
                             />
-                          </StackPanel>
-                          <TextBox
-                            Grid.Column="3"
-                            Classes="definevalue"
-                            Classes.invalid="{Binding IsInvalid}"
-                            Text="{Binding Text}"
-                            VerticalAlignment="Center"
-                          />
-                          <Button
-                            Grid.Column="4"
-                            Content="Reset"
-                            FontSize="11"
-                            Padding="9,4"
-                            VerticalAlignment="Center"
-                            IsVisible="{Binding IsOverride}"
-                            Command="{Binding ResetCommand}"
-                            ToolTip.Tip="Go back to the firmware default — press Apply to save it"
-                          />
-                        </Grid>
+                          </Grid>
+                          <ItemsControl ItemsSource="{Binding Parameters}">
+                            <ItemsControl.ItemTemplate>
+                              <DataTemplate x:DataType="vm:RuntimeParameterViewModel">
+                                <Grid
+                                  ColumnDefinitions="Auto,*,Auto,Auto,Auto"
+                                  ColumnSpacing="10"
+                                  Margin="0,5"
+                                >
+                                  <!-- Pending-change marker -->
+                                  <Ellipse
+                                    Grid.Column="0"
+                                    Width="7"
+                                    Height="7"
+                                    VerticalAlignment="Center"
+                                    Fill="{StaticResource AccentBrush}"
+                                    IsVisible="{Binding IsDirty}"
+                                    ToolTip.Tip="Changed — not yet applied"
+                                  />
+                                  <StackPanel
+                                    Grid.Column="1"
+                                    Spacing="2"
+                                    VerticalAlignment="Center"
+                                  >
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                      <TextBlock Classes="definename" Text="{Binding Name}" />
+                                      <Border Classes="filebadge" IsVisible="{Binding HasUnit}">
+                                        <TextBlock Text="{Binding Unit}" />
+                                      </Border>
+                                    </StackPanel>
+                                    <TextBlock
+                                      Classes="paramdesc"
+                                      Text="{Binding Description}"
+                                      MaxWidth="520"
+                                      HorizontalAlignment="Left"
+                                    />
+                                    <TextBlock
+                                      Classes="paramdesc"
+                                      Text="{Binding RangeText}"
+                                      FontSize="10.5"
+                                    />
+                                  </StackPanel>
+                                  <TextBox
+                                    Grid.Column="3"
+                                    Classes="definevalue"
+                                    Classes.invalid="{Binding IsInvalid}"
+                                    Text="{Binding Text}"
+                                    VerticalAlignment="Center"
+                                  />
+                                  <Button
+                                    Grid.Column="4"
+                                    Content="Reset"
+                                    FontSize="11"
+                                    Padding="9,4"
+                                    VerticalAlignment="Center"
+                                    IsVisible="{Binding IsOverride}"
+                                    Command="{Binding ResetCommand}"
+                                    ToolTip.Tip="Go back to the firmware default — press Apply to save it"
+                                  />
+                                </Grid>
+                              </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                          </ItemsControl>
+                        </StackPanel>
                       </DataTemplate>
                     </ItemsControl.ItemTemplate>
                   </ItemsControl>

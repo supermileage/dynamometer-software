@@ -171,23 +171,6 @@
             </Grid>
           </Panel>
 
-          <Border Height="1" Background="{StaticResource StrokeBrush}" Margin="0,14" />
-
-          <!-- Which force sensor is feeding the reading above: sensor data, so session-gated too. -->
-          <StackPanel
-            Orientation="Horizontal"
-            Margin="0,0,0,8"
-            IsVisible="{Binding IsSessionActive}"
-          >
-            <TextBlock Classes="label" Text="Force source" VerticalAlignment="Center" />
-            <TextBlock
-              Classes="readout"
-              Text="{Binding ForceSource}"
-              Margin="8,0,0,0"
-              VerticalAlignment="Center"
-            />
-          </StackPanel>
-
           <!-- Sample rate and other device settings live on the SysConfig page. -->
         </StackPanel>
       </Border>

@@ -144,6 +144,10 @@ def _prepare_sysconfig(schema: dict, symbols: dict[str, int], defines: list) -> 
             p["_cs_category"] = _cs_string(p["category"])
             p["_cs_unit"] = _cs_string(p["unit"])
             p["_cs_desc"] = _cs_string(p["description"])
+            # Optional: only the rows that carry one emit a Subsection arg (the record
+            # defaults it to ""), so the common case stays a nine-argument row.
+            if p.get("subsection"):
+                p["_cs_subsection"] = _cs_string(p["subsection"])
             symbols[p["_enum_name"]] = i
         count = len(s["params"])
         symbols["SYSCFG_PARAM_COUNT"] = count

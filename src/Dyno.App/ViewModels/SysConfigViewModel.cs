@@ -423,12 +423,26 @@ public partial class SysConfigViewModel : ObservableObject
         foreach (var group in _runtimeParameters.GroupBy(p => p.Category))
         {
             var visible = group.Where(p => p.Matches(terms)).ToList();
-            if (visible.Count > 0)
+            if (visible.Count == 0)
             {
-                FilteredRuntimeCategories.Add(
-                    new RuntimeCategoryViewModel { Name = group.Key, Parameters = visible }
-                );
+                continue;
             }
+
+            // Within a category, split by subsection (the force sensor's All/I2C/ADC). GroupBy keeps
+            // catalog order, so the "All" group — first in the schema — leads. A category whose
+            // parameters carry no subsection collapses to one untitled group and renders unchanged.
+            var subsections = visible
+                .GroupBy(p => p.Subsection)
+                .Select(sub => new RuntimeSubsectionViewModel
+                {
+                    Title = sub.Key,
+                    Parameters = sub.ToList(),
+                })
+                .ToList();
+
+            FilteredRuntimeCategories.Add(
+                new RuntimeCategoryViewModel { Name = group.Key, Subsections = subsections }
+            );
         }
 
         FilteredCategories.Clear();
