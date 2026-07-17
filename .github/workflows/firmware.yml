@@ -39,7 +39,7 @@ jobs:
     steps:
       # submodules: true (not recursive) fetches STM32CubeH7 — the firmware pack —
       # at its pinned tag, without dragging in its ~40 eval-board BSP submodules.
-      # regen-cube.sh then populates just the HAL/CMSIS ones CubeMX needs.
+      # regen-cube.sh then populates the pack's own non-BSP modules itself.
       - uses: actions/checkout@v4
         with:
           submodules: true
