@@ -314,8 +314,6 @@ public partial class SysConfigViewModel : ObservableObject
     private void Report(string status) =>
         Dispatcher.UIThread.Post(() => RuntimeStatusText = status);
 
-    
-
     /// <summary>The saved compile-time settings that differ from their header — exactly what the
     /// Firmware page bakes into the next build, and the only thing that connects these two pages.
     /// Reads the applied values, never the half-typed ones: an edit nobody pressed Apply on has not

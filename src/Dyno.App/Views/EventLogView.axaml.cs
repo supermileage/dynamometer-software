@@ -122,10 +122,7 @@ public partial class EventLogView : UserControl
                     _tailing = true;
                 }
 
-                if (
-                    _tailing
-                    && _vm?.SelectedLogTab is { NewestFirst: false, Lines.Count: > 0 } tab
-                )
+                if (_tailing && _vm?.SelectedLogTab is { NewestFirst: false, Lines.Count: > 0 } tab)
                 {
                     // By index, never by item: console lines repeat (blank lines, duplicated
                     // compiler output), and the item overload resolves by value to the FIRST

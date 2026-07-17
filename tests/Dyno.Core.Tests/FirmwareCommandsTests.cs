@@ -38,7 +38,9 @@ public class FirmwareCommandsTests
         var command = FirmwareCommands.Build(Dir, FirmwareBuild.Release, true, windows: true);
 
         Assert.Equal("powershell", command.FileName);
-        Assert.Contains(Path.Combine("Scripts", "build-docker.ps1"), command.Arguments);
+        // A literal '/', like every other path assertion here: the commands are built with a
+        // fixed separator so they read (and run) the same on every host — see FirmwareCommands.
+        Assert.Contains("Scripts/build-docker.ps1", command.Arguments);
         Assert.Contains("-Rebuild", command.Arguments);
         // Nothing on a user's machine should be able to stop the build: the scripts are ours.
         Assert.Contains("Bypass", command.Arguments);

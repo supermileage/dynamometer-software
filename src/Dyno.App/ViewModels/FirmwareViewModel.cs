@@ -376,7 +376,8 @@ public partial class FirmwareViewModel : ObservableObject
 
             DeviceStatus = (found.Count, tool) switch
             {
-                (> 0, _) => $"{Wording.Count(found.Count, "device")} found — click one to select it.",
+                (> 0, _) =>
+                    $"{Wording.Count(found.Count, "device")} found — click one to select it.",
                 // openocd is the one tool with no list mode; the scan just prints as much.
                 (_, "openocd") =>
                     "openocd can't list devices — scan with st-flash instead, or type the serial below.",
@@ -462,8 +463,6 @@ public partial class FirmwareViewModel : ObservableObject
             }
         }
     }
-
-    
 
     private string DescribeBuild()
     {

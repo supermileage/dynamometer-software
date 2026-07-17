@@ -222,6 +222,11 @@ public static class FirmwareCommands
 
     private static bool OnWindows(bool? windows) => windows ?? OperatingSystem.IsWindows();
 
+    // The script paths below use a literal '/' rather than Path.Combine: bash reads a
+    // backslash as an escape character (so the Windows separator would garble the path
+    // outright), PowerShell accepts '/' on every platform, and a fixed separator keeps the
+    // echoed DisplayLine identical wherever the command runs.
+
     /// <summary>Run through <c>bash</c> explicitly rather than executing the script: a fresh clone
     /// (or a checkout on a filesystem with no exec bit) leaves the scripts non-executable, and
     /// "permission denied" is a poor first experience.</summary>
@@ -229,7 +234,7 @@ public static class FirmwareCommands
         string firmwareDirectory,
         string script,
         List<string> args
-    ) => new("bash", [Path.Combine("Scripts", script), .. args], firmwareDirectory);
+    ) => new("bash", [$"Scripts/{script}", .. args], firmwareDirectory);
 
     private static ProcessCommand PowerShell(
         string firmwareDirectory,
@@ -243,7 +248,7 @@ public static class FirmwareCommands
                 "-ExecutionPolicy",
                 "Bypass",
                 "-File",
-                Path.Combine("Scripts", script),
+                $"Scripts/{script}",
                 .. args,
             ],
             firmwareDirectory
