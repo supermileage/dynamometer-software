@@ -55,9 +55,11 @@ public sealed record SysConfigParameterDef(
     public double FromRawBits(uint bits) => IsFloat ? BitConverter.UInt32BitsToSingle(bits) : bits;
 
     /// <summary>The value as a person reads it: no exponent, no trailing zeros, and never the
-    /// current culture's decimal comma (these numbers are also what goes on the wire).</summary>
+    /// current culture's decimal comma (these numbers are also what goes on the wire). Nine
+    /// decimals, because the smallest bound in the catalog is 1e-9 (MOMENT_OF_INERTIA_KG_M2's
+    /// min) and rounding it to "0" would misstate the accepted range.</summary>
     public string Format(double value) =>
-        value.ToString(IsFloat ? "0.######" : "0", CultureInfo.InvariantCulture);
+        value.ToString(IsFloat ? "0.#########" : "0", CultureInfo.InvariantCulture);
 
     /// <summary>This parameter and value in words, e.g. <c>"K_P = 2.5"</c> or
     /// <c>"PID_TASK_OSDELAY = 10 ms"</c> — what a log line shows instead of a wire id.</summary>

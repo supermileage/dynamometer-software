@@ -161,8 +161,14 @@ Write-Host "Flashing $Config via $Tool ($Method)..."
 # special-case it: report success when the download is confirmed, but keep the real exit code for a
 # genuine failure - which never prints that line. Mirrors the same handling in flash.sh.
 if ($Method -eq 'dfu' -and $Tool -eq 'dfu-util') {
-    & $exe @cmdArgs 2>&1 | Tee-Object -Variable captured
+    # dfu-util reports its progress on stderr. Under this script's $ErrorActionPreference = 'Stop',
+    # the 2>&1 redirect would turn that first stderr line into a terminating error in Windows
+    # PowerShell and kill the wrapper mid-flash — so relax it for just this native call, and
+    # stringify the stream so ErrorRecords come out as their text.
+    $ErrorActionPreference = 'Continue'
+    & $exe @cmdArgs 2>&1 | ForEach-Object { "$_" } | Tee-Object -Variable captured
     $code = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
     if ($code -ne 0 -and ($captured -match 'File downloaded successfully')) {
         Write-Host ''
         Write-Host "Note: dfu-util exited $code on its post-download status read, which fails because"

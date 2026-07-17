@@ -149,7 +149,7 @@ public partial class SysConfigViewModel : ObservableObject
 
         if (savedRuntime > 0)
         {
-            RuntimeStatusText = $"Saved {Count(savedRuntime, "change")} on this PC";
+            RuntimeStatusText = $"Saved {Wording.Count(savedRuntime, "change")} on this PC";
             await SyncDeviceAsync(ConnectedClient(), announce: true);
         }
     }
@@ -211,7 +211,7 @@ public partial class SysConfigViewModel : ObservableObject
         if (saved > 0)
         {
             StatusText =
-                $"Saved {Count(saved, "compile-time setting")} on this PC — the firmware still "
+                $"Saved {Wording.Count(saved, "compile-time setting")} on this PC — the firmware still "
                 + "builds from config.h / debug.h, so nothing on the board has changed";
         }
     }
@@ -285,19 +285,20 @@ public partial class SysConfigViewModel : ObservableObject
             (written, failures.Count) switch
             {
                 (0, 0) => "The device already holds every saved value",
-                (_, 0) => $"Applied {Count(written, "setting")} to the device",
+                (_, 0) => $"Applied {Wording.Count(written, "setting")} to the device",
                 _ =>
                     $"Applied {written} to the device; it didn't ack {string.Join(", ", failures)} — retried on the next connect",
             }
         );
 
-        // A restore writes all 27 parameters, so it reports itself as one line rather than as 27
-        // sends and 27 acks; an ordinary edit is already narrated write-by-write by the client.
+        // A restore writes the whole catalog, so it reports itself as one line rather than as a
+        // send and an ack per parameter; an ordinary edit is already narrated write-by-write by
+        // the client.
         if (!announce && (written > 0 || failures.Count > 0))
         {
             DeviceSyncLogged?.Invoke(
                 failures.Count == 0
-                    ? $"[CFG ] restored {Count(written, "sysconfig parameter")} to the device (its store is RAM only)"
+                    ? $"[CFG ] restored {Wording.Count(written, "sysconfig parameter")} to the device (its store is RAM only)"
                     : $"[ERR ] restored {written} sysconfig parameters, but the device didn't ack "
                         + $"{string.Join(", ", failures)}"
             );
@@ -313,7 +314,7 @@ public partial class SysConfigViewModel : ObservableObject
     private void Report(string status) =>
         Dispatcher.UIThread.Post(() => RuntimeStatusText = status);
 
-    private static string Count(int n, string noun) => $"{n} {noun}{(n == 1 ? "" : "s")}";
+    
 
     /// <summary>The saved compile-time settings that differ from their header — exactly what the
     /// Firmware page bakes into the next build, and the only thing that connects these two pages.

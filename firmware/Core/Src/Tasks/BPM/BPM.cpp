@@ -135,8 +135,18 @@ bool BPM::TogglePWM(bool enable)
 void BPM::SetDutyCycle(float new_duty_cycle_percent)
 {
 
-	const float minDutyCycle = sysconfig_get_float(SYSCFG_MIN_DUTY_CYCLE_PERCENT);
-	const float maxDutyCycle = sysconfig_get_float(SYSCFG_MAX_DUTY_CYCLE_PERCENT);
+	// The two bounds are written independently over USB (the store range-checks each against
+	// [0,1] but not against the other), so read them as an unordered pair: if a host update
+	// left min > max, clamping to the lower/upper of the two keeps the duty cycle inside the
+	// intended envelope instead of forcing a near-off request up to the inverted "min".
+	float minDutyCycle = sysconfig_get_float(SYSCFG_MIN_DUTY_CYCLE_PERCENT);
+	float maxDutyCycle = sysconfig_get_float(SYSCFG_MAX_DUTY_CYCLE_PERCENT);
+	if (minDutyCycle > maxDutyCycle)
+	{
+		const float lower = maxDutyCycle;
+		maxDutyCycle = minDutyCycle;
+		minDutyCycle = lower;
+	}
 	if (new_duty_cycle_percent < minDutyCycle)
 		new_duty_cycle_percent = minDutyCycle;
 	else if (new_duty_cycle_percent > maxDutyCycle)

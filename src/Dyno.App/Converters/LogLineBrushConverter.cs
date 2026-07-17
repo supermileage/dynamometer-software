@@ -1,4 +1,6 @@
 using System.Globalization;
+using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Data.Converters;
 using Avalonia.Media;
 
@@ -14,8 +16,16 @@ public sealed class LogLineBrushConverter : IMultiValueConverter
 {
     public static readonly LogLineBrushConverter Instance = new();
 
-    // Matches App.axaml's TextPrimaryColor.
-    private static readonly IBrush Plain = new SolidColorBrush(Color.Parse("#E7EAF0"));
+    // App.axaml's TextPrimaryBrush, resolved once at first use so a theme edit there can't
+    // drift from this copy. The literal is only the fallback for contexts with no application
+    // resources loaded (the XAML previewer, unit tests).
+    private static IBrush? _plain;
+    private static IBrush Plain =>
+        _plain ??=
+            Application.Current?.TryGetResource("TextPrimaryBrush", null, out var value) == true
+            && value is IBrush brush
+                ? brush
+                : new SolidColorBrush(Color.Parse("#E7EAF0"));
 
     public object Convert(
         IList<object?> values,

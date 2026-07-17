@@ -137,8 +137,8 @@ isn't known to have. One pass therefore serves both cases:
 - **A device connected** → `Forget()` first, because a link that dropped may have dropped *because*
   the board reset. Nothing is believed, so the whole catalog goes out — **defaults included**, since
   a board that stayed powered through a host restart is still holding the last session's values, and
-  a parameter the user never overrode is exactly the one nobody would think to re-send. All 27 are
-  written unannounced and reported as a single summary line.
+  a parameter the user never overrode is exactly the one nobody would think to re-send. The whole
+  catalog is written unannounced and reported as a single summary line.
 
 A write that is never acked is simply never confirmed, so it stays outstanding and goes out again on
 the next pass — which is the only recovery available to a board that cannot remember anything.

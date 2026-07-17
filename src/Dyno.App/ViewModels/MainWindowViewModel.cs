@@ -500,9 +500,9 @@ public partial class MainWindowViewModel : ObservableObject
                 break;
             case CommandResponse { Matched: true, Request: null }:
                 // A command whose sender asked not to announce it: the sysconfig restore, which
-                // writes all 27 parameters on every handshake and reports itself as one summary
+                // writes the whole catalog on every handshake and reports itself as one summary
                 // line. The ack is real and its command did apply — it just isn't news on its own,
-                // and 27 of them would bury whatever else the log was holding.
+                // and a page of them would bury whatever else the log was holding.
                 break;
             case CommandResponse r:
                 AddEvent(Describe(r));

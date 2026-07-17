@@ -144,14 +144,25 @@ def _prepare_sysconfig(schema: dict, symbols: dict[str, int], defines: list) -> 
                 # host range-checks it 0..last like the firmware and emits the labels so the
                 # UI can offer a dropdown.
                 opts = p["options"]
+                lo, hi = 0.0, float(len(opts) - 1)
                 p["_cs_min"] = _cs_double(0)
                 p["_cs_max"] = _cs_double(len(opts) - 1)
                 p["_cs_options"] = ", ".join(
                     f'new({o["value"]}u, {_cs_string(o["label"])})' for o in opts
                 )
             else:
+                lo, hi = float(p["min"]), float(p["max"])
                 p["_cs_min"] = _cs_double(p["min"])
                 p["_cs_max"] = _cs_double(p["max"])
+            # sysconfig_init() seeds the store from config.h without going through
+            # sysconfig_set_raw's range check, and the host re-pushes the default over USB
+            # where the firmware *does* check it — so an out-of-range default would boot
+            # fine and then be rejected on every handshake. Catch it here instead.
+            if not lo <= defaults[name] <= hi:
+                raise ValueError(
+                    f"sysconfig param {name}: config.h default {defaults[name]} is outside "
+                    f"the schema range [{lo}, {hi}]"
+                )
             p["_cs_category"] = _cs_string(p["category"])
             p["_cs_unit"] = _cs_string(p["unit"])
             p["_cs_desc"] = _cs_string(p["description"])

@@ -143,12 +143,17 @@ public partial class EventLogView : UserControl
             return;
         }
 
-        // The list looks identical after a copy, so say it happened.
-        object? label = CopyEventsButton.Content;
+        // The list looks identical after a copy, so say it happened. The real label is captured
+        // once, in a field: a second copy inside the 1.2 s flash would otherwise capture "Copied"
+        // itself and restore that, leaving the button stuck saying it.
+        _copyLabel ??= CopyEventsButton.Content;
         CopyEventsButton.Content = "Copied";
         await Task.Delay(TimeSpan.FromSeconds(1.2));
-        CopyEventsButton.Content = label;
+        CopyEventsButton.Content = _copyLabel;
     }
+
+    /// <summary>The Copy button's real label, held while it briefly reads "Copied".</summary>
+    private object? _copyLabel;
 
     private void OnResize(object? sender, VectorEventArgs e)
     {
