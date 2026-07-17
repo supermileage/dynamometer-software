@@ -243,14 +243,7 @@ public static class FirmwareCommands
     ) =>
         new(
             "powershell",
-            [
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                $"Scripts/{script}",
-                .. args,
-            ],
+            ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $"Scripts/{script}", .. args],
             firmwareDirectory
         );
 }

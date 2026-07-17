@@ -39,7 +39,10 @@ public sealed class SysConfigStore : IDisposable
     {
         DatabasePath = databasePath ?? DefaultDatabasePath;
         Directory.CreateDirectory(Path.GetDirectoryName(DatabasePath)!);
-        _connection = new SqliteConnection($"Data Source={DatabasePath}");
+        // Pooling off: the store holds this one connection for its whole life, so a pool adds
+        // nothing — and a pooled connection would keep the file handle open past Dispose, which
+        // on Windows leaves the .db locked (deleting it then throws; the tests do exactly that).
+        _connection = new SqliteConnection($"Data Source={DatabasePath};Pooling=False");
         _connection.Open();
 
         using var create = _connection.CreateCommand();

@@ -191,8 +191,9 @@ public class SysConfigStoreTests : IDisposable
 
     public void Dispose()
     {
-        // Pooled SQLite connections can hold the file briefly; clearing pools is implicit in
-        // Dispose of the store, so a plain delete suffices here.
+        // The store opens its connection with Pooling=False, so disposing it really releases the
+        // file handle — without that, this delete throws "file in use" on Windows, where an open
+        // file cannot be unlinked the way it can on Linux.
         if (File.Exists(_dbPath))
         {
             File.Delete(_dbPath);
