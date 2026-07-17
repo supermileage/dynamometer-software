@@ -1,4 +1,5 @@
 #include <Tasks/SessionController/SessionController.hpp>
+#include <Config/sysconfig.h>
 
 extern UART_HandleTypeDef huart1;
 
@@ -202,7 +203,7 @@ void SessionController::Run()
 
         if (!InSessionStatus)
         {
-            osDelay(SESSIONCONTROLLER_TASK_OSDELAY);
+            osDelay(sysconfig_get_u32(SYSCFG_SESSIONCONTROLLER_TASK_OSDELAY));
             continue;
         }
 
@@ -315,7 +316,7 @@ void SessionController::Run()
 
         
 
-        osDelay(SESSIONCONTROLLER_TASK_OSDELAY);
+        osDelay(sysconfig_get_u32(SYSCFG_SESSIONCONTROLLER_TASK_OSDELAY));
 
         
             
@@ -327,7 +328,9 @@ void SessionController::Run()
 
 float SessionController::CalculateTorque(float angularAcceleration, float force, float angularVelocity)
 {
-    return (MOMENT_OF_INERTIA_KG_M2 * angularAcceleration + force * DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M + CalculateMechanicalLosses(angularAcceleration, angularVelocity));
+    return (sysconfig_get_float(SYSCFG_MOMENT_OF_INERTIA_KG_M2) * angularAcceleration
+            + force * sysconfig_get_float(SYSCFG_DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M)
+            + CalculateMechanicalLosses(angularAcceleration, angularVelocity));
 }
 
 float SessionController::CalculatePower(float torque, float angularVelocity)

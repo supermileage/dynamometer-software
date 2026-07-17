@@ -24,6 +24,7 @@ from jinja2 import Environment, FileSystemLoader
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 MSG_DIR = REPO / "Core" / "Inc" / "MessagePassing"
+CONFIG_DIR = REPO / "Core" / "Inc" / "Config"
 
 # target -> (schema file, template file, default output). One generic template drives
 # every header; add the C++ host parser here later as its own (schema, template, out).
@@ -38,11 +39,54 @@ TARGETS = {
         "header.h.j2",
         MSG_DIR / "messages_private.h",
     ),
+    # The sysconfig store's per-parameter validation entries, from the same schema
+    # section that defines sysconfig_param_t -- so the enum, the table and the host
+    # catalog can never disagree about a parameter's id, kind or range.
+    "sysconfig_table": (
+        HERE / "schema" / "messages_public.yaml",
+        "sysconfig_table.inc.j2",
+        CONFIG_DIR / "sysconfig_table.inc",
+    ),
 }
+
+
+def _c_float(value) -> str:
+    """A YAML number as a C float literal: 1e-06 -> '1e-06f', 1000 -> '1000.0f'."""
+    text = f"{float(value):g}"
+    if "." not in text and "e" not in text:
+        text += ".0"
+    return text + "f"
+
+
+def _annotate_sysconfig(schema: dict) -> None:
+    """Computes the C-side fields of each sysconfig_params entry: the enum member name
+    and the min/max literals typed to the parameter's kind."""
+    for s in schema["sections"]:
+        if s.get("kind") != "sysconfig_params":
+            continue
+        for p in s["params"]:
+            p["_enum_name"] = "SYSCFG_" + p["name"]
+            if p["type"] == "float":
+                p["_c_macro"] = "SYSCFG_F32"
+                p["_c_min"] = _c_float(p["min"])
+                p["_c_max"] = _c_float(p["max"])
+            elif p["type"] == "uint32":
+                p["_c_macro"] = "SYSCFG_U32"
+                p["_c_min"] = f"{int(p['min'])}u"
+                p["_c_max"] = f"{int(p['max'])}u"
+            elif p["type"] == "enum":
+                # A uint32 restricted to its option codes (contiguous from 0), so the store
+                # range-checks it exactly like any other uint32; the labels are host-only.
+                p["_c_macro"] = "SYSCFG_U32"
+                p["_c_min"] = "0u"
+                p["_c_max"] = f"{len(p['options']) - 1}u"
+            else:
+                raise ValueError(f"sysconfig param {p['name']}: unknown type {p['type']!r}")
 
 
 def render(schema_path: Path, template_name: str) -> str:
     schema = yaml.safe_load(schema_path.read_text())
+    _annotate_sysconfig(schema)
     env = Environment(
         loader=FileSystemLoader(HERE / "templates"),
         trim_blocks=True,

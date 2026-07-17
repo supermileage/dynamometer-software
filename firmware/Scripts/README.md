@@ -3,6 +3,12 @@
 Helper scripts for building and flashing the firmware. All are meant to run on
 the **host** (not inside the Docker build container).
 
+> The desktop app's **Firmware** page runs exactly these scripts — same arguments,
+> output shown verbatim — and additionally writes the compile-time settings saved
+> on its Config page into `Core/Inc/Config/*_overrides.h` before building. Use
+> whichever you prefer; they cannot disagree. A build from this terminal picks up
+> those override files too, and deleting them returns you to the committed headers.
+
 | Script | Purpose |
 |--------|---------|
 | `build-docker.sh` | Build the firmware in the pinned Docker toolchain image on Linux/macOS/Git-Bash (byte-for-byte the CI environment). |
@@ -74,7 +80,25 @@ arguments; pass `Debug` explicitly to work with the Debug build instead.
 
 Run `./Scripts/flash.sh --help` for the full option list.
 
-### Installing a tool
+### The tools are bundled — you don't install anything
+The three open-source tools (`st-flash`/`st-info`, `dfu-util`, `stm32flash`) are
+**committed under `Scripts/tools/<platform>/`**, so a fresh clone can flash with
+nothing installed. `flash.sh`/`flash.ps1` prefer a bundled copy over anything on
+`PATH` (`resolve()` / `Resolve-Tool`); a tool you *do* have installed still works,
+as the fallback. See `Scripts/tools/README.md` for versions, provenance and
+licenses.
+
+Bundled for `linux-x86_64` and `windows-x86_64`. On macOS or other architectures
+(no prebuilt upstream binaries) the scripts fall back to `PATH` — install a tool
+below. `cubeprog` is never bundled (proprietary), but every method has an
+open-source tool, so you never need it.
+
+To **update** a bundled tool, bump the pin in `get-tools.sh`/`get-tools.ps1` and
+re-run it — it re-downloads the pinned release, checks its SHA-256, and rewrites
+the platform dir for you to commit. (End users never run this; the binaries are
+already in the repo.)
+
+### Installing a tool (only if the bundle doesn't cover your platform)
 The open-source tools come from your package manager with no account.
 **STM32CubeProgrammer (`cubeprog`) is _not_ in apt/dnf** and requires a free ST
 (myST) account to download.

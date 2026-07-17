@@ -22,6 +22,24 @@ jobs:
       - name: Verify committed headers match their schema
         run: python firmware/tools/message_gen/check.py
 
+  # The firmware's hardware-independent logic (USB RX ring, frame parser, sysconfig store)
+  # compiled with the runner's native gcc and run as an ordinary process — no board, no
+  # ARM toolchain. See firmware/tests/CMakeLists.txt.
+  unit-tests:
+    name: unit tests (logic, host-compiled)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S firmware/tests -B firmware/tests/build
+
+      - name: Build
+        run: cmake --build firmware/tests/build -j
+
+      - name: Run
+        run: ctest --test-dir firmware/tests/build --output-on-failure
+
   build:
     name: build (${{ matrix.config }})
     runs-on: ubuntu-latest

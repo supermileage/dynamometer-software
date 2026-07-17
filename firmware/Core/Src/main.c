@@ -38,6 +38,7 @@
 #include <Tasks/USB/usbcontroller_main.h>
 
 #include <Config/debug.h>
+#include <Config/sysconfig.h>
 
 #include <MessagePassing/messages_private.h>
 
@@ -306,6 +307,8 @@ int main(void)
   MX_I2C4_Init();
   /* USER CODE BEGIN 2 */
   HAL_GPIO_WritePin(LED_BRAKE_GPIO_Port, LED_BRAKE_Pin, (GPIO_PinState)!HAL_GPIO_ReadPin(BTN_BRAKE_GPIO_Port, BTN_BRAKE_Pin));
+  /* Seed the runtime sysconfig store from the config.h defaults before any task runs. */
+  sysconfig_init();
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -1366,7 +1369,7 @@ void ledBlinkTaskEntryFunction(void *argument)
     const uint32_t timestamp_for_testing = get_timestamp();
     (void)timestamp_for_testing;
     HAL_GPIO_TogglePin(ILI_SPI2_SD_CS_GPIO_Port, ILI_SPI2_SD_CS_Pin);
-    osDelay(LED_TASK_OSDELAY);
+    osDelay(sysconfig_get_u32(SYSCFG_LED_TASK_OSDELAY));
   }
   #endif 
 

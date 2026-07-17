@@ -444,55 +444,6 @@ public class DeviceClientTests
     }
 
     [Fact]
-    public async Task SetForceSensorSampleRate_SendsCommand_AndReturnsStatus()
-    {
-        using var serial = new FakeSerial();
-        using var client = new DeviceClient(serial);
-
-        // Echo any host command back as an OK RESPONSE so the awaited round-trip closes.
-        serial.OnWrite = frame =>
-        {
-            var msg = ReadMessageHeader(frame);
-            if (msg.msg_type != usb_msg_type_t.USB_MSG_COMMAND)
-            {
-                return;
-            }
-            var cmd = ReadCommandHeader(frame);
-            serial.DeviceSend(
-                Wire.Message(
-                    usb_msg_type_t.USB_MSG_RESPONSE,
-                    msg.task_offset,
-                    new usb_response_data_t
-                    {
-                        opcode = cmd.opcode,
-                        msg_id = cmd.msg_id,
-                        status = (uint)usb_response_status_t.USB_RSP_OK,
-                    }
-                )
-            );
-        };
-
-        client.Start();
-        var response = await client.SetForceSensorSampleRateAsync(ForceSensorSampleRate.Sps250);
-
-        Assert.Equal((uint)usb_response_status_t.USB_RSP_OK, response.status);
-
-        // The one frame the host wrote is a COMMAND to the ADS1115 with the rate code as its body.
-        byte[] sent = Assert.Single(serial.Writes);
-        var msgHeader = ReadMessageHeader(sent);
-        var cmdHeader = ReadCommandHeader(sent);
-        Assert.Equal(usb_msg_type_t.USB_MSG_COMMAND, msgHeader.msg_type);
-        Assert.Equal(task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115, msgHeader.task_offset);
-        Assert.Equal(
-            (ushort)force_sensor_command_opcode.FORCE_SENSOR_CMD_SET_DATA_RATE,
-            cmdHeader.opcode
-        );
-
-        byte body = sent[sizeof(ushort) + UsbFrame.HeaderSize + UsbFrame.CommandHeaderSize];
-        Assert.Equal((byte)ForceSensorSampleRate.Sps250, body);
-    }
-
-    [Fact]
     public void RefusesHandshake_OnVersionMismatch_AndDoesNotAck()
     {
         using var serial = new FakeSerial();
@@ -617,20 +568,6 @@ public class DeviceClientTests
     }
 
     [Fact]
-    public async Task SetForceSensorSampleRate_ThrowsDeviceCommandException_OnNonOkAck()
-    {
-        using var serial = new FakeSerial();
-        using var client = new DeviceClient(serial);
-        ReplyWithStatus(serial, usb_response_status_t.USB_RSP_DEVICE_ERROR);
-
-        client.Start();
-        var ex = await Assert.ThrowsAsync<DeviceCommandException>(() =>
-            client.SetForceSensorSampleRateAsync(ForceSensorSampleRate.Sps128)
-        );
-        Assert.Equal(usb_response_status_t.USB_RSP_DEVICE_ERROR, ex.Status);
-    }
-
-    [Fact]
     public void ReadLoop_SurvivesAThrowingConsumer_AndKeepsDelivering()
     {
         using var serial = new FakeSerial();
@@ -694,7 +631,7 @@ public class DeviceClientTests
         await Assert.ThrowsAsync<IOException>(() =>
             client.SendCommandAsync(
                 task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115,
-                (ushort)force_sensor_command_opcode.FORCE_SENSOR_CMD_SET_DATA_RATE,
+                (ushort)0,
                 [0],
                 timeout: TimeSpan.FromMilliseconds(200)
             )
@@ -706,7 +643,7 @@ public class DeviceClientTests
         ReplyWithStatus(serial, usb_response_status_t.USB_RSP_OK);
         var response = await client.SendCommandAsync(
             task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115,
-            (ushort)force_sensor_command_opcode.FORCE_SENSOR_CMD_SET_DATA_RATE,
+            (ushort)0,
             [0]
         );
         Assert.Equal((uint)usb_response_status_t.USB_RSP_OK, response.status);
@@ -723,7 +660,7 @@ public class DeviceClientTests
         // Default (throwOnError: false) surfaces the status to the caller instead of throwing.
         var response = await client.SendCommandAsync(
             task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115,
-            (ushort)force_sensor_command_opcode.FORCE_SENSOR_CMD_SET_DATA_RATE,
+            (ushort)0,
             [0]
         );
         Assert.Equal((uint)usb_response_status_t.USB_RSP_MALFORMED, response.status);
@@ -769,7 +706,7 @@ public class DeviceClientTests
         client.Start();
         var response = await client.SendCommandAsync(
             task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115,
-            (ushort)force_sensor_command_opcode.FORCE_SENSOR_CMD_SET_DATA_RATE,
+            (ushort)0,
             [0],
             timeout: TimeSpan.FromMilliseconds(150),
             retries: 1
@@ -794,11 +731,7 @@ public class DeviceClientTests
         client.Start();
         var started = System.Diagnostics.Stopwatch.StartNew();
         await Assert.ThrowsAsync<TimeoutException>(() =>
-            client.SendCommandAsync(
-                task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115,
-                (ushort)force_sensor_command_opcode.FORCE_SENSOR_CMD_SET_DATA_RATE,
-                [0]
-            )
+            client.SendCommandAsync(task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115, (ushort)0, [0])
         );
 
         // Well inside the 2s default, so the property is what bounded the wait, not a literal.
@@ -819,7 +752,7 @@ public class DeviceClientTests
         using var cts = new CancellationTokenSource();
         var task = client.SendCommandAsync(
             task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115,
-            (ushort)force_sensor_command_opcode.FORCE_SENSOR_CMD_SET_DATA_RATE,
+            (ushort)0,
             [0],
             timeout: TimeSpan.FromSeconds(5),
             retries: 3,

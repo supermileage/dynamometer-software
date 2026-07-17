@@ -1,0 +1,364 @@
+<UserControl
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:vm="using:Dyno.App.ViewModels"
+  xmlns:core="using:Dyno.Core.SysConfig"
+  x:Class="Dyno.App.Views.SysConfigView"
+  x:DataType="vm:MainWindowViewModel"
+>
+  <Design.DataContext>
+    <vm:MainWindowViewModel />
+  </Design.DataContext>
+
+  <UserControl.Styles>
+    <!-- The parameter / #define name, as it appears in the firmware source. -->
+    <Style Selector="TextBlock.definename">
+      <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+      <Setter Property="FontSize" Value="12.5" />
+    </Style>
+    <Style Selector="TextBlock.paramdesc">
+      <Setter Property="FontSize" Value="11.5" />
+      <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style Selector="TextBox.definevalue">
+      <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+      <Setter Property="FontSize" Value="12.5" />
+      <Setter Property="MinWidth" Value="150" />
+      <Setter Property="HorizontalContentAlignment" Value="Right" />
+      <Setter Property="CornerRadius" Value="7" />
+    </Style>
+    <!-- A value the firmware would reject: out of range or not a number. -->
+    <Style Selector="TextBox.definevalue.invalid">
+      <Setter Property="BorderBrush" Value="#E5484D" />
+    </Style>
+    <Style Selector="ToggleSwitch.definevalue">
+      <Setter Property="OnContent" Value="{x:Null}" />
+      <Setter Property="OffContent" Value="{x:Null}" />
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="Margin" Value="0" />
+    </Style>
+    <!-- Badge naming where a section's settings live / how they apply. -->
+    <Style Selector="Border.filebadge">
+      <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+      <Setter Property="CornerRadius" Value="5" />
+      <Setter Property="Padding" Value="7,2" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Border.filebadge TextBlock">
+      <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+      <Setter Property="FontSize" Value="10.5" />
+      <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+    </Style>
+    <!-- Section divider between the runtime and compile-time halves of the page. -->
+    <Style Selector="TextBlock.sectiontitle">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="LetterSpacing" Value="1.2" />
+    </Style>
+    <!-- Sub-group label inside a category card (the force sensor's All / I2C / ADC). -->
+    <Style Selector="TextBlock.subsectionlabel">
+      <Setter Property="FontSize" Value="10.5" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="LetterSpacing" Value="1" />
+      <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+    </Style>
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="Auto,*" Margin="16" RowSpacing="14">
+    <!-- Toolbar: title + search + the page's single Apply. It lives here, outside the scroller, so
+         it stays reachable from either half of the page — both halves save to the same place. -->
+    <Border Grid.Row="0" Classes="card" Padding="12">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8">
+        <TextBlock
+          Grid.Column="0"
+          Classes="heading"
+          Text="SYSTEM CONFIGURATION"
+          VerticalAlignment="Center"
+          Margin="4,0,10,0"
+        />
+        <TextBox
+          Grid.Column="1"
+          Text="{Binding SysConfig.SearchText}"
+          Watermark="Search settings — name, category or description (e.g. PID, task enable)"
+          CornerRadius="7"
+        />
+        <TextBlock
+          Grid.Column="2"
+          Text="{Binding SysConfig.PendingSummary}"
+          IsVisible="{Binding SysConfig.PendingCount}"
+          Foreground="{StaticResource AccentBrush}"
+          FontSize="12"
+          VerticalAlignment="Center"
+          Margin="6,0"
+        />
+        <Button
+          Grid.Column="3"
+          Classes="accent"
+          Content="Apply"
+          Command="{Binding SysConfig.ApplyCommand}"
+          ToolTip.Tip="Save every change on this page to this computer. Runtime values are then written to the connected device, and re-applied automatically each time a device connects, since the board forgets them when it reboots. Compile-time settings are only remembered — the firmware still builds from the headers."
+        />
+      </Grid>
+    </Border>
+
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+      <StackPanel Spacing="12">
+        <!-- ===================== DEVICE RUNTIME ===================== -->
+        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="10" Margin="4,0">
+          <TextBlock
+            Grid.Column="0"
+            Classes="sectiontitle"
+            Text="DEVICE RUNTIME"
+            VerticalAlignment="Center"
+          />
+          <Border Grid.Column="1" Classes="filebadge">
+            <TextBlock Text="applied over USB · saved on this PC" />
+          </Border>
+        </Grid>
+        <TextBlock
+          Text="{Binding SysConfig.RuntimeStatusText}"
+          Classes="paramdesc"
+          Margin="4,-6,4,0"
+        />
+
+        <!-- One card per runtime category. The force-sensor sample rate lives in the Force Sensor
+             card now (ADS1115_RATE under the I2C sub-header), like every other tunable. -->
+        <ItemsControl ItemsSource="{Binding SysConfig.FilteredRuntimeCategories}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <StackPanel Spacing="12" />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:RuntimeCategoryViewModel">
+              <Border Classes="card">
+                <StackPanel Spacing="4">
+                  <TextBlock Classes="heading" Text="{Binding Name}" Margin="0,0,0,6" />
+                  <!-- One block per subsection (force sensor: All / I2C / ADC). Categories with no
+                       subsection have a single untitled group, so its header is hidden and the card
+                       looks exactly as it did before. -->
+                  <ItemsControl ItemsSource="{Binding Subsections}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:RuntimeSubsectionViewModel">
+                        <StackPanel Spacing="2">
+                          <!-- Labelled divider naming the sensing path this group applies to. -->
+                          <Grid
+                            ColumnDefinitions="Auto,*"
+                            ColumnSpacing="8"
+                            Margin="0,8,0,2"
+                            IsVisible="{Binding HasTitle}"
+                          >
+                            <TextBlock
+                              Classes="subsectionlabel"
+                              Text="{Binding Title}"
+                              VerticalAlignment="Center"
+                            />
+                            <Border
+                              Grid.Column="1"
+                              Height="1"
+                              Background="{StaticResource StrokeBrush}"
+                              VerticalAlignment="Center"
+                            />
+                          </Grid>
+                          <ItemsControl ItemsSource="{Binding Parameters}">
+                            <ItemsControl.ItemTemplate>
+                              <DataTemplate x:DataType="vm:RuntimeParameterViewModel">
+                                <Grid
+                                  ColumnDefinitions="Auto,*,Auto,Auto,Auto"
+                                  ColumnSpacing="10"
+                                  Margin="0,5"
+                                >
+                                  <!-- Pending-change marker -->
+                                  <Ellipse
+                                    Grid.Column="0"
+                                    Width="7"
+                                    Height="7"
+                                    VerticalAlignment="Center"
+                                    Fill="{StaticResource AccentBrush}"
+                                    IsVisible="{Binding IsDirty}"
+                                    ToolTip.Tip="Changed — not yet applied"
+                                  />
+                                  <StackPanel
+                                    Grid.Column="1"
+                                    Spacing="2"
+                                    VerticalAlignment="Center"
+                                  >
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                      <TextBlock Classes="definename" Text="{Binding Name}" />
+                                      <Border Classes="filebadge" IsVisible="{Binding HasUnit}">
+                                        <TextBlock Text="{Binding Unit}" />
+                                      </Border>
+                                    </StackPanel>
+                                    <TextBlock
+                                      Classes="paramdesc"
+                                      Text="{Binding Description}"
+                                      MaxWidth="520"
+                                      HorizontalAlignment="Left"
+                                    />
+                                    <TextBlock
+                                      Classes="paramdesc"
+                                      Text="{Binding RangeText}"
+                                      FontSize="10.5"
+                                    />
+                                  </StackPanel>
+                                  <Panel Grid.Column="3" VerticalAlignment="Center">
+                                    <!-- Enum params (e.g. the ADS1115 registers) pick from labelled
+                                         codes; everything else is a free number box. -->
+                                    <ComboBox
+                                      IsVisible="{Binding IsEnum}"
+                                      ItemsSource="{Binding Options}"
+                                      SelectedItem="{Binding SelectedOption}"
+                                      MinWidth="150"
+                                      CornerRadius="7"
+                                    >
+                                      <ComboBox.ItemTemplate>
+                                        <DataTemplate x:DataType="core:SysConfigEnumOption">
+                                          <TextBlock Text="{Binding Label}" />
+                                        </DataTemplate>
+                                      </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                    <TextBox
+                                      Classes="definevalue"
+                                      Classes.invalid="{Binding IsInvalid}"
+                                      IsVisible="{Binding !IsEnum}"
+                                      Text="{Binding Text}"
+                                    />
+                                  </Panel>
+                                  <Button
+                                    Grid.Column="4"
+                                    Content="Reset"
+                                    FontSize="11"
+                                    Padding="9,4"
+                                    VerticalAlignment="Center"
+                                    IsVisible="{Binding IsOverride}"
+                                    Command="{Binding ResetCommand}"
+                                    ToolTip.Tip="Go back to the firmware default — press Apply to save it"
+                                  />
+                                </Grid>
+                              </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                          </ItemsControl>
+                        </StackPanel>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <!-- ===================== COMPILE-TIME ===================== -->
+        <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="10" Margin="4,14,4,0">
+          <TextBlock
+            Grid.Column="0"
+            Classes="sectiontitle"
+            Text="COMPILE-TIME"
+            VerticalAlignment="Center"
+          />
+          <Border Grid.Column="1" Classes="filebadge">
+            <TextBlock Text="saved on this PC · the firmware still builds from config.h / debug.h" />
+          </Border>
+          <Button
+            Grid.Column="3"
+            Content="Reload"
+            Command="{Binding SysConfig.ReloadCommand}"
+            ToolTip.Tip="Re-read config.h and debug.h from disk, discarding edits you haven't applied. Saved values are kept — they live in this PC's database, not in the headers."
+          />
+        </Grid>
+        <TextBlock Text="{Binding SysConfig.StatusText}" Classes="paramdesc" Margin="4,-6,4,0" />
+
+        <!-- One card per section of config.h / debug.h (buffer sizes, task/peripheral gates). -->
+        <ItemsControl ItemsSource="{Binding SysConfig.FilteredCategories}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <StackPanel Spacing="12" />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:ConfigCategoryViewModel">
+              <Border Classes="card">
+                <StackPanel Spacing="4">
+                  <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+                    <TextBlock Classes="heading" Text="{Binding Name}" VerticalAlignment="Center" />
+                    <Border Grid.Column="1" Classes="filebadge">
+                      <TextBlock Text="{Binding FileLabel}" />
+                    </Border>
+                  </Grid>
+                  <ItemsControl ItemsSource="{Binding Parameters}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:ConfigParameterViewModel">
+                        <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="10" Margin="0,5">
+                          <!-- Pending-change marker -->
+                          <Ellipse
+                            Grid.Column="0"
+                            Width="7"
+                            Height="7"
+                            VerticalAlignment="Center"
+                            Fill="{StaticResource AccentBrush}"
+                            IsVisible="{Binding IsDirty}"
+                            ToolTip.Tip="Changed — not yet applied"
+                          />
+                          <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                            <TextBlock Classes="definename" Text="{Binding Name}" />
+                            <TextBlock
+                              Classes="paramdesc"
+                              Text="{Binding Description}"
+                              IsVisible="{Binding HasDescription}"
+                              MaxWidth="560"
+                              HorizontalAlignment="Left"
+                            />
+                            <!-- Only while the saved value differs from the built firmware's, which
+                                 is the one case where the number on screen can mislead. -->
+                            <TextBlock
+                              Classes="paramdesc"
+                              Text="{Binding HeaderText}"
+                              IsVisible="{Binding IsOverride}"
+                              FontSize="10.5"
+                            />
+                          </StackPanel>
+                          <Panel Grid.Column="2" VerticalAlignment="Center">
+                            <ToggleSwitch
+                              Classes="definevalue"
+                              IsChecked="{Binding IsOn}"
+                              IsVisible="{Binding IsBool}"
+                            />
+                            <TextBox
+                              Classes="definevalue"
+                              Classes.invalid="{Binding IsInvalid}"
+                              Text="{Binding Text}"
+                              IsVisible="{Binding IsText}"
+                            />
+                          </Panel>
+                          <Button
+                            Grid.Column="3"
+                            Content="Reset"
+                            FontSize="11"
+                            Padding="9,4"
+                            VerticalAlignment="Center"
+                            IsVisible="{Binding IsOverride}"
+                            Command="{Binding ResetCommand}"
+                            ToolTip.Tip="Go back to what the header says — press Apply to save it"
+                          />
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <TextBlock
+          Text="No settings match your search."
+          IsVisible="{Binding SysConfig.HasNoMatches}"
+          Foreground="{StaticResource TextMutedBrush}"
+          HorizontalAlignment="Center"
+          Margin="0,24"
+        />
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
+</UserControl>

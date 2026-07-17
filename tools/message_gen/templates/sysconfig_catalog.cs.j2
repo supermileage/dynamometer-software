@@ -1,0 +1,44 @@
+{#- The host-side sysconfig catalog: one SysConfigParameterDef row per entry of the
+    schema's sysconfig_params section. generate.py has already computed every literal:
+    ranges/categories/units/descriptions from the schema, boot defaults parsed out of
+    the firmware's config.h. The SysConfigParameterDef record itself (with its
+    validation and wire-encoding behavior) is hand-written in Dyno.Core/SysConfig. -#}
+// AUTO-GENERATED from tools/message_gen/schema/{{ schema_name }} by tools/message_gen/generate.py -- DO NOT EDIT.
+// Ranges, categories, units and descriptions come from that schema; each Default comes
+// from the parameter's #define in firmware/Core/Inc/Config/config.h. Edit those sources,
+// then run tools/message_gen/generate.py (CI verifies the committed file matches).
+using Dyno.Core.Messages;
+
+namespace Dyno.Core.SysConfig;
+
+/// <summary>Every runtime-tunable parameter the firmware exposes, in wire-id order.</summary>
+public static class SysConfigCatalog
+{
+    public static IReadOnlyList<SysConfigParameterDef> Parameters { get; } =
+        new SysConfigParameterDef[]
+        {
+{% for s in sections %}
+{% if s.kind == "sysconfig_params" %}
+{% for p in s.params %}
+            new(
+                {{ s.name }}.{{ p._enum_name }},
+                "{{ p.name }}",
+                {{ p._cs_category }},
+                {{ p._cs_unit }},
+                {{ p._cs_desc }},
+                IsFloat: {{ p._cs_isfloat }},
+                Default: {{ p._cs_default }},
+                Min: {{ p._cs_min }},
+                Max: {{ p._cs_max }}{% if p._cs_subsection %},
+                Subsection: {{ p._cs_subsection }}{% endif %}{% if p._cs_options %},
+                Options: new SysConfigEnumOption[] { {{ p._cs_options }} }{% endif %}
+
+            ),
+{% endfor %}
+{% endif %}
+{% endfor %}
+        };
+
+    /// <summary>Looks up a parameter's definition by wire id.</summary>
+    public static SysConfigParameterDef Get(sysconfig_param_t id) => Parameters[(int)id];
+}

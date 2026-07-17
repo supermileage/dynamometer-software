@@ -1,5 +1,6 @@
 #include <Tasks/LCD/LumexLCD.hpp>
 #include <Tasks/LCD/lumexlcd_main.h>
+#include <Config/sysconfig.h>
 
 extern TIM_HandleTypeDef* lumexLcdTimer;
 
@@ -99,7 +100,7 @@ bool LumexLCD::Init()
              while (osMessageQueueGet(_fromSCqHandle, &msg, 0, 0) == osOK);
          }
 
-		 osDelay(LCD_TASK_OSDELAY);
+		 osDelay(sysconfig_get_u32(SYSCFG_LCD_TASK_OSDELAY));
      }
  }
 

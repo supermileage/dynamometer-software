@@ -1,5 +1,6 @@
 #include <Tasks/ForceSensor/ADC/forcesensor_adc_main.h>
 #include <Tasks/ForceSensor/ADC/ForceSensor_ADC.hpp>
+#include <Config/sysconfig.h>
 
 #define LBF_TO_NEWTON 4.44822
 
@@ -76,7 +77,7 @@ void ForceSensorADC::Run(void)
         _data_buffer_writer.WriteElementAndIncrementIndex(outputData);
 
         // --- Yield to other tasks ---
-        osDelay(FORCESENSOR_TASK_OSDELAY);
+        osDelay(sysconfig_get_u32(SYSCFG_FORCESENSOR_TASK_OSDELAY));
     }
 }
 
@@ -85,7 +86,7 @@ void ForceSensorADC::Run(void)
 
 float ForceSensorADC::GetForce(uint16_t adcValue)
 {
-	return static_cast<float> (adcValue) / UINT16_MAX * MAX_FORCE_LBF * LBF_TO_NEWTON; // Have the calculation here
+	return static_cast<float> (adcValue) / UINT16_MAX * sysconfig_get_float(SYSCFG_MAX_FORCE_LBF) * LBF_TO_NEWTON; // Have the calculation here
 }
 
 

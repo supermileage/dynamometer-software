@@ -1,0 +1,167 @@
+<UserControl
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:vm="using:Dyno.App.ViewModels"
+  xmlns:conv="using:Dyno.App.Converters"
+  x:Class="Dyno.App.Views.EventLogView"
+  x:DataType="vm:MainWindowViewModel"
+>
+  <Design.DataContext>
+    <vm:MainWindowViewModel />
+  </Design.DataContext>
+
+  <UserControl.Styles>
+    <!-- The drag grip along the top edge. It is the whole width, because a resize handle you have
+         to hunt for is one nobody finds. -->
+    <Style Selector="Thumb.resize">
+      <Setter Property="Height" Value="10" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Cursor" Value="SizeNorthSouth" />
+      <Setter Property="Margin" Value="0,-8,0,2" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Background="Transparent" HorizontalAlignment="Stretch">
+            <Border
+              Width="34"
+              Height="3"
+              CornerRadius="2"
+              Background="{StaticResource StrokeBrush}"
+              VerticalAlignment="Center"
+              HorizontalAlignment="Center"
+            />
+          </Border>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+    <Style Selector="Thumb.resize:pointerover /template/ Border > Border">
+      <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+    </Style>
+    <Style Selector="Button.logaction">
+      <Setter Property="Padding" Value="10,4" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+    <!-- The pin, lit while the log holds its own strip at the foot of the window. -->
+    <Style Selector="ToggleButton.pin">
+      <Setter Property="Padding" Value="9,4" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="MinWidth" Value="0" />
+    </Style>
+    <Style Selector="ToggleButton.pin:checked /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+      <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+    </Style>
+    <!-- Tab headers. A TabStrip is a row of these with a SelectedItem and no content of its own,
+         which is exactly what a shared panel wants: the content is one list below, swapped by
+         selection. -->
+    <Style Selector="TabStrip">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="TabStripItem">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Padding" Value="10,4" />
+      <Setter Property="Margin" Value="0,0,4,0" />
+      <Setter Property="CornerRadius" Value="7" />
+      <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+    </Style>
+    <Style Selector="TabStripItem:selected">
+      <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+      <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+    </Style>
+    <Style Selector="TabStripItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#1AFFFFFF" />
+    </Style>
+  </UserControl.Styles>
+
+  <Border Classes="card" Padding="12,8,12,12">
+    <DockPanel>
+      <Thumb
+        x:Name="ResizeGrip"
+        Classes="resize"
+        DockPanel.Dock="Top"
+        DragDelta="OnResize"
+        ToolTip.Tip="Drag to resize the log"
+      />
+
+      <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" Margin="0,0,0,8">
+        <TabStrip
+          Grid.Column="0"
+          ItemsSource="{Binding LogTabs}"
+          SelectedItem="{Binding SelectedLogTab}"
+          VerticalAlignment="Center"
+        >
+          <TabStrip.ItemTemplate>
+            <DataTemplate x:DataType="vm:LogTabViewModel">
+              <TextBlock Text="{Binding Title}" />
+            </DataTemplate>
+          </TabStrip.ItemTemplate>
+        </TabStrip>
+        <Button
+          x:Name="CopyEventsButton"
+          Grid.Column="2"
+          Classes="logaction"
+          Content="Copy"
+          Margin="0,0,6,0"
+          Click="OnCopyEvents"
+          ToolTip.Tip="Copy the selected lines from this tab — or all of them, if none are selected (Ctrl+C)"
+        />
+        <Button
+          Grid.Column="3"
+          Classes="logaction"
+          Content="Clear"
+          Margin="0,0,6,0"
+          Command="{Binding SelectedLogTab.ClearCommand}"
+          ToolTip.Tip="Empty this tab"
+        />
+        <ToggleButton
+          Grid.Column="4"
+          Classes="pin"
+          Content="Pin"
+          Margin="0,0,6,0"
+          IsChecked="{Binding IsEventLogPinned}"
+          ToolTip.Tip="{Binding PinTooltip}"
+        />
+        <Button
+          Grid.Column="5"
+          Classes="logaction"
+          Content="Hide"
+          Command="{Binding HideEventLogCommand}"
+          ToolTip.Tip="Collapse to a single bar. It keeps counting what you miss."
+        />
+      </Grid>
+
+      <Panel>
+        <TextBlock
+          Text="{Binding SelectedLogTab.EmptyText}"
+          FontSize="11.5"
+          Foreground="{StaticResource TextMutedBrush}"
+          TextWrapping="Wrap"
+          VerticalAlignment="Top"
+          IsVisible="{Binding !SelectedLogTab.Lines.Count}"
+        />
+        <ListBox
+          x:Name="EventList"
+          ItemsSource="{Binding SelectedLogTab.Lines}"
+          Tag="{Binding SelectedLogTab.Colorize}"
+          SelectionMode="Multiple"
+          KeyDown="OnEventListKeyDown"
+        >
+          <ListBox.ItemTemplate>
+            <!-- Non-compiled on purpose: the foreground is a MultiBinding of the line and the tab's
+                 colour flag, which is simpler without a per-item x:DataType. -->
+            <DataTemplate>
+              <TextBlock FontFamily="{StaticResource MonoFont}" FontSize="12" Text="{Binding}">
+                <TextBlock.Foreground>
+                  <MultiBinding Converter="{x:Static conv:LogLineBrushConverter.Instance}">
+                    <Binding Path="." />
+                    <Binding Path="Tag" RelativeSource="{RelativeSource AncestorType=ListBox}" />
+                  </MultiBinding>
+                </TextBlock.Foreground>
+              </TextBlock>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </Panel>
+    </DockPanel>
+  </Border>
+</UserControl>

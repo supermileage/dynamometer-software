@@ -1,0 +1,215 @@
+<UserControl
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:vm="using:Dyno.App.ViewModels"
+  xmlns:conv="using:Dyno.App.Converters"
+  x:Class="Dyno.App.Views.HomeView"
+  x:DataType="vm:MainWindowViewModel"
+>
+  <Design.DataContext>
+    <vm:MainWindowViewModel />
+  </Design.DataContext>
+
+  <!-- The event log used to be the last row here. It now belongs to the window (see
+       MainWindow.axaml), so it is on every page rather than only on this one. -->
+  <Grid RowDefinitions="Auto,*" Margin="16" RowSpacing="14">
+    <!-- Connection toolbar -->
+    <Border Grid.Row="0" Classes="card" Padding="12">
+      <Grid ColumnDefinitions="Auto,*,Auto">
+        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+          <ComboBox
+            ItemsSource="{Binding Ports}"
+            SelectedItem="{Binding SelectedPort}"
+            MinWidth="220"
+            PlaceholderText="Select serial port"
+          />
+          <Button Content="Refresh" Command="{Binding RefreshPortsCommand}" />
+          <Button Classes="accent" Content="Connect" Command="{Binding ConnectCommand}" />
+          <Button Content="Disconnect" Command="{Binding DisconnectCommand}" />
+
+          <!-- Status pill -->
+          <Border
+            CornerRadius="20"
+            Background="{StaticResource SurfaceRaisedBrush}"
+            Padding="12,5"
+            Margin="8,0,0,0"
+            VerticalAlignment="Center"
+          >
+            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+              <Ellipse
+                Width="9"
+                Height="9"
+                VerticalAlignment="Center"
+                Fill="{Binding IsConnected, Converter={x:Static conv:BoolToStatusBrushConverter.Instance}}"
+              />
+              <TextBlock
+                Text="{Binding ConnectionStatus}"
+                VerticalAlignment="Center"
+                FontSize="12"
+              />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+
+        <!--
+          Session pill. The dyno streams sensor data only while a session runs, so an idle board
+          and a dead one look identical on the wire; this is what tells them apart at a glance.
+        -->
+        <Border
+          Grid.Column="2"
+          CornerRadius="20"
+          Background="{StaticResource SurfaceRaisedBrush}"
+          Padding="12,5"
+          Margin="8,0,0,0"
+          VerticalAlignment="Center"
+          ToolTip.Tip="Sensor data streams only while the dyno is running a session"
+        >
+          <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+            <Ellipse
+              Width="9"
+              Height="9"
+              VerticalAlignment="Center"
+              Fill="{Binding IsSessionActive, Converter={x:Static conv:BoolToStatusBrushConverter.Instance}}"
+            />
+            <TextBlock
+              Text="{Binding SessionStatus}"
+              VerticalAlignment="Center"
+              FontSize="12"
+              FontWeight="SemiBold"
+            />
+          </StackPanel>
+        </Border>
+      </Grid>
+    </Border>
+
+    <!-- Telemetry + tasks -->
+    <Grid Grid.Row="1" ColumnDefinitions="*,*" ColumnSpacing="14">
+      <Border Grid.Column="0" Classes="card">
+        <StackPanel Spacing="0">
+          <TextBlock Classes="heading" Text="TELEMETRY" Margin="0,0,0,12" />
+
+          <!--
+            Outside a session the device sends no sensor data, so there is nothing current to
+            show: the readouts are replaced (not just frozen) by a notice saying why they're
+            empty. A stale-but-plausible number left on screen reads as a live measurement.
+          -->
+          <Panel MinHeight="150">
+            <StackPanel
+              IsVisible="{Binding !IsSessionActive}"
+              VerticalAlignment="Center"
+              HorizontalAlignment="Center"
+              Spacing="6"
+            >
+              <TextBlock
+                Text="No session running"
+                HorizontalAlignment="Center"
+                FontSize="14"
+                FontWeight="SemiBold"
+                Foreground="{StaticResource TextMutedBrush}"
+              />
+              <TextBlock
+                Text="Start a session on the dyno to stream sensor data."
+                HorizontalAlignment="Center"
+                TextWrapping="Wrap"
+                TextAlignment="Center"
+                FontSize="12"
+                Foreground="{StaticResource TextMutedBrush}"
+              />
+            </StackPanel>
+
+            <Grid
+              IsVisible="{Binding IsSessionActive}"
+              ColumnDefinitions="Auto,*"
+              RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+              RowSpacing="9"
+              VerticalAlignment="Top"
+            >
+              <TextBlock Grid.Row="0" Grid.Column="0" Classes="label" Text="Angular velocity" />
+              <TextBlock
+                Grid.Row="0"
+                Grid.Column="1"
+                Classes="readout"
+                HorizontalAlignment="Right"
+                Text="{Binding AngularVelocity, StringFormat='{}{0:F3} rad/s'}"
+              />
+
+              <TextBlock Grid.Row="1" Grid.Column="0" Classes="label" Text="Angular acceleration" />
+              <TextBlock
+                Grid.Row="1"
+                Grid.Column="1"
+                Classes="readout"
+                HorizontalAlignment="Right"
+                Text="{Binding AngularAcceleration, StringFormat='{}{0:F3} rad/s²'}"
+              />
+
+              <TextBlock Grid.Row="2" Grid.Column="0" Classes="label" Text="Force" />
+              <TextBlock
+                Grid.Row="2"
+                Grid.Column="1"
+                Classes="readout"
+                HorizontalAlignment="Right"
+                Text="{Binding Force, StringFormat='{}{0:F3} N'}"
+              />
+
+              <TextBlock Grid.Row="3" Grid.Column="0" Classes="label" Text="BPM duty cycle" />
+              <TextBlock
+                Grid.Row="3"
+                Grid.Column="1"
+                Classes="readout"
+                HorizontalAlignment="Right"
+                Text="{Binding DutyCycle, StringFormat='{}{0:P1}'}"
+              />
+
+              <TextBlock Grid.Row="4" Grid.Column="0" Classes="label" Text="Last timestamp" />
+              <TextBlock
+                Grid.Row="4"
+                Grid.Column="1"
+                Classes="readout"
+                HorizontalAlignment="Right"
+                Text="{Binding LastTimestamp}"
+              />
+            </Grid>
+          </Panel>
+
+          <!-- Sample rate and other device settings live on the SysConfig page. -->
+        </StackPanel>
+      </Border>
+
+      <Border Grid.Column="1" Classes="card">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Classes="heading" Text="TASKS" Margin="0,0,0,10" />
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,6">
+            <TextBlock Classes="label" FontSize="11" Text="task" />
+            <TextBlock Grid.Column="1" Classes="label" FontSize="11" Text="state" Margin="12,0" />
+            <TextBlock Grid.Column="2" Classes="label" FontSize="11" Text="free" />
+          </Grid>
+          <ItemsControl ItemsSource="{Binding Tasks}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:TaskMonitorRow">
+                <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,3">
+                  <TextBlock Text="{Binding Task}" />
+                  <TextBlock
+                    Grid.Column="1"
+                    Classes="readout"
+                    FontSize="12"
+                    Text="{Binding StateLabel}"
+                    Margin="12,0"
+                    MinWidth="72"
+                    TextAlignment="Right"
+                    ToolTip.Tip="{Binding State, StringFormat='raw osThreadState_t: {0}'}"
+                  />
+                  <TextBlock
+                    Grid.Column="2"
+                    Classes="readout"
+                    FontSize="12"
+                    Text="{Binding FreeBytes}"
+                  />
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </DockPanel>
+      </Border>
+    </Grid>
+  </Grid>
+</UserControl>

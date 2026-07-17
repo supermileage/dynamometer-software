@@ -1,5 +1,7 @@
 #include <Tasks/USB/usbcontroller_main.h>
 #include <Tasks/USB/USBController.hpp>
+#include <Tasks/USB/usb_framer.h>
+#include <Config/sysconfig.h>
 
 // The ADC and ADS1115 force sensors share one data buffer; report whichever
 // variant is compiled in (exactly one is enabled, enforced in main.c).
@@ -161,6 +163,25 @@ void USBController::HandleUsbLocalCommand(const usb_cmd_header_t& cmd, const uin
             break;
         }
 
+        case USB_CMD_SET_SYSCONFIG:
+        {
+            // Runtime parameter write. The store is plain RAM read by the owning tasks each
+            // loop pass, so applying it here *is* the full application -- the OK below is as
+            // truthful as a routed command's completion ack. Range violations and unknown
+            // ids are rejected by the store and reported as MALFORMED.
+            if (bodyLen < sizeof(sysconfig_set_param_body))
+            {
+                SendResponse(TASK_OFFSET_USB_CONTROLLER, cmd.opcode, cmd.msg_id, USB_RSP_MALFORMED);
+                break;
+            }
+            sysconfig_set_param_body set;
+            memcpy(&set, body, sizeof(set));
+            bool applied = sysconfig_set_raw((sysconfig_param_t)set.param_id, set.raw_value);
+            SendResponse(TASK_OFFSET_USB_CONTROLLER, cmd.opcode, cmd.msg_id,
+                         applied ? USB_RSP_OK : USB_RSP_MALFORMED);
+            break;
+        }
+
         default:
             SendResponse(TASK_OFFSET_USB_CONTROLLER, cmd.opcode, cmd.msg_id, USB_RSP_UNKNOWN_COMMAND);
             break;
@@ -293,70 +314,9 @@ void USBController::WaitForHandshake()
 
 bool USBController::TryReadFrame(usb_msg_header_t& header, uint8_t* payload, size_t payloadCapacity, size_t& payloadLen)
 {
-    constexpr size_t SOF_SIZE = sizeof(uint16_t);
-    constexpr size_t HDR_SIZE = sizeof(usb_msg_header_t);
-    constexpr size_t CRC_SIZE = sizeof(uint16_t);
-    constexpr size_t MIN_FRAME = SOF_SIZE + HDR_SIZE + CRC_SIZE;
-
-    // A ring overflow means bytes were dropped: the stream is desynced and whatever is
-    // buffered now straddles the gap. Discard it and resync from fresh bytes rather than
-    // risk a torn frame whose (plausible) length field stalls the parser waiting for a
-    // completion that never comes. Any command lost this way is recovered by the host's
-    // ack-timeout retry (all inbound commands are acknowledged).
-    if (usb_rx_overflowed())
-    {
-        usb_rx_flush();
-    }
-
-    while (usb_rx_available() >= MIN_FRAME)
-    {
-        uint8_t hdrPeek[SOF_SIZE + HDR_SIZE];
-        usb_rx_peek(hdrPeek, sizeof(hdrPeek));
-
-        uint16_t sof = static_cast<uint16_t>(hdrPeek[0] | (hdrPeek[1] << 8));
-        if (sof != USB_FRAME_SOF)
-        {
-            usb_rx_skip(1); // byte-wise resync until a start-of-frame marker lines up
-            continue;
-        }
-
-        usb_msg_header_t candidate;
-        memcpy(&candidate, hdrPeek + SOF_SIZE, HDR_SIZE);
-
-        if (candidate.payload_len > USB_RX_MAX_PAYLOAD || candidate.payload_len > payloadCapacity)
-        {
-            usb_rx_skip(1); // implausible length => spurious SOF, keep resyncing
-            continue;
-        }
-
-        size_t frameLen = SOF_SIZE + HDR_SIZE + candidate.payload_len + CRC_SIZE;
-        if (usb_rx_available() < frameLen)
-        {
-            return false; // full frame not in the ring yet; retry on the next poll
-        }
-
-        uint8_t frame[SOF_SIZE + HDR_SIZE + USB_RX_MAX_PAYLOAD + CRC_SIZE];
-        usb_rx_peek(frame, frameLen);
-
-        uint16_t crcRx = static_cast<uint16_t>(frame[frameLen - 2] | (frame[frameLen - 1] << 8));
-        uint16_t crcCalc = usb_frame_crc16(frame + SOF_SIZE, HDR_SIZE + candidate.payload_len);
-        if (crcRx != crcCalc)
-        {
-            usb_rx_skip(1); // corrupt / desynced; resync past this SOF
-            continue;
-        }
-
-        usb_rx_skip(frameLen); // consume only after the frame is fully validated
-        header = candidate;
-        payloadLen = candidate.payload_len;
-        if (payloadLen > 0)
-        {
-            memcpy(payload, frame + SOF_SIZE + HDR_SIZE, payloadLen);
-        }
-        return true;
-    }
-
-    return false;
+    // The scan/validate/resync logic lives in usb_framer.cpp (HAL-free, so the unit tests in
+    // firmware/tests/ exercise the same code that runs here).
+    return usb_framer_try_read_frame(header, payload, payloadCapacity, payloadLen);
 }
 
 void USBController::Run()
@@ -463,13 +423,13 @@ void USBController::Run()
         {
             if (CDC_Transmit_FS(_txBuffer, _txBufferIndex) == USBD_BUSY)
             {
-                osDelay(USB_TASK_OSDELAY);
+                osDelay(sysconfig_get_u32(SYSCFG_USB_TASK_OSDELAY));
                 continue; // host busy; keep the buffer and retry next iteration
             }
             _txBufferIndex = 0;
         }
 
-        osDelay(USB_TASK_OSDELAY);
+        osDelay(sysconfig_get_u32(SYSCFG_USB_TASK_OSDELAY));
     }
 }
 
@@ -621,7 +581,7 @@ void USBController::MockMessages(const bool forever)
         _txBufferIndex = 0;
 
        
-        osDelay(USB_TASK_OSDELAY);
+        osDelay(sysconfig_get_u32(SYSCFG_USB_TASK_OSDELAY));
     }
 }
 
@@ -659,7 +619,8 @@ void USBController::StallIfIsBufferFull(bool bufferFull)
     // the buffered batch so the loop can keep servicing inbound commands. Telemetry is
     // lossy by nature; a dropped command response is recovered by the host's ack-timeout
     // retry.
-    for (uint32_t attempt = 0; attempt < USB_TX_FLUSH_MAX_RETRIES; ++attempt) {
+    const uint32_t maxRetries = sysconfig_get_u32(SYSCFG_USB_TX_FLUSH_MAX_RETRIES);
+    for (uint32_t attempt = 0; attempt < maxRetries; ++attempt) {
         if (CDC_Transmit_FS(_txBuffer, _txBufferIndex) != USBD_BUSY) {
             _txBufferIndex = 0;
             return;

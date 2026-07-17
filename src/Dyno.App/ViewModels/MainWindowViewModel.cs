@@ -27,11 +27,128 @@ public partial class MainWindowViewModel : ObservableObject
     public ObservableCollection<TaskMonitorRow> Tasks { get; } = new();
     public ObservableCollection<string> Events { get; } = new();
 
-    /// <summary>Selectable force-sensor sample rates, in ascending SPS.</summary>
-    public IReadOnlyList<SampleRateChoice> SampleRates { get; } =
-        Enum.GetValues<ForceSensorSampleRate>()
-            .Select(r => new SampleRateChoice(r, r.ToLabel()))
-            .ToList();
+    // ---- Log panel tabs ------------------------------------------------------------------------
+    // The bottom panel holds one tab per stream it can show. Two today — the Errors/Events log, and
+    // the Console (build/flash output, which used to live on the Firmware page). Each is a
+    // LogTabViewModel over an existing collection, so the panel's chrome is indifferent to what a
+    // tab actually is, and a third stream is a fourth constructor call rather than new plumbing.
+
+    public ObservableCollection<LogTabViewModel> LogTabs { get; } = new();
+
+    [ObservableProperty]
+    private LogTabViewModel _selectedLogTab = null!;
+
+    // ---- Event log placement -------------------------------------------------------------------
+    // The log is a window onto the link, not a feature of the Home page: a sysconfig write is
+    // rejected, or the board drops off, while you are on SysConfig or Firmware — which is exactly
+    // when you are changing something. So it lives in the window rather than in a page, and the
+    // three states below are the ways it can sit there.
+
+    /// <summary>Docked: the log takes its own strip at the foot of the window and the page shrinks
+    /// to fit above it. Nothing is ever covered.</summary>
+    public bool IsEventLogDocked => IsEventLogVisible && IsEventLogPinned;
+
+    /// <summary>Floating: the log hovers over the foot of the page instead of shortening it. The
+    /// dense pages (SysConfig, Firmware) are worth their full height, and there the log is something
+    /// you glance at rather than read.</summary>
+    public bool IsEventLogFloating => IsEventLogVisible && !IsEventLogPinned;
+
+    /// <summary>Collapsed to a one-line bar. Not gone: it still says what the last event was, and
+    /// counts what you missed — a hidden log that silently swallowed an error would be worse than
+    /// no log.</summary>
+    public bool IsEventLogCollapsed => !IsEventLogVisible;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsEventLogDocked))]
+    [NotifyPropertyChangedFor(nameof(IsEventLogFloating))]
+    [NotifyPropertyChangedFor(nameof(IsEventLogCollapsed))]
+    private bool _isEventLogVisible = true;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsEventLogDocked))]
+    [NotifyPropertyChangedFor(nameof(IsEventLogFloating))]
+    [NotifyPropertyChangedFor(nameof(PinTooltip))]
+    private bool _isEventLogPinned = true;
+
+    /// <summary>Height of the log, in either state — dragged by the grip along its top edge.</summary>
+    [ObservableProperty]
+    private double _eventLogHeight = 200;
+
+    public string PinTooltip =>
+        IsEventLogPinned
+            ? "Pinned to the bottom — the page ends above the log. Unpin to let the log float over it instead."
+            : "Floating over the page. Pin it to give the log its own strip, so it never covers anything.";
+
+    /// <summary>What arrived while the log was collapsed, so the bar can say there is something to
+    /// come back for.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasMissedEvents))]
+    [NotifyPropertyChangedFor(nameof(MissedEventsText))]
+    private int _missedEventCount;
+
+    /// <summary>True when any of the missed events was an error or a warning — the difference
+    /// between "22 pings happened" and "something went wrong while you weren't looking".</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(MissedEventsText))]
+    private bool _missedAProblem;
+
+    public bool HasMissedEvents => MissedEventCount > 0;
+
+    public string MissedEventsText =>
+        $"{MissedEventCount} new{(MissedAProblem ? " — including a problem" : string.Empty)}";
+
+    /// <summary>The newest line, shown on the collapsed bar.</summary>
+    [ObservableProperty]
+    private string _latestEvent = "Nothing logged yet";
+
+    [RelayCommand]
+    private void ShowEventLog()
+    {
+        IsEventLogVisible = true;
+        MissedEventCount = 0;
+        MissedAProblem = false;
+    }
+
+    [RelayCommand]
+    private void HideEventLog() => IsEventLogVisible = false;
+
+    [RelayCommand]
+    private void ToggleEventLogPin() => IsEventLogPinned = !IsEventLogPinned;
+
+    /// <summary>The SysConfig page: runtime device parameters (SQLite-persisted, pushed over
+    /// USB) plus the compile-time header editor. It reaches the device link through the getter,
+    /// so it always talks to the current client; the sample-rate control on that page binds to
+    /// this view model directly for the same reason.</summary>
+    public SysConfigViewModel SysConfig { get; }
+
+    /// <summary>The Firmware page: build the firmware (with whatever compile-time settings SysConfig
+    /// has saved) and flash it. It reads those settings from <see cref="SysConfig"/> through
+    /// delegates rather than holding the page itself — all it needs is the answer to "what would a
+    /// build bake in, and is anything not saved yet".</summary>
+    public FirmwareViewModel Firmware { get; }
+
+    /// <summary>Which sidebar page is showing. A single value (not a flag per page) so exactly
+    /// one page is ever active; the per-page bools below exist only for IsVisible bindings.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsHomePage))]
+    [NotifyPropertyChangedFor(nameof(IsSysConfigPage))]
+    [NotifyPropertyChangedFor(nameof(IsFirmwarePage))]
+    private AppPage _currentPage = AppPage.Home;
+
+    public bool IsHomePage => CurrentPage == AppPage.Home;
+    public bool IsSysConfigPage => CurrentPage == AppPage.SysConfig;
+    public bool IsFirmwarePage => CurrentPage == AppPage.Firmware;
+
+    [RelayCommand]
+    private void Navigate(AppPage page)
+    {
+        CurrentPage = page;
+        if (page == AppPage.Firmware)
+        {
+            // Cheap, and it means the page can never show a stale answer to "what will this build".
+            Firmware.Refresh();
+        }
+    }
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(ConnectCommand))]
@@ -40,7 +157,6 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(ConnectCommand))]
     [NotifyCanExecuteChangedFor(nameof(DisconnectCommand))]
-    [NotifyCanExecuteChangedFor(nameof(SetSampleRateCommand))]
     private bool _isConnected;
 
     [ObservableProperty]
@@ -65,24 +181,55 @@ public partial class MainWindowViewModel : ObservableObject
     private double _force;
 
     [ObservableProperty]
-    private string _forceSource = "—";
-
-    [ObservableProperty]
     private double _dutyCycle;
 
     [ObservableProperty]
     private uint _lastTimestamp;
 
-    [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(SetSampleRateCommand))]
-    private SampleRateChoice? _selectedSampleRate;
-
     public MainWindowViewModel(ILoggerFactory loggerFactory)
     {
         _loggerFactory = loggerFactory;
-        SelectedSampleRate =
-            SampleRates.FirstOrDefault(c => c.Value == ForceSensorSampleRate.Sps128)
-            ?? SampleRates[0];
+        SysConfig = new SysConfigViewModel(() => _client);
+        // The connect-time restore is the one device write the user never asked for, and the only
+        // one they cannot see happen on the page they're not looking at.
+        SysConfig.DeviceSyncLogged += line => Dispatcher.UIThread.Post(() => AddEvent(line));
+        Firmware = new FirmwareViewModel(
+            SysConfig.CompileTimeOverrides,
+            () => SysConfig.PendingCount
+        );
+
+        var eventsTab = new LogTabViewModel(
+            "Errors / Events",
+            Events,
+            colorize: true,
+            newestFirst: true,
+            "Nothing logged yet.",
+            BuildEventReport,
+            ClearEvents
+        );
+        var consoleTab = new LogTabViewModel(
+            "Console",
+            Firmware.Output,
+            colorize: false,
+            newestFirst: false,
+            "Nothing has run yet. Build and flash output appears here, exactly as the tools print it.",
+            lines => string.Join(Environment.NewLine, lines),
+            Firmware.Output.Clear
+        );
+        LogTabs.Add(eventsTab);
+        LogTabs.Add(consoleTab);
+        SelectedLogTab = eventsTab;
+
+        // The Firmware page no longer shows its own output, so a build the user just started would
+        // otherwise vanish. Surface the Console the moment one runs — whichever page they are on,
+        // and whether or not the panel was open.
+        Firmware.OutputStarted += () =>
+            Dispatcher.UIThread.Post(() =>
+            {
+                SelectedLogTab = consoleTab;
+                IsEventLogVisible = true;
+            });
+
         RefreshPorts();
     }
 
@@ -131,6 +278,9 @@ public partial class MainWindowViewModel : ObservableObject
             client.HandshakeTimedOut += OnHandshakeTimedOut;
             client.HeartbeatAcked += OnHeartbeatAcked;
             client.SessionStateChanged += OnSessionStateChanged;
+            client.CommandSent += OnCommandSent;
+            client.CommandFailed += OnCommandFailed;
+            client.StreamResynced += OnStreamResynced;
             _client = client;
             ConnectionStatus = $"Connecting to {SelectedPort}…";
             // Opening the serial port starts blocking I/O that, on a Linux USB-CDC device, can
@@ -191,37 +341,28 @@ public partial class MainWindowViewModel : ObservableObject
         client.HandshakeTimedOut -= OnHandshakeTimedOut;
         client.HeartbeatAcked -= OnHeartbeatAcked;
         client.SessionStateChanged -= OnSessionStateChanged;
+        client.CommandSent -= OnCommandSent;
+        client.CommandFailed -= OnCommandFailed;
+        client.StreamResynced -= OnStreamResynced;
     }
 
-    private bool CanSetSampleRate => IsConnected && SelectedSampleRate is not null;
-
-    [RelayCommand(CanExecute = nameof(CanSetSampleRate))]
-    private async Task SetSampleRate()
+    private void OnHandshaked()
     {
-        if (_client is null || SelectedSampleRate is null)
+        // Re-apply the saved sysconfig to the board on every handshake (first connect and link
+        // recoveries alike): it keeps settings only in RAM, so until this lands we have no idea what
+        // it is running — defaults if it rebooted, a previous session's values if it never did.
+        // Fire-and-forget off the UI thread; SysConfig reports the outcome itself.
+        if (_client is { } client)
         {
-            return;
+            _ = SysConfig.ResyncDeviceAsync(client);
         }
 
-        var choice = SelectedSampleRate;
-        try
-        {
-            // Succeeds only on a USB_RSP_OK ack; a timeout or firmware rejection throws.
-            await _client.SetForceSensorSampleRateAsync(choice.Value);
-            AddEvent($"[CMD ] force sensor sample rate set to {choice.Label}");
-        }
-        catch (Exception ex)
-        {
-            AddEvent($"[ERR ] set sample rate failed: {ex.Message}");
-        }
-    }
-
-    private void OnHandshaked() =>
         Dispatcher.UIThread.Post(() =>
         {
             ConnectionStatus = $"Connected to {SelectedPort}";
             AddEvent("[OK  ] handshake complete; streaming enabled");
         });
+    }
 
     /// <summary>
     /// The dyno started or stopped a session. Sensor data only streams during one, so a stop also
@@ -249,7 +390,6 @@ public partial class MainWindowViewModel : ObservableObject
         Force = 0;
         DutyCycle = 0;
         LastTimestamp = 0;
-        ForceSource = "—";
     }
 
     /// <summary>The port opened but nothing announced itself in time. Like a lost connection, this
@@ -336,7 +476,6 @@ public partial class MainWindowViewModel : ObservableObject
                 break;
             case ForceSensorSample s:
                 Force = s.Data.force;
-                ForceSource = Friendly(s.Source);
                 break;
             case BpmSample s:
                 DutyCycle = s.Data.duty_cycle;
@@ -359,14 +498,25 @@ public partial class MainWindowViewModel : ObservableObject
                 // outcome is already reported through Handshaked / ConnectionLost, so logging each
                 // one would just push real events out of the (capped) list every few seconds.
                 break;
+            case CommandResponse { Matched: true, Request: null }:
+                // A command whose sender asked not to announce it: the sysconfig restore, which
+                // writes the whole catalog on every handshake and reports itself as one summary
+                // line. The ack is real and its command did apply — it just isn't news on its own,
+                // and a page of them would bury whatever else the log was holding.
+                break;
             case CommandResponse r:
-                AddEvent(
-                    $"[RSP ] {Friendly(r.Source)} opcode={r.Data.opcode} id={r.Data.msg_id} status={(usb_response_status_t)r.Data.status}"
-                );
+                AddEvent(Describe(r));
                 break;
             case UnknownMessage u:
+                // A frame whose header passed the parser's plausibility check but whose payload
+                // then fit no known record. Two things do that: a firmware sending something this
+                // host has no decoder for, or — far more often — bytes lost in the device→host
+                // stream, which is unframed (no start marker, no CRC), so a window onto the middle
+                // of one record can pass for the start of another.
                 AddEvent(
-                    $"[?   ] {u.Header.msg_type}/{Friendly(u.Header.task_offset)} len={u.Header.payload_len}"
+                    $"[?   ] undecoded {u.Header.msg_type} from {Friendly(u.Header.task_offset)} "
+                        + $"with a {u.Header.payload_len}-byte payload — no decoder for it, or bytes "
+                        + "were dropped and the parser is resyncing"
                 );
                 break;
         }
@@ -385,8 +535,15 @@ public partial class MainWindowViewModel : ObservableObject
         row.Timestamp = data.timestamp;
     }
 
-    [RelayCommand]
-    private void ClearEvents() => Events.Clear();
+    /// <summary>The Errors/Events tab's Clear action (see <see cref="LogTabViewModel"/>). Also
+    /// resets the collapsed bar, since there is no longer a latest event or a missed one.</summary>
+    private void ClearEvents()
+    {
+        Events.Clear();
+        LatestEvent = "Nothing logged yet";
+        MissedEventCount = 0;
+        MissedAProblem = false;
+    }
 
     /// <summary>
     /// Renders event lines as text to paste elsewhere (a bug report, a chat). The list is shown
@@ -408,7 +565,19 @@ public partial class MainWindowViewModel : ObservableObject
 
     private void AddEvent(string text)
     {
-        Events.Insert(0, $"{DateTime.Now:HH:mm:ss.fff}  {text}");
+        var line = $"{DateTime.Now:HH:mm:ss.fff}  {text}";
+        Events.Insert(0, line);
+        LatestEvent = line;
+
+        if (IsEventLogCollapsed)
+        {
+            MissedEventCount++;
+            // Errors and warnings are the reason to reopen the log; pings are not.
+            MissedAProblem |=
+                text.StartsWith("[ERR", StringComparison.Ordinal)
+                || text.StartsWith("[WARN", StringComparison.Ordinal);
+        }
+
         // A [PING] every 5s is 12 lines a minute of routine traffic, so the cap is what decides how
         // far back a real error stays reachable: 200 would bury one within ~15 minutes of idling.
         const int cap = 1000;
@@ -416,6 +585,66 @@ public partial class MainWindowViewModel : ObservableObject
         {
             Events.RemoveAt(Events.Count - 1);
         }
+    }
+
+    /// <summary>Bytes were thrown away to realign the stream — which means bytes were lost getting
+    /// here. Reported as a warning rather than as the undecodable frames it used to produce: those
+    /// frames were never sent by anything, and reading them as messages (from "task 252", say) told
+    /// the user about a device that does not exist instead of about a link that is dropping data.
+    /// </summary>
+    private void OnStreamResynced(int bytesDropped) =>
+        Dispatcher.UIThread.Post(() =>
+            AddEvent(
+                $"[WARN] dropped {bytesDropped} byte{(bytesDropped == 1 ? "" : "s")} to resync the "
+                    + "device stream — data was lost in transit (the board's USB buffer overflowing "
+                    + "would do it); samples around this point are missing"
+            )
+        );
+
+    /// <summary>A command going out. Logged from the client rather than from each call site so the
+    /// sysconfig writes pushed on a handshake — which no button press announces — show up too.
+    /// Fires on whichever thread sent the command (the UI thread for a button, a background one for
+    /// the handshake re-push), hence the marshalling.</summary>
+    private void OnCommandSent(string request) =>
+        Dispatcher.UIThread.Post(() => AddEvent($"[CMD ] {request} — sent, awaiting the device"));
+
+    /// <summary>A command that never got an answer. Worth a line of its own: the device applying a
+    /// value and the device never hearing about it are the same silence in a log that only prints
+    /// replies, and they are not the same thing to a user watching the dyno.</summary>
+    private void OnCommandFailed(string request, Exception ex) =>
+        Dispatcher.UIThread.Post(() =>
+            AddEvent(
+                ex is TimeoutException
+                    ? $"[ERR ] {request} — no reply from the device; it may or may not have applied"
+                    : $"[ERR ] {request} — could not be sent: {ex.Message}"
+            )
+        );
+
+    /// <summary>
+    /// One line for a command's ack, answering the only question the log is asked of it: did the
+    /// device do the thing, or not. The reply names neither — it carries an opcode and a msg_id,
+    /// which say nothing to a reader — so the wording leans on the request the client matched it to
+    /// (<see cref="CommandResponse.Request"/>), and a rejection is filed as an error rather than
+    /// left to be spotted in a status code. The raw form is the fallback for an ack that matched no
+    /// command at all (a duplicate, or one that outlived its command's timeout); those numbers are
+    /// all there is to say about it, and it is the one case where they're worth printing.
+    /// </summary>
+    private static string Describe(CommandResponse r)
+    {
+        var status = (usb_response_status_t)r.Data.status;
+        if (r.Request is not { } request)
+        {
+            // msg_id is just the counter the host stamps on each command so the reply can be paired
+            // back to it — there is nothing in it to decode, and saying whose number it was is the
+            // most it can tell anyone. The opcode does have a meaning, and it is per-task.
+            return $"[RSP ] {Friendly(r.Source)} {CommandOpcodes.Name(r.Source, r.Data.opcode)} — "
+                + $"{status}, but this answers host request #{r.Data.msg_id}, which nothing was "
+                + "waiting for (a duplicate ack, or one that outlived its command)";
+        }
+
+        return status == usb_response_status_t.USB_RSP_OK
+            ? $"[RSP ] {request} — applied by the device"
+            : $"[ERR ] {request} — REJECTED by the device ({status}); it still holds its previous value";
     }
 
     /// <summary>True for a reply to the USB controller's own <c>USB_CMD_ACK</c> — the handshake or
