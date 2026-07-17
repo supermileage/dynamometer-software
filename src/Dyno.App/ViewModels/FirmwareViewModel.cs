@@ -451,9 +451,15 @@ public partial class FirmwareViewModel : ObservableObject
     private void Append(string line)
     {
         Output.Add(line);
-        while (Output.Count > 1000)
+        // Trimmed in blocks rather than one line per append: RemoveAt(0) shifts every index and
+        // re-fires the console's collection events, so a per-line trim would churn the list (and
+        // its scroll position) on every single line of a long build.
+        if (Output.Count > 1100)
         {
-            Output.RemoveAt(0);
+            while (Output.Count > 1000)
+            {
+                Output.RemoveAt(0);
+            }
         }
     }
 

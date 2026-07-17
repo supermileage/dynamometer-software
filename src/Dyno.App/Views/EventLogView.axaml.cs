@@ -21,10 +21,27 @@ public partial class EventLogView : UserControl
     private MainWindowViewModel? _vm;
     private INotifyCollectionChanged? _lines;
 
+    /// <summary>Whether the console is pinned to its newest line. Cleared when the user scrolls
+    /// up into the backlog, restored when they scroll back to the bottom (OnScrollChanged) or
+    /// (re)open the tab — so streaming output never yanks the view away from what they're
+    /// reading.</summary>
+    private bool _tailing = true;
+
+    /// <summary>The next queued scroll must re-pin the tail first (set on tab switches, which
+    /// always open at the newest line). Carried as a flag because the scroll runs a layout pass
+    /// later, after the tab's content has actually landed.</summary>
+    private bool _resumeTail;
+
+    /// <summary>One pending scroll at a time: a build appends many lines between layout passes,
+    /// and queueing a jump for each just churns the viewport.</summary>
+    private bool _scrollQueued;
+
     public EventLogView()
     {
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
+        // ScrollChanged bubbles up from the ScrollViewer inside the ListBox's template.
+        EventList.AddHandler(ScrollViewer.ScrollChangedEvent, OnScrollChanged);
     }
 
     private void OnDataContextChanged(object? sender, EventArgs e)
@@ -45,13 +62,13 @@ public partial class EventLogView : UserControl
 
     private void OnViewModelChanged(object? sender, PropertyChangedEventArgs e)
     {
-        // A new tab means a new line collection to follow (and, if it is a tailing tab, to jump to
-        // the end of).
+        // A new tab means a new line collection to follow — and a fresh tail: opening a tailing
+        // tab always lands on its newest line, whatever the previous scroll position was.
         if (e.PropertyName == nameof(MainWindowViewModel.SelectedLogTab))
         {
             Unsubscribe();
             Subscribe();
-            ScrollToEndIfTailing();
+            ScrollToEnd(resumeTail: true);
         }
     }
 
@@ -74,22 +91,66 @@ public partial class EventLogView : UserControl
     }
 
     private void OnLinesChanged(object? sender, NotifyCollectionChangedEventArgs e) =>
-        ScrollToEndIfTailing();
+        ScrollToEnd(resumeTail: false);
 
     /// <summary>Follow a console tab's newest line, which is appended at the bottom. An events tab
-    /// puts its newest at the top and is left where the user has it.</summary>
-    private void ScrollToEndIfTailing()
+    /// puts its newest at the top and is left where the user has it. Following is paused while
+    /// the user is up in the backlog (see <see cref="OnScrollChanged"/>).</summary>
+    private void ScrollToEnd(bool resumeTail)
     {
-        if (_vm?.SelectedLogTab is not { NewestFirst: false, Lines.Count: > 0 } tab)
+        // Recorded even when a scroll is already queued: that queued scroll will honor it.
+        if (resumeTail)
+        {
+            _resumeTail = true;
+        }
+
+        if (_vm?.SelectedLogTab is not { NewestFirst: false } || _scrollQueued)
         {
             return;
         }
 
-        // After the item is laid out.
+        _scrollQueued = true;
+
+        // After the items are laid out.
         Dispatcher.UIThread.Post(
-            () => EventList.ScrollIntoView(tab.Lines[^1]),
+            () =>
+            {
+                _scrollQueued = false;
+                if (_resumeTail)
+                {
+                    _resumeTail = false;
+                    _tailing = true;
+                }
+
+                if (
+                    _tailing
+                    && _vm?.SelectedLogTab is { NewestFirst: false, Lines.Count: > 0 } tab
+                )
+                {
+                    // By index, never by item: console lines repeat (blank lines, duplicated
+                    // compiler output), and the item overload resolves by value to the FIRST
+                    // equal line — jumping up into the backlog instead of to the end.
+                    EventList.ScrollIntoView(tab.Lines.Count - 1);
+                }
+            },
             DispatcherPriority.Background
         );
+    }
+
+    /// <summary>The scroll position is the user's tailing intent: away from the bottom pauses the
+    /// follow, back at the bottom resumes it. Only offset changes are read as intent — the extent
+    /// growing under freshly appended lines says nothing about where the user wants to be (and is
+    /// exactly the moment the view must not move if they are reading the backlog).</summary>
+    private void OnScrollChanged(object? sender, ScrollChangedEventArgs e)
+    {
+        if (e.OffsetDelta.Y == 0 || e.Source is not ScrollViewer scroll)
+        {
+            return;
+        }
+
+        // Within a line's height of the bottom counts as "at the bottom", so sub-pixel layout
+        // rounding can't silently detach the tail.
+        _tailing = scroll.Offset.Y + scroll.Viewport.Height >= scroll.Extent.Height - 16;
     }
 
     private void OnEventListKeyDown(object? sender, KeyEventArgs e)
