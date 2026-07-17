@@ -102,14 +102,16 @@ SUBMOD="$PROJECT_PATH/third_party/STM32CubeH7"
 
 if [[ -n "$PACK" && ! -d "$PACK_DIR" ]]; then
     if [[ -f "$SUBMOD/package.xml" ]]; then
-        # STM32CubeH7 is a meta-repo whose sources are nested submodules: a plain
-        # clone leaves Drivers/ empty, which stalls CubeMX exactly like a missing
-        # pack. Populate the two it needs (the ~40 eval-board BSPs are not used).
-        if [[ -z "$(ls -A "$SUBMOD/Drivers/STM32H7xx_HAL_Driver/Src" 2>/dev/null)" ]]; then
-            echo "Populating STM32CubeH7 HAL/CMSIS sources..."
-            git -C "$SUBMOD" submodule update --init --depth 1 -- \
-                Drivers/CMSIS/Device/ST/STM32H7xx \
-                Drivers/STM32H7xx_HAL_Driver
+        # STM32CubeH7 is a meta-repo: both Drivers/ and Middlewares/ are nested
+        # submodules that a plain clone leaves empty. That is worse than a hang —
+        # CubeMX happily generates a project *without* the missing middleware and
+        # deletes the committed copies (e.g. all of FreeRTOS). Populate every
+        # non-BSP module; the ~40 eval-board BSPs are for boards we do not use.
+        if git -C "$SUBMOD" submodule status 2>/dev/null | grep '^-' | grep -qv 'BSP'; then
+            echo "Populating STM32CubeH7 sources (Drivers + Middlewares)..."
+            mapfile -t sub_paths < <(git -C "$SUBMOD" config -f .gitmodules \
+                --get-regexp 'submodule\..*\.path' | awk '{print $2}' | grep -v 'BSP')
+            git -C "$SUBMOD" submodule update --init --depth 1 -- "${sub_paths[@]}"
         fi
         mkdir -p "$REPO"
         ln -sfn "$SUBMOD" "$PACK_DIR"

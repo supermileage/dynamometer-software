@@ -96,14 +96,19 @@ if ($packLine) {
     $submod = Join-Path $ProjectPath 'third_party\STM32CubeH7'
     if ($pack -and -not (Test-Path -LiteralPath $packDir -PathType Container)) {
         if (Test-Path -LiteralPath (Join-Path $submod 'package.xml') -PathType Leaf) {
-            # STM32CubeH7 is a meta-repo whose sources are nested submodules: a
-            # plain clone leaves Drivers/ empty, which stalls CubeMX exactly like
-            # a missing pack. Populate the two it needs.
-            $halSrc = Join-Path $submod 'Drivers\STM32H7xx_HAL_Driver\Src'
-            if (-not (Test-Path $halSrc) -or -not (Get-ChildItem $halSrc -ErrorAction SilentlyContinue)) {
-                Write-Host "Populating STM32CubeH7 HAL/CMSIS sources..."
-                git -C $submod submodule update --init --depth 1 -- `
-                    Drivers/CMSIS/Device/ST/STM32H7xx Drivers/STM32H7xx_HAL_Driver
+            # STM32CubeH7 is a meta-repo: both Drivers/ and Middlewares/ are
+            # nested submodules that a plain clone leaves empty. That is worse
+            # than a hang — CubeMX generates a project *without* the missing
+            # middleware and deletes the committed copies (e.g. all of FreeRTOS).
+            # Populate every non-BSP module; the ~40 eval-board BSPs are unused.
+            $uninit = git -C $submod submodule status |
+                Where-Object { $_ -match '^-' -and $_ -notmatch 'BSP' }
+            if ($uninit) {
+                Write-Host "Populating STM32CubeH7 sources (Drivers + Middlewares)..."
+                $subPaths = git -C $submod config -f .gitmodules --get-regexp 'submodule\..*\.path' |
+                    ForEach-Object { ($_ -split ' ')[1] } |
+                    Where-Object { $_ -notmatch 'BSP' }
+                git -C $submod submodule update --init --depth 1 -- @subPaths
             }
             New-Item -ItemType Directory -Force -Path $repo | Out-Null
             New-Item -ItemType Junction -Path $packDir -Target $submod | Out-Null
