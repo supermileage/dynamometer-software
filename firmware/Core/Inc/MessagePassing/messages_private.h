@@ -11,6 +11,18 @@
 #include "Config/config.h"
 #include "messages_public.h"
 
+// Compile-time assertions: C spells them _Static_assert, C++ spells them static_assert,
+// and not every compiler/libc pair maps one spelling to the other (newlib's C++ headers
+// do, glibc's don't). Spelled per language under a name of our own so this header
+// compiles as either language everywhere — the ARM firmware and the host-compiled unit
+// tests in firmware/tests/ alike. (Benign redefinition when both generated headers are
+// included: the definitions are identical.)
+#ifdef __cplusplus
+#define DYNO_STATIC_ASSERT(expr, msg) static_assert(expr, msg)
+#else
+#define DYNO_STATIC_ASSERT(expr, msg) _Static_assert(expr, msg)
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -22,7 +34,7 @@ typedef enum : uint32_t
     WRITE_TO_DISPLAY = 1   // Write a string to a specific location on the display
 } session_controller_to_lumex_lcd_opcode;
 
-_Static_assert(sizeof(session_controller_to_lumex_lcd_opcode) == 4, "Size of session_controller_to_lumex_lcd_opcode must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(session_controller_to_lumex_lcd_opcode) == 4, "Size of session_controller_to_lumex_lcd_opcode must be 4 bytes");
 
 // Message sent from the session controller to the Lumex LCD
 typedef struct {
@@ -33,7 +45,7 @@ typedef struct {
     char display_string[SESSION_CONTROLLER_TO_LUMEX_LCD_MSG_STRING_SIZE];   // String to write (if WRITE_TO_DISPLAY)
 } session_controller_to_lumex_lcd;
 
-_Static_assert(sizeof(session_controller_to_lumex_lcd) >= offsetof(session_controller_to_lumex_lcd, display_string) + sizeof(((session_controller_to_lumex_lcd *)0)->display_string), "Size of session_controller_to_lumex_lcd must be correct");
+DYNO_STATIC_ASSERT(sizeof(session_controller_to_lumex_lcd) >= offsetof(session_controller_to_lumex_lcd, display_string) + sizeof(((session_controller_to_lumex_lcd *)0)->display_string), "Size of session_controller_to_lumex_lcd must be correct");
 
 // Opcodes for controlling the BPM (Pulse Width Modulation) module from the session controller
 typedef enum : uint32_t
@@ -43,7 +55,7 @@ typedef enum : uint32_t
     STOP_PWM   // Stop PWM output
 } session_controller_to_bpm_opcode;
 
-_Static_assert(sizeof(session_controller_to_bpm_opcode) == 4, "Size of session_controller_to_bpm_opcode must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(session_controller_to_bpm_opcode) == 4, "Size of session_controller_to_bpm_opcode must be 4 bytes");
 
 // Message sent from the session controller to the BPM module
 typedef struct {
@@ -51,7 +63,7 @@ typedef struct {
     float new_duty_cycle_percent;   // New duty cycle percentage from 0 - 1
 } session_controller_to_bpm;
 
-_Static_assert(sizeof(session_controller_to_bpm) == 4 + 4, "Size of session_controller_to_bpm must be 8 bytes");
+DYNO_STATIC_ASSERT(sizeof(session_controller_to_bpm) == 4 + 4, "Size of session_controller_to_bpm must be 8 bytes");
 
 // Message sent from the session controller to the PID controller
 typedef struct {
@@ -59,7 +71,7 @@ typedef struct {
     float desired_angular_velocity;   // Desired motor RPM setpoint
 } session_controller_to_pid_controller;
 
-_Static_assert(sizeof(session_controller_to_pid_controller) == 4 + 4, "Size of session_controller_to_pid_controller must be 8 bytes");
+DYNO_STATIC_ASSERT(sizeof(session_controller_to_pid_controller) == 4 + 4, "Size of session_controller_to_pid_controller must be 8 bytes");
 
 // ---- USB host command routing (USB task <-> owning task) ------------------
 // Largest command body the USB task will forward to a task (after the

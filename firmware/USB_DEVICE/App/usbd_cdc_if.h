@@ -32,6 +32,7 @@
 
 /* USER CODE BEGIN INCLUDE */
 #include <stddef.h>
+#include "Tasks/USB/usb_rx_ring.h"
 /* USER CODE END INCLUDE */
 
 /** @addtogroup STM32_USB_OTG_DEVICE_LIBRARY
@@ -52,7 +53,8 @@
 #define APP_RX_DATA_SIZE  2048
 #define APP_TX_DATA_SIZE  2048
 /* USER CODE BEGIN EXPORTED_DEFINES */
-#define USB_CONTROLLER_RX_BUFFER_SIZE 512
+/* The RX ring (and its USB_CONTROLLER_RX_BUFFER_SIZE) lives in Tasks/USB/usb_rx_ring.h,
+   included above, so the host-compiled unit tests can build it without this header. */
 /* USER CODE END EXPORTED_DEFINES */
 
 /**
@@ -111,14 +113,8 @@ uint8_t CDC_Transmit_FS(uint8_t* Buf, uint16_t Len);
 /* USER CODE BEGIN EXPORTED_FUNCTIONS */
 void USB_CDC_RxHandler(uint8_t*, uint32_t);
 
-/* Host -> device RX byte ring. Single-producer (CDC_Receive_FS, USB ISR) /
-   single-consumer (USB task); see usbd_cdc_if.c for the concurrency contract. */
-size_t usb_rx_available(void);              /* bytes ready to read */
-size_t usb_rx_peek(uint8_t *dst, size_t n); /* copy up to n bytes without consuming */
-size_t usb_rx_read(uint8_t *dst, size_t n); /* copy and consume up to n bytes */
-void   usb_rx_skip(size_t n);               /* discard up to n bytes */
-int    usb_rx_overflowed(void);             /* read-and-clear the overflow flag */
-void   usb_rx_flush(void);                   /* discard all buffered bytes (resync after overflow) */
+/* The host -> device RX byte ring is declared in Tasks/USB/usb_rx_ring.h (included above).
+   CDC_Receive_FS (USB ISR) is its producer via usb_rx_push(); the USB task consumes it. */
 
 /* Read-and-clear: the host closed the port (CDC DTR deasserted) since this was last called.
    A CDC device is never told a session ended -- the cable stays enumerated -- so this is the

@@ -18,6 +18,18 @@
 #include <{{ inc }}>
 {% endif %}
 {% endfor %}
+
+// Compile-time assertions: C spells them _Static_assert, C++ spells them static_assert,
+// and not every compiler/libc pair maps one spelling to the other (newlib's C++ headers
+// do, glibc's don't). Spelled per language under a name of our own so this header
+// compiles as either language everywhere — the ARM firmware and the host-compiled unit
+// tests in firmware/tests/ alike. (Benign redefinition when both generated headers are
+// included: the definitions are identical.)
+#ifdef __cplusplus
+#define DYNO_STATIC_ASSERT(expr, msg) static_assert(expr, msg)
+#else
+#define DYNO_STATIC_ASSERT(expr, msg) _Static_assert(expr, msg)
+#endif
 {% for s in sections %}
 
 {% if s.kind == "comment" %}
@@ -52,7 +64,7 @@ typedef struct{{ " __attribute__((packed))" if s.packed else "" }} {
 {% endfor %}
 } {{ s.name }};
 {% elif s.kind == "static_assert" %}
-_Static_assert({{ s.expr }}, "{{ s.message }}");
+DYNO_STATIC_ASSERT({{ s.expr }}, "{{ s.message }}");
 {% elif s.kind == "sysconfig_params" %}
 {% if s.comment %}
 {% for line in s.comment.rstrip("\n").split("\n") %}

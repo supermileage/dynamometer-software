@@ -94,15 +94,9 @@ uint8_t UserRxBufferFS[APP_RX_DATA_SIZE];
 uint8_t UserTxBufferFS[APP_TX_DATA_SIZE];
 
 /* USER CODE BEGIN PRIVATE_VARIABLES */
-/* Host -> device byte ring. Producer: CDC_Receive_FS (USB ISR). Consumer: USB task.
-   Single-producer/single-consumer means no lock is required: the ISR only advances
-   usb_rx_write_index and the task only advances usb_rx_read_index, and aligned 32-bit
-   index reads/writes are atomic on Cortex-M. One slot is left empty so a full ring is
-   distinguishable from an empty one. */
-static uint8_t usb_rx_ring[USB_CONTROLLER_RX_BUFFER_SIZE];
-static volatile size_t usb_rx_write_index = 0;
-static volatile size_t usb_rx_read_index  = 0;
-static volatile uint8_t usb_rx_overflow   = 0;  /* set by the ISR when a write would lap the reader */
+/* The host -> device byte ring lives in Core/Src/Tasks/USB/usb_rx_ring.c so the
+   host-compiled unit tests (firmware/tests/) can exercise it without the USB middleware.
+   CDC_Receive_FS below stays its single producer, calling usb_rx_push() in ISR context. */
 
 /* Host presence, tracked from the CDC control line (DTR). A USB CDC device is not told when
    the host closes the port -- the cable stays enumerated -- so without this the firmware has
@@ -143,7 +137,7 @@ static int8_t CDC_Receive_FS(uint8_t* pbuf, uint32_t *Len);
 static int8_t CDC_TransmitCplt_FS(uint8_t *pbuf, uint32_t *Len, uint8_t epnum);
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_DECLARATION */
-static void usb_rx_push(const uint8_t *data, uint32_t len);
+/* usb_rx_push is declared in Tasks/USB/usb_rx_ring.h (via usbd_cdc_if.h). */
 /* USER CODE END PRIVATE_FUNCTIONS_DECLARATION */
 
 /**
@@ -362,72 +356,8 @@ void USB_CDC_RxHandler(uint8_t* Buf, uint32_t Len)
 
 }
 
-/* Producer side (USB ISR context): append bytes to the ring. If the ring would lap
-   the consumer, drop the remainder and raise the overflow flag so the frame parser
-   can resync at the next start-of-frame marker. */
-static void usb_rx_push(const uint8_t *data, uint32_t len)
-{
-  for (uint32_t i = 0; i < len; ++i)
-  {
-    size_t next = (usb_rx_write_index + 1u) % USB_CONTROLLER_RX_BUFFER_SIZE;
-    if (next == usb_rx_read_index)
-    {
-      usb_rx_overflow = 1;
-      return;
-    }
-    usb_rx_ring[usb_rx_write_index] = data[i];
-    usb_rx_write_index = next;
-  }
-}
-
-size_t usb_rx_available(void)
-{
-  size_t w = usb_rx_write_index;
-  size_t r = usb_rx_read_index;
-  return (w + USB_CONTROLLER_RX_BUFFER_SIZE - r) % USB_CONTROLLER_RX_BUFFER_SIZE;
-}
-
-size_t usb_rx_peek(uint8_t *dst, size_t n)
-{
-  size_t avail = usb_rx_available();
-  if (n > avail) { n = avail; }
-  size_t r = usb_rx_read_index;
-  for (size_t i = 0; i < n; ++i)
-  {
-    dst[i] = usb_rx_ring[(r + i) % USB_CONTROLLER_RX_BUFFER_SIZE];
-  }
-  return n;
-}
-
-void usb_rx_skip(size_t n)
-{
-  size_t avail = usb_rx_available();
-  if (n > avail) { n = avail; }
-  usb_rx_read_index = (usb_rx_read_index + n) % USB_CONTROLLER_RX_BUFFER_SIZE;
-}
-
-size_t usb_rx_read(uint8_t *dst, size_t n)
-{
-  n = usb_rx_peek(dst, n);
-  usb_rx_skip(n);
-  return n;
-}
-
-int usb_rx_overflowed(void)
-{
-  int o = usb_rx_overflow;
-  usb_rx_overflow = 0;
-  return o;
-}
-
-/* Consumer-side discard of everything currently buffered. Safe under the SPSC
-   contract: only the consumer advances read_index, so catching it up to a snapshot
-   of the producer's write_index drops the (now desynced) contents while preserving
-   any bytes that arrive afterward. Used to resync after an overflow. */
-void usb_rx_flush(void)
-{
-  usb_rx_read_index = usb_rx_write_index;
-}
+/* The ring implementation (usb_rx_push and the consumer API) moved to
+   Core/Src/Tasks/USB/usb_rx_ring.c, where the host-compiled unit tests can reach it. */
 
 /* Read-and-clear: did the host close the port since we last asked? Reported as an edge (not a
    level) so the USB task sees exactly one detach per session, whenever it next gets to look. */

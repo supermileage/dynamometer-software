@@ -13,6 +13,7 @@ release/
 # CMake build output (build/ = native/IDE, build-docker/ = Scripts/build-docker.sh)
 build/
 build-docker/
+tests/build/
 
 # Compile-time overrides written by the desktop app before a build (config.h / debug.h are the
 # committed defaults; these hold only what the user changed, so they are per-machine, not shared).

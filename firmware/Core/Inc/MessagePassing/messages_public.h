@@ -7,6 +7,18 @@
 #include <stddef.h>
 #include <assert.h>
 
+// Compile-time assertions: C spells them _Static_assert, C++ spells them static_assert,
+// and not every compiler/libc pair maps one spelling to the other (newlib's C++ headers
+// do, glibc's don't). Spelled per language under a name of our own so this header
+// compiles as either language everywhere — the ARM firmware and the host-compiled unit
+// tests in firmware/tests/ alike. (Benign redefinition when both generated headers are
+// included: the definitions are identical.)
+#ifdef __cplusplus
+#define DYNO_STATIC_ASSERT(expr, msg) static_assert(expr, msg)
+#else
+#define DYNO_STATIC_ASSERT(expr, msg) _Static_assert(expr, msg)
+#endif
+
 // A task error/warning is reported as a single 32-bit code:
 //   bits 31..16 : task offset (unique per task, see task_offset_t)
 //   bit  15     : warning flag (set => warning, clear => error)
@@ -52,7 +64,7 @@ typedef struct __attribute__((packed)) {
     uint32_t error_code;   // task_offset | (warning ? WARNING_FLAG : 0) | error number
 } task_error_data;
 
-_Static_assert(sizeof(task_error_data) == 4 + 4, "Size of task_error_data must be 8 bytes");
+DYNO_STATIC_ASSERT(sizeof(task_error_data) == 4 + 4, "Size of task_error_data must be 8 bytes");
 
 static inline task_error_data PopulateTaskErrorDataStruct(uint32_t timestamp, task_offset_t task_offset, uint32_t error_id)
 {
@@ -62,7 +74,7 @@ static inline task_error_data PopulateTaskErrorDataStruct(uint32_t timestamp, ta
     return error_data;
 }
 
-_Static_assert(sizeof(task_offset_t) == 4, "Size of task_offset_t must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(task_offset_t) == 4, "Size of task_offset_t must be 4 bytes");
 
 typedef enum : uint32_t
 {
@@ -71,7 +83,7 @@ typedef enum : uint32_t
     ERROR_SESSION_CONTROLLER_INVALID_UART1_MUTEX_POINTER
 } session_controller_task_error_ids;
 
-_Static_assert(sizeof(session_controller_task_error_ids) == 4, "Size of session_controller_task_error_ids must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(session_controller_task_error_ids) == 4, "Size of session_controller_task_error_ids must be 4 bytes");
 
 typedef enum : uint32_t
 {
@@ -79,35 +91,35 @@ typedef enum : uint32_t
     ERROR_BPM_PWM_STOP_FAILURE
 } bpm_task_error_ids;
 
-_Static_assert(sizeof(bpm_task_error_ids) == 4, "Size of bpm_task_error_ids must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(bpm_task_error_ids) == 4, "Size of bpm_task_error_ids must be 4 bytes");
 
 typedef enum : uint32_t
 {
     ERROR_LUMEX_LCD_TIMER_START_FAILURE = 0
 } lumex_lcd_task_error_ids;
 
-_Static_assert(sizeof(lumex_lcd_task_error_ids) == 4, "Size of lumex_lcd_task_error_ids must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(lumex_lcd_task_error_ids) == 4, "Size of lumex_lcd_task_error_ids must be 4 bytes");
 
 typedef enum : uint32_t
 {
     ERROR_TASK_MONITOR_INVALID_THREAD_ID_POINTER = 0
 } task_monitor_task_error_ids;
 
-_Static_assert(sizeof(task_monitor_task_error_ids) == 4, "Size of task_monitor_task_error_ids must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(task_monitor_task_error_ids) == 4, "Size of task_monitor_task_error_ids must be 4 bytes");
 
 typedef enum : uint32_t
 {
     WARNING_PID_CONTROLLER_MESSAGE_QUEUE_FULL = WARNING_FLAG
 } pid_controller_task_error_ids;
 
-_Static_assert(sizeof(pid_controller_task_error_ids) == 4, "Size of pid_controller_task_error_ids must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(pid_controller_task_error_ids) == 4, "Size of pid_controller_task_error_ids must be 4 bytes");
 
 typedef enum : uint32_t
 {
     ERROR_FORCE_SENSOR_ADC_START_FAILURE = 0
 } force_sensor_adc_task_error_ids;
 
-_Static_assert(sizeof(force_sensor_adc_task_error_ids) == 4, "Size of force_sensor_adc_task_error_ids must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(force_sensor_adc_task_error_ids) == 4, "Size of force_sensor_adc_task_error_ids must be 4 bytes");
 
 typedef enum : uint32_t
 {
@@ -117,7 +129,7 @@ typedef enum : uint32_t
     WARNING_FORCE_SENSOR_ADS1115_CONFIG_FAILURE
 } force_sensor_ads1115_error_ids;
 
-_Static_assert(sizeof(force_sensor_ads1115_error_ids) == 4, "Size of force_sensor_ads1115_error_ids must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(force_sensor_ads1115_error_ids) == 4, "Size of force_sensor_ads1115_error_ids must be 4 bytes");
 
 // ****************************************************
 // USB AND PUBLIC MESSAGES
@@ -138,7 +150,7 @@ typedef enum : uint32_t
     USB_MSG_WARNING   // STM32 -> PC (warning report)
 } usb_msg_type_t;
 
-_Static_assert(sizeof(usb_msg_type_t) == 4, "Size of usb_msg_type_t must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(usb_msg_type_t) == 4, "Size of usb_msg_type_t must be 4 bytes");
 
 typedef struct __attribute__((packed)) {
     usb_msg_type_t msg_type;   // protocol-level intent
@@ -146,7 +158,7 @@ typedef struct __attribute__((packed)) {
     uint32_t payload_len;   // bytes following header
 } usb_msg_header_t;
 
-_Static_assert(sizeof(usb_msg_header_t) == 12, "Size of usb_msg_header_t must be 12 bytes");
+DYNO_STATIC_ASSERT(sizeof(usb_msg_header_t) == 12, "Size of usb_msg_header_t must be 12 bytes");
 
 // ---- Host -> device framed command envelope -------------------------------
 // Inbound (PC -> STM32) frames are wrapped so the parser can resync after a ring
@@ -216,7 +228,7 @@ typedef struct __attribute__((packed)) {
     uint16_t msg_id;
 } usb_cmd_header_t;
 
-_Static_assert(sizeof(usb_cmd_header_t) == 4, "Size of usb_cmd_header_t must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(usb_cmd_header_t) == 4, "Size of usb_cmd_header_t must be 4 bytes");
 
 // RESPONSE frame payload (STM32 -> PC): echoes the command's opcode + msg_id and
 // reports a status. Sent with task_offset set to the module that completed it, so
@@ -230,7 +242,7 @@ typedef struct __attribute__((packed)) {
     uint32_t status;   // usb_response_status_t
 } usb_response_data_t;
 
-_Static_assert(sizeof(usb_response_data_t) == 8, "Size of usb_response_data_t must be 8 bytes");
+DYNO_STATIC_ASSERT(sizeof(usb_response_data_t) == 8, "Size of usb_response_data_t must be 8 bytes");
 
 typedef enum : uint32_t
 {
@@ -259,7 +271,7 @@ typedef struct {
     uint32_t protocol_version;   // == USB_PROTOCOL_VERSION
 } usb_device_ready_event;
 
-_Static_assert(sizeof(usb_device_ready_event) == 4, "Size of usb_device_ready_event must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(usb_device_ready_event) == 4, "Size of usb_device_ready_event must be 4 bytes");
 
 // Session start/stop announcement (STM32 -> PC): emitted as USB_MSG_EVENT with task_offset
 // TASK_OFFSET_SESSION_CONTROLLER whenever the dyno enters or leaves a session, and once more
@@ -273,7 +285,7 @@ typedef struct {
     uint32_t in_session;   // 1 = session running, 0 = idle
 } session_state_event;
 
-_Static_assert(sizeof(session_state_event) == 4 + 4, "Size of session_state_event must be 8 bytes");
+DYNO_STATIC_ASSERT(sizeof(session_state_event) == 4 + 4, "Size of session_state_event must be 8 bytes");
 
 // ---- Runtime system configuration -----------------------------------------
 // The tunable quantities from Config/config.h (gains, task delays, thresholds)
@@ -330,7 +342,7 @@ typedef enum : uint16_t
 
 #define SYSCFG_PARAM_COUNT 35u              // one past the highest sysconfig_param_t id; sizes the firmware store
 
-_Static_assert(sizeof(sysconfig_param_t) == 2, "Size of sysconfig_param_t must be 2 bytes");
+DYNO_STATIC_ASSERT(sizeof(sysconfig_param_t) == 2, "Size of sysconfig_param_t must be 2 bytes");
 
 // Body of USB_CMD_SET_SYSCONFIG (after the usb_cmd_header_t). raw_value carries the
 // parameter's 32 bits: IEEE-754 bits for float parameters, the plain value for
@@ -342,7 +354,7 @@ typedef struct __attribute__((packed)) {
     uint32_t raw_value;   // value bits (float or uint32 per param)
 } sysconfig_set_param_body;
 
-_Static_assert(sizeof(sysconfig_set_param_body) == 2 + 4, "Size of sysconfig_set_param_body must be 6 bytes");
+DYNO_STATIC_ASSERT(sizeof(sysconfig_set_param_body) == 2 + 4, "Size of sysconfig_set_param_body must be 6 bytes");
 
 typedef struct {
     uint32_t timestamp;   // Timestamp of the reading
@@ -351,7 +363,7 @@ typedef struct {
     float angular_acceleration;   // Measured angular acceleration
 } optical_encoder_output_data;
 
-_Static_assert(sizeof(optical_encoder_output_data) == 4 + 4 + 4 + 4, "Size of optical_encoder_output_data must be 16 bytes");
+DYNO_STATIC_ASSERT(sizeof(optical_encoder_output_data) == 4 + 4 + 4 + 4, "Size of optical_encoder_output_data must be 16 bytes");
 
 typedef struct {
     uint32_t timestamp;
@@ -359,7 +371,7 @@ typedef struct {
     uint32_t raw_value;
 } forcesensor_output_data;
 
-_Static_assert(sizeof(forcesensor_output_data) == 4 + 4 + 4, "Size of forcesensor_output_data must be 12 bytes");
+DYNO_STATIC_ASSERT(sizeof(forcesensor_output_data) == 4 + 4 + 4, "Size of forcesensor_output_data must be 12 bytes");
 
 typedef struct {
     uint32_t timestamp;
@@ -367,7 +379,7 @@ typedef struct {
     uint32_t raw_value;   // Really just padding to match the other output data types
 } bpm_output_data;
 
-_Static_assert(sizeof(bpm_output_data) == 4 + 4 + 4, "Size of bpm_output_data must be 12 bytes");
+DYNO_STATIC_ASSERT(sizeof(bpm_output_data) == 4 + 4 + 4, "Size of bpm_output_data must be 12 bytes");
 
 typedef struct {
     uint32_t timestamp;
@@ -376,7 +388,7 @@ typedef struct {
     uint32_t free_bytes;
 } task_monitor_output_data;
 
-_Static_assert(sizeof(task_monitor_output_data) == 4 + 4 + 4 + 4, "Size of task_monitor_output_data must be 16 bytes");
+DYNO_STATIC_ASSERT(sizeof(task_monitor_output_data) == 4 + 4 + 4 + 4, "Size of task_monitor_output_data must be 16 bytes");
 
 #ifdef __cplusplus
 }
