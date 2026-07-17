@@ -184,6 +184,12 @@ public partial class MainWindowViewModel : ObservableObject
     private double _dutyCycle;
 
     [ObservableProperty]
+    private double _torque;
+
+    [ObservableProperty]
+    private double _power;
+
+    [ObservableProperty]
     private uint _lastTimestamp;
 
     public MainWindowViewModel(ILoggerFactory loggerFactory)
@@ -467,7 +473,10 @@ public partial class MainWindowViewModel : ObservableObject
             // disagree: samples framed just before a session stopped can still be in flight behind
             // the stop event, and applying those would leave the readouts holding data the user has
             // just been told is over.
-            case OpticalEncoderSample or ForceSensorSample or BpmSample when !IsSessionActive:
+            case OpticalEncoderSample
+            or ForceSensorSample
+            or BpmSample
+            or SessionControllerSample when !IsSessionActive:
                 break;
             case OpticalEncoderSample s:
                 AngularVelocity = s.Data.angular_velocity;
@@ -479,6 +488,10 @@ public partial class MainWindowViewModel : ObservableObject
                 break;
             case BpmSample s:
                 DutyCycle = s.Data.duty_cycle;
+                break;
+            case SessionControllerSample s:
+                Torque = s.Data.torque;
+                Power = s.Data.power;
                 break;
             case SessionState:
                 // Applied via DeviceClient.SessionStateChanged, which reports only real

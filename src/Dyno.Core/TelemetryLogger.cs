@@ -20,7 +20,7 @@ public sealed class TelemetryLogger : IDisposable
 {
     /// <summary>CSV column order; kept in one place so the header and rows can't drift.</summary>
     public const string Header =
-        "host_time,device_ts,source,angular_velocity,angular_acceleration,force,duty_cycle,raw_value";
+        "host_time,device_ts,source,angular_velocity,angular_acceleration,force,duty_cycle,torque,power,raw_value";
 
     private readonly TextWriter _writer;
     private readonly bool _ownsWriter;
@@ -92,6 +92,14 @@ public sealed class TelemetryLogger : IDisposable
                     rawValue: s.Data.raw_value
                 );
                 break;
+            case SessionControllerSample s:
+                Write(
+                    s.Data.timestamp,
+                    "SESSION_CONTROLLER",
+                    torque: s.Data.torque,
+                    power: s.Data.power
+                );
+                break;
         }
     }
 
@@ -102,6 +110,8 @@ public sealed class TelemetryLogger : IDisposable
         float? angularAcceleration = null,
         float? force = null,
         float? dutyCycle = null,
+        float? torque = null,
+        float? power = null,
         uint? rawValue = null
     )
     {
@@ -116,6 +126,8 @@ public sealed class TelemetryLogger : IDisposable
                 Fmt(angularAcceleration, c),
                 Fmt(force, c),
                 Fmt(dutyCycle, c),
+                Fmt(torque, c),
+                Fmt(power, c),
                 rawValue?.ToString(c) ?? string.Empty
             )
         );

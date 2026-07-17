@@ -12,8 +12,12 @@ extern forcesensor_output_data forcesensor_circular_buffer[FORCESENSOR_CIRCULAR_
 extern size_t optical_encoder_circular_buffer_index_writer;
 extern optical_encoder_output_data optical_encoder_circular_buffer[OPTICAL_ENCODER_CIRCULAR_BUFFER_SIZE];
 
-SessionController::SessionController(session_controller_os_task_queues* task_queues, osMutexId_t usart1Mutex) : 
+extern size_t session_controller_circular_buffer_index_writer;
+extern session_controller_output_data session_controller_circular_buffer[SESSION_CONTROLLER_CIRCULAR_BUFFER_SIZE];
+
+SessionController::SessionController(session_controller_os_task_queues* task_queues, osMutexId_t usart1Mutex) :
                 _task_error_buffer_writer(task_error_circular_buffer, &task_error_circular_buffer_index_writer, TASK_ERROR_CIRCULAR_BUFFER_SIZE),
+                _session_controller_buffer_writer(session_controller_circular_buffer, &session_controller_circular_buffer_index_writer, SESSION_CONTROLLER_CIRCULAR_BUFFER_SIZE),
                 _forcesensor_buffer_reader(forcesensor_circular_buffer, &forcesensor_circular_buffer_index_writer, FORCESENSOR_CIRCULAR_BUFFER_SIZE),
                 _optical_encoder_buffer_reader(optical_encoder_circular_buffer, &optical_encoder_circular_buffer_index_writer, OPTICAL_ENCODER_CIRCULAR_BUFFER_SIZE),
                 _fsm(task_queues->lumex_lcd),
@@ -292,14 +296,19 @@ void SessionController::Run()
         // Get the most recent optical encoder data
         while(_optical_encoder_buffer_reader.GetElementAndIncrementIndex(optical_encoder_data));
 
-        // TO UPDATE
-        float angularAcceleration = 0;
+        float angularAcceleration = optical_encoder_data.angular_acceleration;
         float angularVelocity = optical_encoder_data.angular_velocity;
         float force = force_data.force;
-        
+
         float torque = CalculateTorque(angularAcceleration, force, angularVelocity);
-        
-        
+        float power = CalculatePower(torque, angularVelocity);
+
+        session_controller_output_data outputData;
+        outputData.timestamp = get_timestamp();
+        outputData.torque = torque;
+        outputData.power = power;
+        _session_controller_buffer_writer.WriteElementAndIncrementIndex(outputData);
+
         if (prevAngularVelocity != angularVelocity)
         {
             _fsm.DisplayRpm(optical_encoder_data.angular_velocity);
@@ -307,7 +316,7 @@ void SessionController::Run()
             if (prevForce != force)
             {
                 _fsm.DisplayTorque(torque);
-                _fsm.DisplayPower(CalculatePower(torque, angularVelocity));
+                _fsm.DisplayPower(power);
                 prevForce = force;
             }
             prevAngularVelocity = angularVelocity;

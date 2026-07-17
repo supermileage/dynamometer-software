@@ -22,7 +22,7 @@ public static class MessageConstants
     public const uint USB_FRAME_CRC_INIT = 0xFFFFu;   // 0xFFFFu
     public const uint USB_FRAME_CRC_POLY = 0x1021u;   // 0x1021u
     public const uint USB_RX_MAX_PAYLOAD = 128u;   // 128u
-    public const uint USB_PROTOCOL_VERSION = 3u;   // 3u
+    public const uint USB_PROTOCOL_VERSION = 4u;   // 4u
     public const uint SYSCFG_PARAM_COUNT = 35u;   // 35u  -- one past the highest sysconfig_param_t id; sizes the firmware store
 }
 
@@ -154,6 +154,10 @@ public struct usb_msg_header_t
 // A v3 host pushes its saved settings after every handshake and trusts they applied;
 // against v2 firmware those pushes would be silently unknown commands and the dyno
 // would run defaults while the host displays the values it believes it set.
+// 
+// v4 added session_controller_output_data (torque / power stream). A v4 host expects
+// those readouts during a session; against v3 firmware they would simply never arrive
+// and torque/power would sit blank next to live sensor data with nothing saying why.
 
 // Shared CRC so firmware and host compute identical checksums over a frame body.
 
@@ -319,6 +323,19 @@ public struct bpm_output_data
     public uint raw_value;   // Really just padding to match the other output data types
 }
 
+// Derived dyno quantities, computed by the SessionController from the sensor streams:
+// torque = I*alpha + F*r (+ mechanical losses), power = torque * omega. Streamed as
+// USB_MSG_STREAM with task_offset TASK_OFFSET_SESSION_CONTROLLER while a session runs,
+// so the host shows the same numbers the LCD does without re-deriving them.
+
+[StructLayout(LayoutKind.Sequential)]
+public struct session_controller_output_data
+{
+    public uint timestamp;
+    public float torque;   // N·m
+    public float power;   // W
+}
+
 [StructLayout(LayoutKind.Sequential)]
 public struct task_monitor_output_data
 {
@@ -353,6 +370,7 @@ public static class MessageContract
         (typeof(optical_encoder_output_data), 16),
         (typeof(forcesensor_output_data), 12),
         (typeof(bpm_output_data), 12),
+        (typeof(session_controller_output_data), 12),
         (typeof(task_monitor_output_data), 16),
     };
 }

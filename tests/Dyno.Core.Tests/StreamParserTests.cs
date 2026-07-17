@@ -65,6 +65,31 @@ public class StreamParserTests
     }
 
     [Fact]
+    public void Parses_SessionControllerStream()
+    {
+        var (parser, received) = NewParser();
+        var payload = new session_controller_output_data
+        {
+            timestamp = 5678,
+            torque = 2.5f,
+            power = 31.25f,
+        };
+
+        parser.Append(
+            Wire.Message(
+                usb_msg_type_t.USB_MSG_STREAM,
+                task_offset_t.TASK_OFFSET_SESSION_CONTROLLER,
+                payload
+            )
+        );
+
+        var sample = Assert.IsType<SessionControllerSample>(Assert.Single(received));
+        Assert.Equal(5678u, sample.Data.timestamp);
+        Assert.Equal(2.5f, sample.Data.torque);
+        Assert.Equal(31.25f, sample.Data.power);
+    }
+
+    [Fact]
     public void Parses_TwoMessagesBackToBack()
     {
         var (parser, received) = NewParser();

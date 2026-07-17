@@ -31,6 +31,7 @@
 
 // Session Controller Config
 #define SESSIONCONTROLLER_TASK_OSDELAY 5
+#define SESSION_CONTROLLER_CIRCULAR_BUFFER_SIZE 100 // torque/power samples awaiting USB streaming
 
 // BPM Config
 #define MIN_DUTY_CYCLE_PERCENT 0.0f

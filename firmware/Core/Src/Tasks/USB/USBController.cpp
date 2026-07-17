@@ -17,10 +17,12 @@ static constexpr uint32_t DEVICE_READY_ANNOUNCE_MS = 200;
 extern size_t optical_encoder_circular_buffer_index_writer;
 extern size_t forcesensor_circular_buffer_index_writer;
 extern size_t bpm_circular_buffer_index_writer;
+extern size_t session_controller_circular_buffer_index_writer;
 
 extern optical_encoder_output_data optical_encoder_circular_buffer[OPTICAL_ENCODER_CIRCULAR_BUFFER_SIZE];
 extern forcesensor_output_data forcesensor_circular_buffer[FORCESENSOR_CIRCULAR_BUFFER_SIZE];
 extern bpm_output_data bpm_circular_buffer[BPM_CIRCULAR_BUFFER_SIZE];
+extern session_controller_output_data session_controller_circular_buffer[SESSION_CONTROLLER_CIRCULAR_BUFFER_SIZE];
 
 extern size_t task_error_circular_buffer_index_writer;
 extern task_error_data task_error_circular_buffer[TASK_ERROR_CIRCULAR_BUFFER_SIZE];
@@ -30,9 +32,10 @@ USBController::USBController(osMessageQueueId_t sessionControllerToUsbController
                              osMessageQueueId_t forceSensorCommandQueue,
                              osMessageQueueId_t taskCompletionQueue)
     : _task_errors_buffer_reader(task_error_circular_buffer, &task_error_circular_buffer_index_writer, TASK_ERROR_CIRCULAR_BUFFER_SIZE),
-        _buffer_reader_optical_encoder(optical_encoder_circular_buffer, &optical_encoder_circular_buffer_index_writer, BPM_CIRCULAR_BUFFER_SIZE),
+      _buffer_reader_optical_encoder(optical_encoder_circular_buffer, &optical_encoder_circular_buffer_index_writer, OPTICAL_ENCODER_CIRCULAR_BUFFER_SIZE),
       _buffer_reader_forcesensor(forcesensor_circular_buffer, &forcesensor_circular_buffer_index_writer, FORCESENSOR_CIRCULAR_BUFFER_SIZE),
-      _buffer_reader_bpm(bpm_circular_buffer, &bpm_circular_buffer_index_writer, OPTICAL_ENCODER_CIRCULAR_BUFFER_SIZE),
+      _buffer_reader_bpm(bpm_circular_buffer, &bpm_circular_buffer_index_writer, BPM_CIRCULAR_BUFFER_SIZE),
+      _buffer_reader_session_controller(session_controller_circular_buffer, &session_controller_circular_buffer_index_writer, SESSION_CONTROLLER_CIRCULAR_BUFFER_SIZE),
       _taskMonitorToUsbControllerHandle(taskMonitorToUsbControllerHandle),
       _sessionControllerToUsbController(sessionControllerToUsbController),
       _forceSensorCommandQueue(forceSensorCommandQueue),
@@ -274,6 +277,7 @@ void USBController::SkipBufferedSensorData()
     _buffer_reader_optical_encoder.SetIndex(optical_encoder_circular_buffer_index_writer);
     _buffer_reader_forcesensor.SetIndex(forcesensor_circular_buffer_index_writer);
     _buffer_reader_bpm.SetIndex(bpm_circular_buffer_index_writer);
+    _buffer_reader_session_controller.SetIndex(session_controller_circular_buffer_index_writer);
 }
 
 void USBController::HandleHostDetach()
@@ -398,6 +402,13 @@ void USBController::Run()
             #elif (BPM_CONTROLLER_TASK_ENABLE == 1)
             // Process BPM data
             ProcessTaskData(_buffer_reader_bpm, TASK_OFFSET_BPM_CONTROLLER);
+            #endif
+
+            #if !defined(SESSION_CONTROLLER_TASK_ENABLE)
+            #error "SESSION_CONTROLLER_TASK_ENABLE must be defined"
+            #elif (SESSION_CONTROLLER_TASK_ENABLE == 1)
+            // Process derived torque/power data
+            ProcessTaskData(_buffer_reader_session_controller, TASK_OFFSET_SESSION_CONTROLLER);
             #endif
         }
 
@@ -527,6 +538,23 @@ void USBController::MockMessages(const bool forever)
         usb_header.payload_len = sizeof(bpm_output_data);
         AddToBuffer<usb_msg_header_t>(&usb_header, sizeof(usb_msg_header_t));
         AddToBuffer<bpm_output_data>(&mock_bpm_data, sizeof(bpm_output_data));
+        #endif
+
+        #if !defined(SESSION_CONTROLLER_TASK_ENABLE)
+        #error "SESSION_CONTROLLER_TASK_ENABLE must be defined"
+        #elif (SESSION_CONTROLLER_TASK_ENABLE == 1)
+        static float torque = 0.0f;
+        static float power = 0.0f;
+        session_controller_output_data mock_sc_data = {
+            .timestamp = timestamp++,
+            .torque = torque++,
+            .power = power++
+        };
+        usb_header.msg_type = USB_MSG_STREAM;
+        usb_header.task_offset = TASK_OFFSET_SESSION_CONTROLLER;
+        usb_header.payload_len = sizeof(session_controller_output_data);
+        AddToBuffer<usb_msg_header_t>(&usb_header, sizeof(usb_msg_header_t));
+        AddToBuffer<session_controller_output_data>(&mock_sc_data, sizeof(session_controller_output_data));
         #endif
 
         #if !defined(TASK_MONITOR_TASK_ENABLE)

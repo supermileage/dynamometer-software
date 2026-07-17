@@ -120,7 +120,7 @@
             <Grid
               IsVisible="{Binding IsSessionActive}"
               ColumnDefinitions="Auto,*"
-              RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+              RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto"
               RowSpacing="9"
               VerticalAlignment="Top"
             >
@@ -151,18 +151,36 @@
                 Text="{Binding Force, StringFormat='{}{0:F3} N'}"
               />
 
-              <TextBlock Grid.Row="3" Grid.Column="0" Classes="label" Text="BPM duty cycle" />
+              <TextBlock Grid.Row="3" Grid.Column="0" Classes="label" Text="Torque" />
               <TextBlock
                 Grid.Row="3"
+                Grid.Column="1"
+                Classes="readout"
+                HorizontalAlignment="Right"
+                Text="{Binding Torque, StringFormat='{}{0:F3} N·m'}"
+              />
+
+              <TextBlock Grid.Row="4" Grid.Column="0" Classes="label" Text="Power" />
+              <TextBlock
+                Grid.Row="4"
+                Grid.Column="1"
+                Classes="readout"
+                HorizontalAlignment="Right"
+                Text="{Binding Power, StringFormat='{}{0:F3} W'}"
+              />
+
+              <TextBlock Grid.Row="5" Grid.Column="0" Classes="label" Text="BPM duty cycle" />
+              <TextBlock
+                Grid.Row="5"
                 Grid.Column="1"
                 Classes="readout"
                 HorizontalAlignment="Right"
                 Text="{Binding DutyCycle, StringFormat='{}{0:P1}'}"
               />
 
-              <TextBlock Grid.Row="4" Grid.Column="0" Classes="label" Text="Last timestamp" />
+              <TextBlock Grid.Row="6" Grid.Column="0" Classes="label" Text="Last timestamp" />
               <TextBlock
-                Grid.Row="4"
+                Grid.Row="6"
                 Grid.Column="1"
                 Classes="readout"
                 HorizontalAlignment="Right"

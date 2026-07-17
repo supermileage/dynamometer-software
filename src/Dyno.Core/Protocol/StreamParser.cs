@@ -136,6 +136,8 @@ public sealed class StreamParser
             ) => Unsafe.SizeOf<forcesensor_output_data>(),
             (usb_msg_type_t.USB_MSG_STREAM, task_offset_t.TASK_OFFSET_BPM_CONTROLLER) =>
                 Unsafe.SizeOf<bpm_output_data>(),
+            (usb_msg_type_t.USB_MSG_STREAM, task_offset_t.TASK_OFFSET_SESSION_CONTROLLER) =>
+                Unsafe.SizeOf<session_controller_output_data>(),
             (usb_msg_type_t.USB_MSG_STREAM, task_offset_t.TASK_OFFSET_TASK_MONITOR) =>
                 Unsafe.SizeOf<task_monitor_output_data>(),
             _ => null,
@@ -193,6 +195,9 @@ public sealed class StreamParser
             ),
             task_offset_t.TASK_OFFSET_BPM_CONTROLLER when TryRead<bpm_output_data>(p, out var d) =>
                 new BpmSample(d),
+            task_offset_t.TASK_OFFSET_SESSION_CONTROLLER
+                when TryRead<session_controller_output_data>(p, out var d) =>
+                new SessionControllerSample(d),
             task_offset_t.TASK_OFFSET_TASK_MONITOR
                 when TryRead<task_monitor_output_data>(p, out var d) => new TaskMonitorSample(d),
             _ => Unknown(h, p),

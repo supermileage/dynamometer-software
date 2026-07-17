@@ -138,6 +138,7 @@ class USBController
         CircularBufferReader<optical_encoder_output_data> _buffer_reader_optical_encoder;
         CircularBufferReader<forcesensor_output_data> _buffer_reader_forcesensor;
         CircularBufferReader<bpm_output_data> _buffer_reader_bpm;
+        CircularBufferReader<session_controller_output_data> _buffer_reader_session_controller;
 
         osMessageQueueId_t _taskMonitorToUsbControllerHandle;
         osMessageQueueId_t _sessionControllerToUsbController;  // carries the in-session flag

@@ -195,8 +195,12 @@ DYNO_STATIC_ASSERT(sizeof(usb_msg_header_t) == 12, "Size of usb_msg_header_t mus
 // A v3 host pushes its saved settings after every handshake and trusts they applied;
 // against v2 firmware those pushes would be silently unknown commands and the dyno
 // would run defaults while the host displays the values it believes it set.
+// 
+// v4 added session_controller_output_data (torque / power stream). A v4 host expects
+// those readouts during a session; against v3 firmware they would simply never arrive
+// and torque/power would sit blank next to live sensor data with nothing saying why.
 
-#define USB_PROTOCOL_VERSION 3u
+#define USB_PROTOCOL_VERSION 4u
 
 // Shared CRC so firmware and host compute identical checksums over a frame body.
 
@@ -380,6 +384,19 @@ typedef struct {
 } bpm_output_data;
 
 DYNO_STATIC_ASSERT(sizeof(bpm_output_data) == 4 + 4 + 4, "Size of bpm_output_data must be 12 bytes");
+
+// Derived dyno quantities, computed by the SessionController from the sensor streams:
+// torque = I*alpha + F*r (+ mechanical losses), power = torque * omega. Streamed as
+// USB_MSG_STREAM with task_offset TASK_OFFSET_SESSION_CONTROLLER while a session runs,
+// so the host shows the same numbers the LCD does without re-deriving them.
+
+typedef struct {
+    uint32_t timestamp;
+    float torque;   // N·m
+    float power;   // W
+} session_controller_output_data;
+
+DYNO_STATIC_ASSERT(sizeof(session_controller_output_data) == 4 + 4 + 4, "Size of session_controller_output_data must be 12 bytes");
 
 typedef struct {
     uint32_t timestamp;

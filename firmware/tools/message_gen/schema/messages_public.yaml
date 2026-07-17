@@ -223,7 +223,11 @@ sections:
       against v2 firmware those pushes would be silently unknown commands and the dyno
       would run defaults while the host displays the values it believes it set.
 
-  - { kind: define, name: USB_PROTOCOL_VERSION, value: "3u" }
+      v4 added session_controller_output_data (torque / power stream). A v4 host expects
+      those readouts during a session; against v3 firmware they would simply never arrive
+      and torque/power would sit blank next to live sensor data with nothing saying why.
+
+  - { kind: define, name: USB_PROTOCOL_VERSION, value: "4u" }
 
   - kind: comment
     text: |-
@@ -464,6 +468,22 @@ sections:
       - { type: uint32_t, name: raw_value, comment: "Really just padding to match the other output data types" }
 
   - { kind: static_assert, expr: "sizeof(bpm_output_data) == 4 + 4 + 4", message: "Size of bpm_output_data must be 12 bytes" }
+
+  - kind: comment
+    text: |-
+      Derived dyno quantities, computed by the SessionController from the sensor streams:
+      torque = I*alpha + F*r (+ mechanical losses), power = torque * omega. Streamed as
+      USB_MSG_STREAM with task_offset TASK_OFFSET_SESSION_CONTROLLER while a session runs,
+      so the host shows the same numbers the LCD does without re-deriving them.
+
+  - kind: struct
+    name: session_controller_output_data
+    fields:
+      - { type: uint32_t, name: timestamp }
+      - { type: float,    name: torque, comment: "N·m" }
+      - { type: float,    name: power,  comment: "W" }
+
+  - { kind: static_assert, expr: "sizeof(session_controller_output_data) == 4 + 4 + 4", message: "Size of session_controller_output_data must be 12 bytes" }
 
   - kind: struct
     name: task_monitor_output_data
