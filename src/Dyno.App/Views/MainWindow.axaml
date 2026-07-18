@@ -255,6 +255,23 @@
                 <TextBlock Text="Firmware" />
               </StackPanel>
             </Button>
+            <Button
+              Classes="nav"
+              Classes.active="{Binding IsSettingsPage}"
+              Command="{Binding NavigateCommand}"
+              CommandParameter="{x:Static vm:AppPage.Settings}"
+              ToolTip.Tip="Settings — application preferences"
+            >
+              <StackPanel Spacing="3">
+                <!-- Gear: circle with radial teeth -->
+                <Path
+                  Width="24"
+                  Height="24"
+                  Data="M12,8.8 A3.2,3.2 0 1 0 12,15.2 A3.2,3.2 0 1 0 12,8.8 M12,4 L12,6.4 M12,17.6 L12,20 M4,12 L6.4,12 M17.6,12 L20,12 M6.3,6.3 L8,8 M16,16 L17.7,17.7 M17.7,6.3 L16,8 M8,16 L6.3,17.7"
+                />
+                <TextBlock Text="Settings" />
+              </StackPanel>
+            </Button>
           </StackPanel>
         </Border>
 
@@ -272,6 +289,7 @@
             <views:PlotsView IsVisible="{Binding IsPlotsPage}" />
             <views:SysConfigView IsVisible="{Binding IsSysConfigPage}" />
             <views:FirmwareView IsVisible="{Binding IsFirmwarePage}" />
+            <views:SettingsView IsVisible="{Binding IsSettingsPage}" />
 
             <Border
               VerticalAlignment="Bottom"

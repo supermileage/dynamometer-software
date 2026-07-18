@@ -28,6 +28,22 @@ public partial class PlotChannelViewModel : ObservableObject
     [ObservableProperty]
     private double _anchorTime;
 
+    // ---- Applied y-axis range (Settings > Plots) -----------------------------------------------
+    // These are the *applied* values every graph of this channel renders with — the Settings page
+    // stages edits in its own editor and writes here only on Apply, which is what makes Apply the
+    // moment the plots change.
+
+    /// <summary>True (the default) = the y-axis fits the visible data each frame. False = the
+    /// fixed <see cref="AxisMin"/>/<see cref="AxisMax"/> range below; data outside it is clipped.</summary>
+    [ObservableProperty]
+    private bool _autoScale = true;
+
+    [ObservableProperty]
+    private double _axisMin;
+
+    [ObservableProperty]
+    private double _axisMax = 100;
+
     public PlotChannelViewModel(string name, string unit, Color color)
     {
         Name = name;

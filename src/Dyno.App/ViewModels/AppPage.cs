@@ -8,4 +8,5 @@ public enum AppPage
     Plots,
     SysConfig,
     Firmware,
+    Settings,
 }

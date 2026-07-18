@@ -120,6 +120,9 @@
                     Buffer="{Binding Channel.Buffer}"
                     Stroke="{Binding Channel.Stroke}"
                     AnchorTime="{Binding Channel.AnchorTime}"
+                    AutoScale="{Binding Channel.AutoScale}"
+                    ManualMin="{Binding Channel.AxisMin}"
+                    ManualMax="{Binding Channel.AxisMax}"
                     GridBrush="{StaticResource StrokeBrush}"
                     LabelBrush="{StaticResource TextMutedBrush}"
                   />

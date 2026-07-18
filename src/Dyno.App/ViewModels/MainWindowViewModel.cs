@@ -132,6 +132,10 @@ public partial class MainWindowViewModel : ObservableObject
     /// under the same session gate as the numeric readouts.</summary>
     public PlotsViewModel Plots { get; } = new();
 
+    /// <summary>The Settings page: application preferences (today, the plots' y-axis ranges).
+    /// Constructed in the constructor because it edits <see cref="Plots"/>'s channels.</summary>
+    public SettingsViewModel Settings { get; }
+
     /// <summary>Which sidebar page is showing. A single value (not a flag per page) so exactly
     /// one page is ever active; the per-page bools below exist only for IsVisible bindings.</summary>
     [ObservableProperty]
@@ -139,12 +143,14 @@ public partial class MainWindowViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(IsPlotsPage))]
     [NotifyPropertyChangedFor(nameof(IsSysConfigPage))]
     [NotifyPropertyChangedFor(nameof(IsFirmwarePage))]
+    [NotifyPropertyChangedFor(nameof(IsSettingsPage))]
     private AppPage _currentPage = AppPage.Home;
 
     public bool IsHomePage => CurrentPage == AppPage.Home;
     public bool IsPlotsPage => CurrentPage == AppPage.Plots;
     public bool IsSysConfigPage => CurrentPage == AppPage.SysConfig;
     public bool IsFirmwarePage => CurrentPage == AppPage.Firmware;
+    public bool IsSettingsPage => CurrentPage == AppPage.Settings;
 
     [RelayCommand]
     private void Navigate(AppPage page)
@@ -234,6 +240,7 @@ public partial class MainWindowViewModel : ObservableObject
     public MainWindowViewModel(ILoggerFactory loggerFactory)
     {
         _loggerFactory = loggerFactory;
+        Settings = new SettingsViewModel(Plots);
         SysConfig = new SysConfigViewModel(() => _client);
         // The connect-time restore is the one device write the user never asked for, and the only
         // one they cannot see happen on the page they're not looking at.

@@ -45,6 +45,23 @@ public class TimeSeriesPlot : Control
         double
     >(nameof(WindowSeconds), 30.0);
 
+    /// <summary>True (default): fit the y-axis to the visible data each frame. False: use the
+    /// fixed <see cref="ManualMin"/>/<see cref="ManualMax"/> range; data outside is clipped.</summary>
+    public static readonly StyledProperty<bool> AutoScaleProperty = AvaloniaProperty.Register<
+        TimeSeriesPlot,
+        bool
+    >(nameof(AutoScale), true);
+
+    public static readonly StyledProperty<double> ManualMinProperty = AvaloniaProperty.Register<
+        TimeSeriesPlot,
+        double
+    >(nameof(ManualMin));
+
+    public static readonly StyledProperty<double> ManualMaxProperty = AvaloniaProperty.Register<
+        TimeSeriesPlot,
+        double
+    >(nameof(ManualMax), 100.0);
+
     static TimeSeriesPlot()
     {
         AffectsRender<TimeSeriesPlot>(
@@ -53,7 +70,10 @@ public class TimeSeriesPlot : Control
             GridBrushProperty,
             LabelBrushProperty,
             AnchorTimeProperty,
-            WindowSecondsProperty
+            WindowSecondsProperty,
+            AutoScaleProperty,
+            ManualMinProperty,
+            ManualMaxProperty
         );
     }
 
@@ -91,6 +111,24 @@ public class TimeSeriesPlot : Control
     {
         get => GetValue(WindowSecondsProperty);
         set => SetValue(WindowSecondsProperty, value);
+    }
+
+    public bool AutoScale
+    {
+        get => GetValue(AutoScaleProperty);
+        set => SetValue(AutoScaleProperty, value);
+    }
+
+    public double ManualMin
+    {
+        get => GetValue(ManualMinProperty);
+        set => SetValue(ManualMinProperty, value);
+    }
+
+    public double ManualMax
+    {
+        get => GetValue(ManualMaxProperty);
+        set => SetValue(ManualMaxProperty, value);
     }
 
     // Margins around the plot area: room for y labels left, x labels below.
@@ -141,11 +179,25 @@ public class TimeSeriesPlot : Control
             return;
         }
 
-        (double yMin, double yMax) = VisibleRange(count);
-        double yTick = NiceStep((yMax - yMin) / 4);
-        // Widen to tick multiples so the top and bottom gridlines land on labeled values.
-        yMin = Math.Floor(yMin / yTick) * yTick;
-        yMax = Math.Ceiling(yMax / yTick) * yTick;
+        double yMin;
+        double yMax;
+        double yTick;
+        if (!AutoScale && ManualMax > ManualMin)
+        {
+            // The configured range is exact — the user asked to look at precisely this window,
+            // so it is not widened to tick multiples; gridlines land on the multiples within it.
+            yMin = ManualMin;
+            yMax = ManualMax;
+            yTick = NiceStep((yMax - yMin) / 4);
+        }
+        else
+        {
+            (yMin, yMax) = VisibleRange(count);
+            yTick = NiceStep((yMax - yMin) / 4);
+            // Widen to tick multiples so the top and bottom gridlines land on labeled values.
+            yMin = Math.Floor(yMin / yTick) * yTick;
+            yMax = Math.Ceiling(yMax / yTick) * yTick;
+        }
 
         DrawGridAndLabels(context, plot, typeface, t0, t1, yMin, yMax, yTick);
         DrawSeries(context, plot, t0, t1, yMin, yMax, count);
@@ -233,8 +285,10 @@ public class TimeSeriesPlot : Control
     {
         var gridPen = new Pen(GridBrush, 1);
 
-        // Horizontal gridlines + y labels at each tick.
-        for (double y = yMin; y <= yMax + yTick * 0.01; y += yTick)
+        // Horizontal gridlines + y labels at each tick multiple inside the range (a manual range's
+        // bounds need not be multiples themselves).
+        double firstTick = Math.Ceiling(yMin / yTick - 1e-9) * yTick;
+        for (double y = firstTick; y <= yMax + yTick * 0.01; y += yTick)
         {
             double py = plot.Bottom - (y - yMin) / (yMax - yMin) * plot.Height;
             context.DrawLine(gridPen, new Point(plot.Left, py), new Point(plot.Right, py));
