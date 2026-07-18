@@ -5,9 +5,10 @@ using Dyno.Core.Plotting;
 namespace Dyno.App.ViewModels;
 
 /// <summary>
-/// One plottable telemetry channel: its identity (name, unit, series color), its sample history,
-/// and whether its strip is currently shown. The color is fixed per channel — toggling others on
-/// or off never repaints a survivor.
+/// One plottable telemetry channel: its identity (name, unit, series color) and its sample
+/// history. The color is fixed per channel — which graphs currently show it never repaints it.
+/// Channels are the fixed vocabulary the user builds graphs from; the graphs themselves are
+/// <see cref="PlotGraphViewModel"/>s.
 /// </summary>
 public partial class PlotChannelViewModel : ObservableObject
 {
@@ -22,21 +23,15 @@ public partial class PlotChannelViewModel : ObservableObject
 
     public string Title => Unit.Length == 0 ? Name : $"{Name} ({Unit})";
 
-    /// <summary>Whether this channel's strip is shown. The buffer records either way, so toggling
-    /// a channel on mid-session shows its history, not a line starting at the toggle.</summary>
-    [ObservableProperty]
-    private bool _isVisible;
-
     /// <summary>Right edge of the plotted window, advanced by the page's frame timer. Held on the
-    /// channel (same value on every strip) purely so each strip can bind to its own DataContext.</summary>
+    /// channel (same value on every one) purely so each graph can bind to its own DataContext.</summary>
     [ObservableProperty]
     private double _anchorTime;
 
-    public PlotChannelViewModel(string name, string unit, Color color, bool visibleByDefault)
+    public PlotChannelViewModel(string name, string unit, Color color)
     {
         Name = name;
         Unit = unit;
         Stroke = new SolidColorBrush(color);
-        _isVisible = visibleByDefault;
     }
 }

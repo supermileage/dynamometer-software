@@ -1,13 +1,16 @@
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using Avalonia.Media;
 using Avalonia.Threading;
+using CommunityToolkit.Mvvm.Input;
 
 namespace Dyno.App.ViewModels;
 
 /// <summary>
-/// The Plots page: a fixed set of telemetry channels, each an independently toggleable strip
-/// chart over time. Different channels carry different units, so there is deliberately no shared
-/// y-axis — every strip is its own small multiple and only the time axis lines up.
+/// The Plots page: a user-built list of graphs, each showing one telemetry channel over time and
+/// each independently resizable. Different channels carry different units, so a graph shows
+/// exactly one — there is deliberately no shared (or dual) y-axis, and only the time axis lines
+/// up across graphs.
 /// </summary>
 /// <remarks>
 /// Samples are recorded from <see cref="MainWindowViewModel.Apply"/> on the UI thread — the same
@@ -27,30 +30,31 @@ public partial class PlotsViewModel
     private readonly DispatcherTimer _frameTimer;
 
     public PlotChannelViewModel AngularVelocity { get; } =
-        new("Angular velocity", "rad/s", Color.Parse("#3987E5"), visibleByDefault: true);
+        new("Angular velocity", "rad/s", Color.Parse("#3987E5"));
 
     public PlotChannelViewModel AngularVelocityGeared { get; } =
-        new("Angular velocity, geared", "rad/s", Color.Parse("#008300"), visibleByDefault: false);
+        new("Angular velocity, geared", "rad/s", Color.Parse("#008300"));
 
     public PlotChannelViewModel AngularAcceleration { get; } =
-        new("Angular acceleration", "rad/s²", Color.Parse("#D55181"), visibleByDefault: false);
+        new("Angular acceleration", "rad/s²", Color.Parse("#D55181"));
 
-    public PlotChannelViewModel Force { get; } =
-        new("Force", "N", Color.Parse("#C98500"), visibleByDefault: false);
+    public PlotChannelViewModel Force { get; } = new("Force", "N", Color.Parse("#C98500"));
 
-    public PlotChannelViewModel Torque { get; } =
-        new("Torque", "N·m", Color.Parse("#199E70"), visibleByDefault: true);
+    public PlotChannelViewModel Torque { get; } = new("Torque", "N·m", Color.Parse("#199E70"));
 
     public PlotChannelViewModel TorqueGeared { get; } =
-        new("Torque, geared", "N·m", Color.Parse("#D95926"), visibleByDefault: false);
+        new("Torque, geared", "N·m", Color.Parse("#D95926"));
 
-    public PlotChannelViewModel Power { get; } =
-        new("Power", "W", Color.Parse("#9085E9"), visibleByDefault: true);
+    public PlotChannelViewModel Power { get; } = new("Power", "W", Color.Parse("#9085E9"));
 
     public PlotChannelViewModel DutyCycle { get; } =
-        new("BPM duty cycle", "", Color.Parse("#E66767"), visibleByDefault: false);
+        new("BPM duty cycle", "", Color.Parse("#E66767"));
 
     public IReadOnlyList<PlotChannelViewModel> Channels { get; }
+
+    /// <summary>The graphs, top to bottom. Starts with a useful default set rather than empty —
+    /// a blank plots page teaches nothing about what the page can do.</summary>
+    public ObservableCollection<PlotGraphViewModel> Graphs { get; } = new();
 
     public PlotsViewModel()
     {
@@ -66,6 +70,11 @@ public partial class PlotsViewModel
             DutyCycle,
         ];
 
+        foreach (var channel in new[] { AngularVelocity, Torque, Power })
+        {
+            Graphs.Add(new PlotGraphViewModel(Channels, channel, RemoveGraph));
+        }
+
         // ~30 fps redraw driver. The window's right edge is the newest sample anywhere, not the
         // wall clock: while data streams the plots scroll live, and when the session stops they
         // freeze holding the run instead of scrolling it off the screen.
@@ -76,6 +85,17 @@ public partial class PlotsViewModel
         );
         _frameTimer.Start();
     }
+
+    /// <summary>Adds a graph of the first channel no other graph is showing yet — the likeliest
+    /// reason to press Add — falling back to the first channel once everything is on screen.</summary>
+    [RelayCommand]
+    private void AddGraph()
+    {
+        var channel = Channels.FirstOrDefault(c => !Graphs.Any(g => g.Channel == c)) ?? Channels[0];
+        Graphs.Add(new PlotGraphViewModel(Channels, channel, RemoveGraph));
+    }
+
+    private void RemoveGraph(PlotGraphViewModel graph) => Graphs.Remove(graph);
 
     private void AdvanceAnchor()
     {

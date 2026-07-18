@@ -10,79 +10,138 @@
     <vm:MainWindowViewModel />
   </Design.DataContext>
 
+  <UserControl.Styles>
+    <!-- The drag grip along a graph's bottom edge (same affordance as the event log's): full
+         width, because a resize handle you have to hunt for is one nobody finds. -->
+    <Style Selector="Thumb.resize">
+      <Setter Property="Height" Value="10" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Cursor" Value="SizeNorthSouth" />
+      <Setter Property="Margin" Value="0,2,0,-6" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Background="Transparent" HorizontalAlignment="Stretch">
+            <Border
+              Width="34"
+              Height="3"
+              CornerRadius="2"
+              Background="{StaticResource StrokeBrush}"
+              VerticalAlignment="Center"
+              HorizontalAlignment="Center"
+            />
+          </Border>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+    <Style Selector="Thumb.resize:pointerover /template/ Border > Border">
+      <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+    </Style>
+  </UserControl.Styles>
+
   <Grid RowDefinitions="Auto,*" Margin="16" RowSpacing="14">
-    <!-- Channel picker. Every channel records whether shown or not, so a strip toggled on
-         mid-session arrives with its history rather than starting at the click. -->
     <Border Grid.Row="0" Classes="card" Padding="12">
-      <StackPanel Spacing="8">
-        <TextBlock Classes="heading" Text="PLOTS — CHOOSE CHANNELS" />
-        <ItemsControl ItemsSource="{Binding Plots.Channels}">
+      <Grid ColumnDefinitions="*,Auto">
+        <StackPanel Grid.Column="0" Spacing="3" VerticalAlignment="Center">
+          <TextBlock Classes="heading" Text="PLOTS" />
+          <TextBlock
+            Classes="label"
+            FontSize="12"
+            Text="Each graph shows one channel over the last 30 s. Pick the channel on the graph, drag the grip under it to resize, add as many as you need."
+            TextWrapping="Wrap"
+          />
+        </StackPanel>
+        <Button
+          Grid.Column="1"
+          Classes="accent"
+          Content="Add graph"
+          Command="{Binding Plots.AddGraphCommand}"
+          VerticalAlignment="Center"
+        />
+      </Grid>
+    </Border>
+
+    <!-- One card per graph: small multiples over a shared time window. The units differ per
+         channel, so each graph owns its y-axis; only time lines up. -->
+    <ScrollViewer Grid.Row="1">
+      <StackPanel Spacing="10">
+        <ItemsControl ItemsSource="{Binding Plots.Graphs}">
           <ItemsControl.ItemsPanel>
             <ItemsPanelTemplate>
-              <WrapPanel ItemSpacing="14" LineSpacing="4" />
+              <StackPanel Spacing="10" />
             </ItemsPanelTemplate>
           </ItemsControl.ItemsPanel>
           <ItemsControl.ItemTemplate>
-            <DataTemplate x:DataType="vm:PlotChannelViewModel">
-              <CheckBox IsChecked="{Binding IsVisible}" MinHeight="0" Padding="6,0,0,0">
-                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                  <Border
-                    Width="10"
-                    Height="10"
-                    CornerRadius="3"
-                    Background="{Binding Stroke}"
-                    VerticalAlignment="Center"
+            <DataTemplate x:DataType="vm:PlotGraphViewModel">
+              <Border Classes="card" Padding="12,8,12,10">
+                <StackPanel Spacing="4">
+                  <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="8">
+                    <Border
+                      Grid.Column="0"
+                      Width="10"
+                      Height="10"
+                      CornerRadius="3"
+                      Background="{Binding Channel.Stroke}"
+                      VerticalAlignment="Center"
+                    />
+                    <ComboBox
+                      Grid.Column="1"
+                      ItemsSource="{Binding Channels}"
+                      SelectedItem="{Binding Channel}"
+                      MinWidth="230"
+                      FontSize="12"
+                    >
+                      <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:PlotChannelViewModel">
+                          <StackPanel Orientation="Horizontal" Spacing="7">
+                            <Border
+                              Width="10"
+                              Height="10"
+                              CornerRadius="3"
+                              Background="{Binding Stroke}"
+                              VerticalAlignment="Center"
+                            />
+                            <TextBlock Text="{Binding Title}" VerticalAlignment="Center" />
+                          </StackPanel>
+                        </DataTemplate>
+                      </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <Button
+                      Grid.Column="3"
+                      Command="{Binding RemoveCommand}"
+                      Padding="8,3"
+                      FontSize="12"
+                      ToolTip.Tip="Remove this graph (the channel keeps recording)"
+                    >
+                      ✕
+                    </Button>
+                  </Grid>
+                  <controls:TimeSeriesPlot
+                    Height="{Binding PlotHeight}"
+                    Buffer="{Binding Channel.Buffer}"
+                    Stroke="{Binding Channel.Stroke}"
+                    AnchorTime="{Binding Channel.AnchorTime}"
+                    GridBrush="{StaticResource StrokeBrush}"
+                    LabelBrush="{StaticResource TextMutedBrush}"
                   />
-                  <TextBlock Text="{Binding Title}" VerticalAlignment="Center" />
+                  <Thumb
+                    Classes="resize"
+                    DragDelta="OnResizeGraph"
+                    ToolTip.Tip="Drag to resize this graph"
+                  />
                 </StackPanel>
-              </CheckBox>
+              </Border>
             </DataTemplate>
           </ItemsControl.ItemTemplate>
         </ItemsControl>
-      </StackPanel>
-    </Border>
 
-    <!-- One strip per selected channel: small multiples over a shared time window. The units
-         differ per channel, so each strip owns its y-axis; only time lines up. -->
-    <ScrollViewer Grid.Row="1">
-      <ItemsControl ItemsSource="{Binding Plots.Channels}">
-        <ItemsControl.ItemsPanel>
-          <ItemsPanelTemplate>
-            <StackPanel Spacing="10" />
-          </ItemsPanelTemplate>
-        </ItemsControl.ItemsPanel>
-        <ItemsControl.ItemTemplate>
-          <DataTemplate x:DataType="vm:PlotChannelViewModel">
-            <Border Classes="card" Padding="12,10" IsVisible="{Binding IsVisible}">
-              <StackPanel Spacing="4">
-                <StackPanel Orientation="Horizontal" Spacing="7">
-                  <Border
-                    Width="10"
-                    Height="10"
-                    CornerRadius="3"
-                    Background="{Binding Stroke}"
-                    VerticalAlignment="Center"
-                  />
-                  <TextBlock
-                    Classes="label"
-                    Text="{Binding Title}"
-                    FontSize="12"
-                    VerticalAlignment="Center"
-                  />
-                </StackPanel>
-                <controls:TimeSeriesPlot
-                  Height="150"
-                  Buffer="{Binding Buffer}"
-                  Stroke="{Binding Stroke}"
-                  AnchorTime="{Binding AnchorTime}"
-                  GridBrush="{StaticResource StrokeBrush}"
-                  LabelBrush="{StaticResource TextMutedBrush}"
-                />
-              </StackPanel>
-            </Border>
-          </DataTemplate>
-        </ItemsControl.ItemTemplate>
-      </ItemsControl>
+        <TextBlock
+          Classes="label"
+          Text="No graphs — press Add graph to create one."
+          HorizontalAlignment="Center"
+          Margin="0,24,0,0"
+          IsVisible="{Binding !Plots.Graphs.Count}"
+        />
+      </StackPanel>
     </ScrollViewer>
   </Grid>
 </UserControl>
