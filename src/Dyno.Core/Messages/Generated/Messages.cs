@@ -89,6 +89,15 @@ public enum pid_controller_task_error_ids : uint
     WARNING_PID_CONTROLLER_MESSAGE_QUEUE_FULL = 0x8000,
 }
 
+/// The TX path drops telemetry batches rather than stall when the CDC endpoint stays busy
+/// (bounded retries, then give up). That loss used to be silent; this warning is emitted at
+/// most once per second while it is happening, so a saturated link shows up in the host's
+/// event log instead of masquerading as a quiet stream.
+public enum usb_controller_task_error_ids : uint
+{
+    WARNING_USB_TX_BATCH_DROPPED = 0x8000,
+}
+
 public enum force_sensor_adc_task_error_ids : uint
 {
     ERROR_FORCE_SENSOR_ADC_START_FAILURE = 0,
@@ -357,6 +366,7 @@ public static class MessageContract
         (typeof(lumex_lcd_task_error_ids), 4),
         (typeof(task_monitor_task_error_ids), 4),
         (typeof(pid_controller_task_error_ids), 4),
+        (typeof(usb_controller_task_error_ids), 4),
         (typeof(force_sensor_adc_task_error_ids), 4),
         (typeof(force_sensor_ads1115_error_ids), 4),
         (typeof(usb_msg_type_t), 4),

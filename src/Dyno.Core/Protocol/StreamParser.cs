@@ -5,6 +5,23 @@ using Dyno.Core.Messages;
 namespace Dyno.Core.Protocol;
 
 /// <summary>
+/// What one desync threw away and where it sat: the bytes skipped to regain alignment (capped at
+/// <see cref="SkippedBytesCap"/>; <see cref="BytesDropped"/> is the true total), the header
+/// of the last record decoded cleanly before the loss, and the header of the record that proved
+/// alignment was back. The skipped bytes are the actual evidence of *what* got cut — a payload
+/// arriving without its header looks quite different from a header without its payload.
+/// </summary>
+public sealed record ResyncDetails(
+    int BytesDropped,
+    byte[] SkippedBytes,
+    usb_msg_header_t? LastGoodHeader,
+    usb_msg_header_t NextHeader
+)
+{
+    public const int SkippedBytesCap = 48;
+}
+
+/// <summary>
 /// Decodes the <b>unframed</b> STM32 → PC byte stream. The firmware emits a back-to-back
 /// concatenation of <c>usb_msg_header_t</c>(12 bytes) + payload, with no SOF/CRC (USB CDC
 /// is already reliable). <see cref="Append"/> accumulates bytes and emits one
@@ -32,8 +49,8 @@ public sealed class StreamParser
 
     public event Action<DeviceMessage>? MessageReceived;
 
-    /// <summary>Raised once per desync — when alignment is regained — with the total bytes thrown
-    /// away to regain it. Dropping bytes is the *only* outward sign that this stream lost data: it
+    /// <summary>Raised once per desync — when alignment is regained — with what was thrown away and
+    /// what it sat between. Dropping bytes is the *only* outward sign that this stream lost data: it
     /// has no sequence numbers and no CRC, so a record that arrives short simply runs into the next
     /// one, and everything after it is misaligned until the scan finds a real header again. Whoever
     /// sees this should treat it as a link fault (a device-side ring overflow, most likely).
@@ -41,10 +58,18 @@ public sealed class StreamParser
     /// Reported on recovery rather than as the bytes go, because bytes arrive in whatever chunks the
     /// serial port hands over: one lost record is re-scanned across several of them, and reporting
     /// per chunk would turn a single fault into a stutter of near-identical warnings.</summary>
-    public event Action<int>? Resynced;
+    public event Action<ResyncDetails>? Resynced;
 
     /// <summary>Bytes discarded since the last record decoded cleanly — a desync in progress.</summary>
     private int _dropped;
+
+    /// <summary>The first <see cref="ResyncDetails.SkippedBytesCap"/> of the discarded bytes —
+    /// enough to recognize what fragment they were (a payload without its header, a header without
+    /// its payload) without unbounded buffering if a desync runs long.</summary>
+    private readonly List<byte> _skipped = new();
+
+    /// <summary>Header of the last record decoded cleanly — names what the lost bytes came after.</summary>
+    private usb_msg_header_t? _lastGoodHeader;
 
     public void Append(ReadOnlySpan<byte> data)
     {
@@ -59,6 +84,10 @@ public sealed class StreamParser
 
             if (!IsPlausible(header))
             {
+                if (_skipped.Count < ResyncDetails.SkippedBytesCap)
+                {
+                    _skipped.Add(bytes[pos]);
+                }
                 pos++; // resync: drop one byte and re-scan
                 _dropped++;
                 continue;
@@ -74,13 +103,20 @@ public sealed class StreamParser
             // it, which is also the order the two things happened in.
             if (_dropped > 0)
             {
-                var dropped = _dropped;
+                var details = new ResyncDetails(
+                    _dropped,
+                    _skipped.ToArray(),
+                    _lastGoodHeader,
+                    header
+                );
                 _dropped = 0;
-                Resynced?.Invoke(dropped);
+                _skipped.Clear();
+                Resynced?.Invoke(details);
             }
 
             var payload = bytes.Slice(pos + HeaderSize, payloadLen);
             MessageReceived?.Invoke(Decode(header, payload));
+            _lastGoodHeader = header;
             pos += HeaderSize + payloadLen;
         }
 

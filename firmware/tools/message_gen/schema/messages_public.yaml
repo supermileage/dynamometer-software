@@ -133,6 +133,19 @@ sections:
   - { kind: static_assert, expr: "sizeof(pid_controller_task_error_ids) == 4", message: "Size of pid_controller_task_error_ids must be 4 bytes" }
 
   - kind: enum
+    name: usb_controller_task_error_ids
+    base: uint32_t
+    comment: |-
+      The TX path drops telemetry batches rather than stall when the CDC endpoint stays busy
+      (bounded retries, then give up). That loss used to be silent; this warning is emitted at
+      most once per second while it is happening, so a saturated link shows up in the host's
+      event log instead of masquerading as a quiet stream.
+    values:
+      - { name: WARNING_USB_TX_BATCH_DROPPED, value: "WARNING_FLAG" }
+
+  - { kind: static_assert, expr: "sizeof(usb_controller_task_error_ids) == 4", message: "Size of usb_controller_task_error_ids must be 4 bytes" }
+
+  - kind: enum
     name: force_sensor_adc_task_error_ids
     base: uint32_t
     values:

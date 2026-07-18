@@ -114,6 +114,17 @@ typedef enum : uint32_t
 
 DYNO_STATIC_ASSERT(sizeof(pid_controller_task_error_ids) == 4, "Size of pid_controller_task_error_ids must be 4 bytes");
 
+// The TX path drops telemetry batches rather than stall when the CDC endpoint stays busy
+// (bounded retries, then give up). That loss used to be silent; this warning is emitted at
+// most once per second while it is happening, so a saturated link shows up in the host's
+// event log instead of masquerading as a quiet stream.
+typedef enum : uint32_t
+{
+    WARNING_USB_TX_BATCH_DROPPED = WARNING_FLAG
+} usb_controller_task_error_ids;
+
+DYNO_STATIC_ASSERT(sizeof(usb_controller_task_error_ids) == 4, "Size of usb_controller_task_error_ids must be 4 bytes");
+
 typedef enum : uint32_t
 {
     ERROR_FORCE_SENSOR_ADC_START_FAILURE = 0

@@ -34,14 +34,18 @@
 #define USER_INPUT_CIRCULAR_BUFFER_SIZE 100u
 
 // Session Controller Config
-#define SESSIONCONTROLLER_TASK_OSDELAY 5
+// 10ms = 100 Hz torque/power. Task delays below are tuned as a set: at the old rates the four
+// streams totalled ~38 kB/s, which saturated the USB TX path once a session started (rising
+// heartbeat RTTs, dropped batches); these halve the load with no visible loss on the plots.
+#define SESSIONCONTROLLER_TASK_OSDELAY 10
 #define SESSION_CONTROLLER_CIRCULAR_BUFFER_SIZE 100 // torque/power samples awaiting USB streaming
 
 // BPM Config
 #define MIN_DUTY_CYCLE_PERCENT 0.0f
 #define MAX_DUTY_CYCLE_PERCENT 0.95f
 #define BPM_CIRCULAR_BUFFER_SIZE 100
-#define BPM_TASK_OSDELAY 3
+// 50 Hz: the brake duty changes far slower than the sensors; no reason to stream it at 333 Hz.
+#define BPM_TASK_OSDELAY 20
 
 // FORCE SENSOR Config
 #define MAX_FORCE_LBF 25.0f
@@ -75,7 +79,9 @@
 #define OPTICAL_MAX_NUM_OVERFLOWS 3 // Meant to count overflows for optical encoder
 #define NUM_APERTURES 64 // Tied to physical 3D printed apparatus
 #define OPTICAL_ENCODER_CIRCULAR_BUFFER_SIZE 100 // Need to evaluate maximum possible size from STM32
-#define OPTICAL_ENCODER_TASK_OSDELAY 2
+// 10ms = 100 Hz velocity samples. Also improves low-RPM resolution: a 2ms window at 64 apertures
+// sees zero pulses below ~470 RPM and reported a string of zeros between real readings.
+#define OPTICAL_ENCODER_TASK_OSDELAY 10
 
 // PID config
 #define PID_INITIAL_STATUS false
@@ -83,11 +89,15 @@
 
 // USB config
 #define USB_TX_BUFFER_SIZE 512 // Buffer that is being sent to USB peripheral
-#define USB_TASK_OSDELAY 5
+// 2ms: drain in smaller, more frequent batches. At 5ms a busy session filled the 512-byte
+// buffer inside a couple of passes, hitting the mid-pass flush (and its give-up drop) often.
+#define USB_TASK_OSDELAY 2
 // Bounded retries when flushing a full TX buffer before giving up, so a host that
 // stops draining the IN endpoint can't block the USB task and starve RX/command
 // handling. Each retry waits ~1ms (rides out a prior packet still in flight).
-#define USB_TX_FLUSH_MAX_RETRIES 5
+// 20: a 512-byte CDC transfer can legitimately take several ms of BUSY at full-speed USB;
+// the old 5 gave up (and dropped the batch) during ordinary congestion, not just dead hosts.
+#define USB_TX_FLUSH_MAX_RETRIES 20
 
 // LCD config
 #define LCD_TASK_OSDELAY 20

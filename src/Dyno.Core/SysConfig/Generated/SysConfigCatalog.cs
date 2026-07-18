@@ -163,7 +163,7 @@ public static class SysConfigCatalog
                 "ms",
                 "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU.",
                 IsFloat: false,
-                Default: 5.0,
+                Default: 10.0,
                 Min: 1.0,
                 Max: 60000.0
             ),
@@ -174,7 +174,7 @@ public static class SysConfigCatalog
                 "ms",
                 "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU.",
                 IsFloat: false,
-                Default: 3.0,
+                Default: 20.0,
                 Min: 1.0,
                 Max: 60000.0
             ),
@@ -221,7 +221,7 @@ public static class SysConfigCatalog
                 "ms",
                 "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU.",
                 IsFloat: false,
-                Default: 2.0,
+                Default: 10.0,
                 Min: 1.0,
                 Max: 60000.0
             ),
@@ -254,7 +254,7 @@ public static class SysConfigCatalog
                 "ms",
                 "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU.",
                 IsFloat: false,
-                Default: 5.0,
+                Default: 2.0,
                 Min: 1.0,
                 Max: 60000.0
             ),
@@ -265,7 +265,7 @@ public static class SysConfigCatalog
                 "attempts",
                 "Bounded retries when flushing a full TX buffer before dropping the batch.",
                 IsFloat: false,
-                Default: 5.0,
+                Default: 20.0,
                 Min: 0.0,
                 Max: 1000.0
             ),

@@ -77,11 +77,12 @@ public sealed class DeviceClient : IDisposable
     /// is not something a reader can notice. Undescribed traffic (the handshake ack and the
     /// heartbeats built on it) stays silent, so this reports intent, not chatter. Fires on the
     /// caller's thread; retries do not re-raise it.</summary>
-    /// <summary>Raised when the parser had to throw bytes away to regain alignment, with how many.
-    /// The device→host stream carries no CRC and no framing, so bytes lost in transit (a full ring
-    /// buffer on the board, most likely) do not announce themselves — they just shift everything
-    /// after them, and this is the only place that shows up. Fires on the read-loop thread.</summary>
-    public event Action<int>? StreamResynced;
+    /// <summary>Raised when the parser had to throw bytes away to regain alignment, with what was
+    /// skipped and which records it sat between. The device→host stream carries no CRC and no
+    /// framing, so bytes lost in transit (a full ring buffer on the board, most likely) do not
+    /// announce themselves — they just shift everything after them, and this is the only place
+    /// that shows up. Fires on the read-loop thread.</summary>
+    public event Action<ResyncDetails>? StreamResynced;
 
     public event Action<string>? CommandSent;
 
@@ -138,13 +139,14 @@ public sealed class DeviceClient : IDisposable
         _parser.Resynced += OnResynced;
     }
 
-    private void OnResynced(int bytesDropped)
+    private void OnResynced(ResyncDetails details)
     {
         _log.LogWarning(
-            "dropped {Bytes} bytes to resync the device stream; the link is losing data",
-            bytesDropped
+            "dropped {Bytes} bytes to resync the device stream (skipped: {Skipped}); the link is losing data",
+            details.BytesDropped,
+            Convert.ToHexString(details.SkippedBytes)
         );
-        StreamResynced?.Invoke(bytesDropped);
+        StreamResynced?.Invoke(details);
     }
 
     public bool IsRunning => _readLoop is { IsCompleted: false };

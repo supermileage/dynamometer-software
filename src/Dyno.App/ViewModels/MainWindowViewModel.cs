@@ -567,6 +567,21 @@ public partial class MainWindowViewModel : ObservableObject
             case TaskMonitorSample s:
                 UpsertTask(s.Data);
                 break;
+            case DeviceFault f
+                when f.Error
+                    is {
+                        Task: task_offset_t.TASK_OFFSET_USB_CONTROLLER,
+                        IsWarning: true,
+                        Number: 0,
+                    }:
+                // WARNING_USB_TX_BATCH_DROPPED: the board gave up flushing its TX buffer and threw
+                // telemetry away (rate-limited to one report per second on the device). This is the
+                // device-side half of the story whose host-side half is the resync warning above.
+                AddEvent(
+                    $"[WARN] device dropped telemetry batch(es) in the last second @ {f.Timestamp} — "
+                        + "its USB TX path is saturated; samples are missing"
+                );
+                break;
             case DeviceFault f:
                 AddEvent(
                     $"[{(f.Error.IsWarning ? "WARN" : "ERR ")}] {Friendly(f.Error.Task)} #{f.Error.Number} @ {f.Timestamp}"
@@ -670,15 +685,26 @@ public partial class MainWindowViewModel : ObservableObject
     /// here. Reported as a warning rather than as the undecodable frames it used to produce: those
     /// frames were never sent by anything, and reading them as messages (from "task 252", say) told
     /// the user about a device that does not exist instead of about a link that is dropping data.
-    /// </summary>
-    private void OnStreamResynced(int bytesDropped) =>
+    /// The line carries the evidence: which records the loss sat between and the skipped bytes
+    /// themselves, so a cut-off record can be identified instead of guessed at.</summary>
+    private void OnStreamResynced(ResyncDetails d) =>
         Dispatcher.UIThread.Post(() =>
+        {
+            string after = d.LastGoodHeader is { } g
+                ? $"after {g.msg_type}/{Friendly(g.task_offset)} ({g.payload_len} B)"
+                : "at stream start";
+            string hex = Convert.ToHexString(d.SkippedBytes);
+            if (d.BytesDropped > d.SkippedBytes.Length)
+            {
+                hex += $"… (+{d.BytesDropped - d.SkippedBytes.Length} more)";
+            }
             AddEvent(
-                $"[WARN] dropped {bytesDropped} byte{(bytesDropped == 1 ? "" : "s")} to resync the "
-                    + "device stream — data was lost in transit (the board's USB buffer overflowing "
-                    + "would do it); samples around this point are missing"
-            )
-        );
+                $"[WARN] dropped {d.BytesDropped} byte{(d.BytesDropped == 1 ? "" : "s")} to resync "
+                    + $"the device stream — {after}, resumed at {d.NextHeader.msg_type}/"
+                    + $"{Friendly(d.NextHeader.task_offset)} ({d.NextHeader.payload_len} B); "
+                    + $"skipped: {hex}"
+            );
+        });
 
     /// <summary>A command going out. Logged from the client rather than from each call site so the
     /// sysconfig writes pushed on a handshake — which no button press announces — show up too.

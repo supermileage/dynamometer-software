@@ -34,9 +34,13 @@ class USBController
         void Run();
         void MockMessages(const bool forever = true);
     private:
-        void StallIfIsBufferFull(bool bufferFull);   
+        void StallIfIsBufferFull(bool bufferFull);
         bool IsBufferFull(std::size_t msgSize);
         void ProcessErrorsAndWarnings();
+
+        // Frame a rate-limited WARNING_USB_TX_BATCH_DROPPED whenever give-up drops have happened,
+        // so link saturation shows in the host's event log instead of being silent sample loss.
+        void ReportTxDropsIfDue();
 
         // Pulls one complete, CRC-validated inbound frame out of the USB RX ring.
         // Returns true and fills header/payload/payloadLen when a frame is ready;
@@ -155,6 +159,11 @@ class USBController
         // changed, so a host that just connected (or one that lost and regained the link) is never
         // left waiting on an edge it cannot see.
         bool _sessionStateDue;
+
+        // TX batches discarded (give-up after bounded BUSY retries, or a FAIL result) since the
+        // last WARNING_USB_TX_BATCH_DROPPED went out, and when that was (ReportTxDropsIfDue).
+        uint32_t _txDropsPending = 0;
+        uint32_t _lastDropReportTick = 0;
 };
 
 #endif // INC_TASKS_USB_USBCONTROLLER_HPP_

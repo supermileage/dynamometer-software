@@ -426,16 +426,22 @@ void USBController::Run()
             #endif
 
             ProcessErrorsAndWarnings();
+            ReportTxDropsIfDue();
         }
 
         // 9. Flush whatever accumulated this iteration: command responses, session events and/or
         //    stream records. Nothing is transmitted when the buffer is empty.
         if (_txBufferIndex > 0)
         {
-            if (CDC_Transmit_FS(_txBuffer, _txBufferIndex) == USBD_BUSY)
+            uint8_t result = CDC_Transmit_FS(_txBuffer, _txBufferIndex);
+            if (result == USBD_BUSY)
             {
                 osDelay(sysconfig_get_u32(SYSCFG_USB_TASK_OSDELAY));
                 continue; // host busy; keep the buffer and retry next iteration
+            }
+            if (result != USBD_OK)
+            {
+                _txDropsPending++; // FAIL (e.g. device not configured): the batch never left
             }
             _txBufferIndex = 0;
         }
@@ -656,6 +662,43 @@ void USBController::StallIfIsBufferFull(bool bufferFull)
         osDelay(1);
     }
     _txBufferIndex = 0; // host not draining; drop this batch and move on
+    _txDropsPending++;
+}
+
+void USBController::ReportTxDropsIfDue()
+{
+    // At most one warning per second while batches are being dropped: enough for the host's
+    // event log to show a saturated link without the report itself adding to the saturation.
+    if (_txDropsPending == 0)
+    {
+        return;
+    }
+    uint32_t now = osKernelGetTickCount();
+    if (_lastDropReportTick != 0 && (now - _lastDropReportTick) < 1000)
+    {
+        return;
+    }
+    if (IsBufferFull(sizeof(task_error_data)))
+    {
+        return; // no room without flushing (which is what just failed); try again next pass
+    }
+
+    task_error_data warning = PopulateTaskErrorDataStruct(
+        get_timestamp(),
+        TASK_OFFSET_USB_CONTROLLER,
+        static_cast<uint32_t>(WARNING_USB_TX_BATCH_DROPPED)
+    );
+    usb_msg_header_t header =
+    {
+        .msg_type = USB_MSG_WARNING,
+        .task_offset = TASK_OFFSET_USB_CONTROLLER,
+        .payload_len = sizeof(task_error_data)
+    };
+    AddToBuffer<usb_msg_header_t>(&header, sizeof(header));
+    AddToBuffer<task_error_data>(&warning, sizeof(warning));
+
+    _lastDropReportTick = now;
+    _txDropsPending = 0;
 }
 
 bool USBController::IsBufferFull(std::size_t msgSize)

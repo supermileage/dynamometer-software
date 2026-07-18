@@ -314,7 +314,7 @@ public class StreamParserTests
     {
         var parser = new StreamParser();
         var received = new List<DeviceMessage>();
-        var resyncs = new List<int>();
+        var resyncs = new List<ResyncDetails>();
         parser.MessageReceived += received.Add;
         parser.Resynced += resyncs.Add;
 
@@ -329,7 +329,11 @@ public class StreamParserTests
         parser.Append([0xEE, 0xEE, 0xEE, .. message]);
 
         Assert.IsType<OpticalEncoderSample>(Assert.Single(received));
-        Assert.Equal(3, Assert.Single(resyncs));
+        var resync = Assert.Single(resyncs);
+        Assert.Equal(3, resync.BytesDropped);
+        Assert.Equal([0xEE, 0xEE, 0xEE], resync.SkippedBytes);
+        Assert.Null(resync.LastGoodHeader); // nothing decoded yet: lost at stream start
+        Assert.Equal(task_offset_t.TASK_OFFSET_OPTICAL_ENCODER, resync.NextHeader.task_offset);
     }
 
     [Fact]
@@ -337,7 +341,7 @@ public class StreamParserTests
     {
         var parser = new StreamParser();
         var received = new List<DeviceMessage>();
-        var resyncs = new List<int>();
+        var resyncs = new List<ResyncDetails>();
         parser.MessageReceived += received.Add;
         parser.Resynced += resyncs.Add;
 
@@ -355,6 +359,38 @@ public class StreamParserTests
         parser.Append([0xEE, 0xEE, .. message]);
 
         Assert.IsType<OpticalEncoderSample>(Assert.Single(received));
-        Assert.Equal(10, Assert.Single(resyncs));
+        Assert.Equal(10, Assert.Single(resyncs).BytesDropped);
+    }
+
+    [Fact]
+    public void ResyncDetails_NameTheRecordsAroundTheLoss()
+    {
+        var parser = new StreamParser();
+        var resyncs = new List<ResyncDetails>();
+        parser.MessageReceived += _ => { };
+        parser.Resynced += resyncs.Add;
+
+        byte[] before = Wire.Message(
+            usb_msg_type_t.USB_MSG_STREAM,
+            task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115,
+            new forcesensor_output_data { timestamp = 1 }
+        );
+        byte[] after = Wire.Message(
+            usb_msg_type_t.USB_MSG_STREAM,
+            task_offset_t.TASK_OFFSET_OPTICAL_ENCODER,
+            new optical_encoder_output_data { timestamp = 2 }
+        );
+
+        // A good force record, then garbage (a cut-off record), then a good encoder record: the
+        // report should name both neighbors — that context is what makes the loss debuggable.
+        parser.Append([.. before, 0xEE, 0xEE, .. after]);
+
+        var resync = Assert.Single(resyncs);
+        Assert.Equal([0xEE, 0xEE], resync.SkippedBytes);
+        Assert.Equal(
+            task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115,
+            Assert.NotNull(resync.LastGoodHeader).task_offset
+        );
+        Assert.Equal(task_offset_t.TASK_OFFSET_OPTICAL_ENCODER, resync.NextHeader.task_offset);
     }
 }
