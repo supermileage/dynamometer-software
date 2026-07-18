@@ -128,15 +128,21 @@ public partial class MainWindowViewModel : ObservableObject
     /// build bake in, and is anything not saved yet".</summary>
     public FirmwareViewModel Firmware { get; }
 
+    /// <summary>The Plots page: per-channel scrolling strip charts, fed from <see cref="Apply"/>
+    /// under the same session gate as the numeric readouts.</summary>
+    public PlotsViewModel Plots { get; } = new();
+
     /// <summary>Which sidebar page is showing. A single value (not a flag per page) so exactly
     /// one page is ever active; the per-page bools below exist only for IsVisible bindings.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsHomePage))]
+    [NotifyPropertyChangedFor(nameof(IsPlotsPage))]
     [NotifyPropertyChangedFor(nameof(IsSysConfigPage))]
     [NotifyPropertyChangedFor(nameof(IsFirmwarePage))]
     private AppPage _currentPage = AppPage.Home;
 
     public bool IsHomePage => CurrentPage == AppPage.Home;
+    public bool IsPlotsPage => CurrentPage == AppPage.Plots;
     public bool IsSysConfigPage => CurrentPage == AppPage.SysConfig;
     public bool IsFirmwarePage => CurrentPage == AppPage.Firmware;
 
@@ -418,7 +424,14 @@ public partial class MainWindowViewModel : ObservableObject
         Dispatcher.UIThread.Post(() =>
         {
             IsSessionActive = active;
-            if (!active)
+            if (active)
+            {
+                // Plots keep the *finished* run on screen (unlike the readouts, a frozen trace
+                // still reads as history, not as a live value) — so the moment to drop it is when
+                // the next run starts, not when this one ends.
+                Plots.OnSessionStarted();
+            }
+            else
             {
                 ClearTelemetry();
             }
@@ -520,16 +533,24 @@ public partial class MainWindowViewModel : ObservableObject
                 AngularVelocity = s.Data.angular_velocity;
                 AngularAcceleration = s.Data.angular_acceleration;
                 LastTimestamp = s.Data.timestamp;
+                Plots.RecordOpticalEncoder(
+                    s.Data.angular_velocity,
+                    s.Data.angular_acceleration,
+                    GearRatio
+                );
                 break;
             case ForceSensorSample s:
                 Force = s.Data.force;
+                Plots.RecordForce(s.Data.force);
                 break;
             case BpmSample s:
                 DutyCycle = s.Data.duty_cycle;
+                Plots.RecordDutyCycle(s.Data.duty_cycle);
                 break;
             case SessionControllerSample s:
                 Torque = s.Data.torque;
                 Power = s.Data.power;
+                Plots.RecordSessionController(s.Data.torque, s.Data.power, GearRatio);
                 break;
             case SessionState:
                 // Applied via DeviceClient.SessionStateChanged, which reports only real

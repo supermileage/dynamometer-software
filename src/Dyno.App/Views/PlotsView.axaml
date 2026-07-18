@@ -1,0 +1,88 @@
+<UserControl
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:vm="using:Dyno.App.ViewModels"
+  xmlns:controls="using:Dyno.App.Controls"
+  x:Class="Dyno.App.Views.PlotsView"
+  x:DataType="vm:MainWindowViewModel"
+>
+  <Design.DataContext>
+    <vm:MainWindowViewModel />
+  </Design.DataContext>
+
+  <Grid RowDefinitions="Auto,*" Margin="16" RowSpacing="14">
+    <!-- Channel picker. Every channel records whether shown or not, so a strip toggled on
+         mid-session arrives with its history rather than starting at the click. -->
+    <Border Grid.Row="0" Classes="card" Padding="12">
+      <StackPanel Spacing="8">
+        <TextBlock Classes="heading" Text="PLOTS — CHOOSE CHANNELS" />
+        <ItemsControl ItemsSource="{Binding Plots.Channels}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <WrapPanel ItemSpacing="14" LineSpacing="4" />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:PlotChannelViewModel">
+              <CheckBox IsChecked="{Binding IsVisible}" MinHeight="0" Padding="6,0,0,0">
+                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                  <Border
+                    Width="10"
+                    Height="10"
+                    CornerRadius="3"
+                    Background="{Binding Stroke}"
+                    VerticalAlignment="Center"
+                  />
+                  <TextBlock Text="{Binding Title}" VerticalAlignment="Center" />
+                </StackPanel>
+              </CheckBox>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+    </Border>
+
+    <!-- One strip per selected channel: small multiples over a shared time window. The units
+         differ per channel, so each strip owns its y-axis; only time lines up. -->
+    <ScrollViewer Grid.Row="1">
+      <ItemsControl ItemsSource="{Binding Plots.Channels}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <StackPanel Spacing="10" />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:PlotChannelViewModel">
+            <Border Classes="card" Padding="12,10" IsVisible="{Binding IsVisible}">
+              <StackPanel Spacing="4">
+                <StackPanel Orientation="Horizontal" Spacing="7">
+                  <Border
+                    Width="10"
+                    Height="10"
+                    CornerRadius="3"
+                    Background="{Binding Stroke}"
+                    VerticalAlignment="Center"
+                  />
+                  <TextBlock
+                    Classes="label"
+                    Text="{Binding Title}"
+                    FontSize="12"
+                    VerticalAlignment="Center"
+                  />
+                </StackPanel>
+                <controls:TimeSeriesPlot
+                  Height="150"
+                  Buffer="{Binding Buffer}"
+                  Stroke="{Binding Stroke}"
+                  AnchorTime="{Binding AnchorTime}"
+                  GridBrush="{StaticResource StrokeBrush}"
+                  LabelBrush="{StaticResource TextMutedBrush}"
+                />
+              </StackPanel>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </ScrollViewer>
+  </Grid>
+</UserControl>
