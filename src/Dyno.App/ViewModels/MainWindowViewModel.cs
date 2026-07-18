@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -172,6 +173,7 @@ public partial class MainWindowViewModel : ObservableObject
     public string SessionStatus => IsSessionActive ? "Session running" : "No session";
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(AngularVelocityGeared))]
     private double _angularVelocity;
 
     [ObservableProperty]
@@ -184,10 +186,41 @@ public partial class MainWindowViewModel : ObservableObject
     private double _dutyCycle;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TorqueGeared))]
     private double _torque;
 
     [ObservableProperty]
     private double _power;
+
+    /// <summary>The compile-time GEAR_RATIO from this PC's copy of the firmware config — the saved
+    /// override if one exists, else config.h itself. Nothing on the wire carries it, so this shows
+    /// what the firmware *should* have been built with; a board flashed from a different tree can
+    /// disagree.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TorqueGeared))]
+    [NotifyPropertyChangedFor(nameof(AngularVelocityGeared))]
+    private double _gearRatio = 1.0;
+
+    /// <summary>Re-reads GEAR_RATIO from the SysConfig page's compile-time settings. Values there
+    /// are C literals ("1.0f"), hence the suffix strip. An unreadable or missing define falls back
+    /// to 1.0 — direct drive — so the geared readouts degrade to the sensor values, never to 0.</summary>
+    private void RefreshGearRatio()
+    {
+        string? raw = SysConfig.CompileTimeValue("GEAR_RATIO");
+        GearRatio =
+            raw is not null
+            && double.TryParse(
+                raw.TrimEnd('f', 'F', 'u', 'U', 'l', 'L'),
+                CultureInfo.InvariantCulture,
+                out double value
+            )
+                ? value
+                : 1.0;
+    }
+
+    public double TorqueGeared => Torque * GearRatio;
+
+    public double AngularVelocityGeared => AngularVelocity * GearRatio;
 
     [ObservableProperty]
     private uint _lastTimestamp;
@@ -199,6 +232,11 @@ public partial class MainWindowViewModel : ObservableObject
         // The connect-time restore is the one device write the user never asked for, and the only
         // one they cannot see happen on the page they're not looking at.
         SysConfig.DeviceSyncLogged += line => Dispatcher.UIThread.Post(() => AddEvent(line));
+        // The geared readouts multiply by the compile-time GEAR_RATIO from the SysConfig page.
+        // Its constructor has already loaded the headers (so the event for that firing is gone);
+        // read once now, then follow reloads and applied edits.
+        SysConfig.CompileTimeSettingsChanged += () => Dispatcher.UIThread.Post(RefreshGearRatio);
+        RefreshGearRatio();
         Firmware = new FirmwareViewModel(
             SysConfig.CompileTimeOverrides,
             () => SysConfig.PendingCount

@@ -14,7 +14,11 @@
 
 // Mechanical Power Calculation Constants
 #define DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M 1.0f
-#define MOMENT_OF_INERTIA_KG_M2 1.0f
+// Not measured yet; 0 drops the I*alpha term from the torque calculation until it is.
+#define MOMENT_OF_INERTIA_KG_M2 0.0f
+// Sensed-shaft to output ratio; 1.0 = direct drive. Compile-time only (not sysconfig, not
+// streamed): the desktop app reads it from its own copy of this header for the geared readouts.
+#define GEAR_RATIO 1.0f
 
 // Main PID controller parameters
 #define K_P 1.0f

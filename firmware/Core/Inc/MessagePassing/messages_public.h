@@ -392,7 +392,7 @@ DYNO_STATIC_ASSERT(sizeof(bpm_output_data) == 4 + 4 + 4, "Size of bpm_output_dat
 
 typedef struct {
     uint32_t timestamp;
-    float torque;   // N·m
+    float torque;   // N·m, at the sensed shaft
     float power;   // W
 } session_controller_output_data;
 

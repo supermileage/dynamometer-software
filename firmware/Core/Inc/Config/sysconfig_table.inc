@@ -1,7 +1,7 @@
 // AUTO-GENERATED from tools/message_gen/schema/messages_public.yaml by generate.py -- DO NOT EDIT.
 // Change that schema and re-run tools/message_gen/generate.py (CI verifies they match).
 [SYSCFG_DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M] = SYSCFG_F32(DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M, 1e-06f, 1000.0f),
-[SYSCFG_MOMENT_OF_INERTIA_KG_M2] = SYSCFG_F32(MOMENT_OF_INERTIA_KG_M2, 1e-09f, 1e+06f),
+[SYSCFG_MOMENT_OF_INERTIA_KG_M2] = SYSCFG_F32(MOMENT_OF_INERTIA_KG_M2, 0.0f, 1e+06f),
 [SYSCFG_K_P] = SYSCFG_F32(K_P, -1e+06f, 1e+06f),
 [SYSCFG_K_I] = SYSCFG_F32(K_I, -1e+06f, 1e+06f),
 [SYSCFG_K_D] = SYSCFG_F32(K_D, -1e+06f, 1e+06f),

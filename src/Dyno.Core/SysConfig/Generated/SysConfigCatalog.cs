@@ -28,10 +28,10 @@ public static class SysConfigCatalog
                 "MOMENT_OF_INERTIA_KG_M2",
                 "Mechanical",
                 "kg·m²",
-                "Rotating assembly's moment of inertia, used in the torque calculation.",
+                "Rotating assembly's moment of inertia, used in the torque calculation. 0 drops the I·α term until the inertia is measured.",
                 IsFloat: true,
-                Default: 1.0,
-                Min: 1e-09,
+                Default: 0.0,
+                Min: 0.0,
                 Max: 1000000.0
             ),
             new(

@@ -332,7 +332,7 @@ public struct bpm_output_data
 public struct session_controller_output_data
 {
     public uint timestamp;
-    public float torque;   // N·m
+    public float torque;   // N·m, at the sensed shaft
     public float power;   // W
 }
 

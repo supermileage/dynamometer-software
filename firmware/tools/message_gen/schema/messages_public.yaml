@@ -384,7 +384,7 @@ sections:
       that provides its boot default. Ids are positional: append only.
     params:
       - { name: DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M, type: float, min: 1.0e-6, max: 1000.0, category: "Mechanical", unit: "m", description: "Lever arm from the force sensor to the shaft center, used in the torque calculation." }
-      - { name: MOMENT_OF_INERTIA_KG_M2, type: float, min: 1.0e-9, max: 1.0e6, category: "Mechanical", unit: "kg·m²", description: "Rotating assembly's moment of inertia, used in the torque calculation." }
+      - { name: MOMENT_OF_INERTIA_KG_M2, type: float, min: 0.0, max: 1.0e6, category: "Mechanical", unit: "kg·m²", description: "Rotating assembly's moment of inertia, used in the torque calculation. 0 drops the I·α term until the inertia is measured." }
       - { name: K_P, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Proportional gain." }
       - { name: K_I, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Integral gain." }
       - { name: K_D, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Derivative gain." }
@@ -422,6 +422,9 @@ sections:
       - { name: ADS1115_COMP_POL, type: enum, category: "Force Sensor", subsection: "I2C", unit: "", description: "ADS1115 ALERT/RDY pin active polarity.", options: [ {value: 0, label: "Active low"}, {value: 1, label: "Active high"} ] }
       - { name: ADS1115_COMP_LAT, type: enum, category: "Force Sensor", subsection: "I2C", unit: "", description: "ADS1115 comparator latching of the ALERT/RDY pin.", options: [ {value: 0, label: "Non-latching"}, {value: 1, label: "Latching"} ] }
       - { name: ADS1115_COMP_QUE, type: enum, category: "Force Sensor", subsection: "I2C", unit: "", description: "ADS1115 comparator queue: conversions before ALERT asserts (or disable the comparator).", options: [ {value: 0, label: "Assert after 1"}, {value: 1, label: "Assert after 2"}, {value: 2, label: "Assert after 4"}, {value: 3, label: "Disabled"} ] }
+      # GEAR_RATIO is deliberately NOT here: it is a compile-time config.h setting (editable via
+      # the app's compile-time overrides, applied on the next build/flash), and it is not streamed
+      # either -- the host reads it from its own copy of the firmware config for the geared readouts.
 
   - { kind: static_assert, expr: "sizeof(sysconfig_param_t) == 2", message: "Size of sysconfig_param_t must be 2 bytes" }
 
@@ -480,7 +483,7 @@ sections:
     name: session_controller_output_data
     fields:
       - { type: uint32_t, name: timestamp }
-      - { type: float,    name: torque, comment: "N·m" }
+      - { type: float,    name: torque, comment: "N·m, at the sensed shaft" }
       - { type: float,    name: power,  comment: "W" }
 
   - { kind: static_assert, expr: "sizeof(session_controller_output_data) == 4 + 4 + 4", message: "Size of session_controller_output_data must be 12 bytes" }
