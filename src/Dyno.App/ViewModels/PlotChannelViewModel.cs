@@ -1,5 +1,6 @@
 using Avalonia.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
+using Dyno.App.Controls;
 using Dyno.Core.Plotting;
 
 namespace Dyno.App.ViewModels;
@@ -10,7 +11,7 @@ namespace Dyno.App.ViewModels;
 /// Channels are the fixed vocabulary the user builds graphs from; the graphs themselves are
 /// <see cref="PlotGraphViewModel"/>s.
 /// </summary>
-public partial class PlotChannelViewModel : ObservableObject
+public partial class PlotChannelViewModel : ObservableObject, IPlotSeries
 {
     /// <summary>~33 s of history at the force sensor's fastest realistic rate (1 kHz); other
     /// channels sample slower and so keep proportionally more time than the plot window shows.</summary>

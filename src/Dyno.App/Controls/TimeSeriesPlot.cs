@@ -8,20 +8,24 @@ using Dyno.Core.Plotting;
 namespace Dyno.App.Controls;
 
 /// <summary>
-/// A single scrolling strip chart: one series drawn over the last <see cref="WindowSeconds"/>
-/// seconds ending at <see cref="AnchorTime"/>. The y-axis auto-scales to the visible data — each
-/// strip is a small multiple with its own units, so sharing a scale with siblings would be
-/// meaningless. Dense data is min/max-decimated per pixel column, so spikes survive at any rate.
+/// A scrolling strip chart of one or more series over the last <see cref="WindowSeconds"/> seconds
+/// ending at <see cref="AnchorTime"/>. Series carry different units, so there is no shared y-scale
+/// and no dual axis: each series is normalized to its <em>own</em> effective range — the fixed
+/// range configured in Settings, or its per-frame autoscale fit — and drawn on the common
+/// vertical. The numeric labels belong to <see cref="AxisSeries"/> alone; the picker above the
+/// graph chooses which. Dense data is min/max-decimated per pixel column, so spikes survive.
 /// </summary>
 public class TimeSeriesPlot : Control
 {
-    public static readonly StyledProperty<TimeSeriesBuffer?> BufferProperty =
-        AvaloniaProperty.Register<TimeSeriesPlot, TimeSeriesBuffer?>(nameof(Buffer));
+    /// <summary>The series to draw, in draw order. Re-read every frame (the anchor ticks at
+    /// ~30 fps), so membership changes show up without collection subscriptions.</summary>
+    public static readonly StyledProperty<IReadOnlyList<IPlotSeries>?> SeriesProperty =
+        AvaloniaProperty.Register<TimeSeriesPlot, IReadOnlyList<IPlotSeries>?>(nameof(Series));
 
-    public static readonly StyledProperty<IBrush?> StrokeProperty = AvaloniaProperty.Register<
-        TimeSeriesPlot,
-        IBrush?
-    >(nameof(Stroke), Brushes.White);
+    /// <summary>Which series' range labels the y-axis (gridlines and tick values). Other series
+    /// still occupy the full height against their own ranges.</summary>
+    public static readonly StyledProperty<IPlotSeries?> AxisSeriesProperty =
+        AvaloniaProperty.Register<TimeSeriesPlot, IPlotSeries?>(nameof(AxisSeries));
 
     public static readonly StyledProperty<IBrush?> GridBrushProperty = AvaloniaProperty.Register<
         TimeSeriesPlot,
@@ -33,7 +37,7 @@ public class TimeSeriesPlot : Control
         IBrush?
     >(nameof(LabelBrush), new SolidColorBrush(Color.Parse("#8892A2")));
 
-    /// <summary>Right edge of the window (seconds, same clock as the buffer's samples). Advanced
+    /// <summary>Right edge of the window (seconds, same clock as the buffers' samples). Advanced
     /// by the page's frame timer; every change repaints the strip.</summary>
     public static readonly StyledProperty<double> AnchorTimeProperty = AvaloniaProperty.Register<
         TimeSeriesPlot,
@@ -45,48 +49,28 @@ public class TimeSeriesPlot : Control
         double
     >(nameof(WindowSeconds), 30.0);
 
-    /// <summary>True (default): fit the y-axis to the visible data each frame. False: use the
-    /// fixed <see cref="ManualMin"/>/<see cref="ManualMax"/> range; data outside is clipped.</summary>
-    public static readonly StyledProperty<bool> AutoScaleProperty = AvaloniaProperty.Register<
-        TimeSeriesPlot,
-        bool
-    >(nameof(AutoScale), true);
-
-    public static readonly StyledProperty<double> ManualMinProperty = AvaloniaProperty.Register<
-        TimeSeriesPlot,
-        double
-    >(nameof(ManualMin));
-
-    public static readonly StyledProperty<double> ManualMaxProperty = AvaloniaProperty.Register<
-        TimeSeriesPlot,
-        double
-    >(nameof(ManualMax), 100.0);
-
     static TimeSeriesPlot()
     {
         AffectsRender<TimeSeriesPlot>(
-            BufferProperty,
-            StrokeProperty,
+            SeriesProperty,
+            AxisSeriesProperty,
             GridBrushProperty,
             LabelBrushProperty,
             AnchorTimeProperty,
-            WindowSecondsProperty,
-            AutoScaleProperty,
-            ManualMinProperty,
-            ManualMaxProperty
+            WindowSecondsProperty
         );
     }
 
-    public TimeSeriesBuffer? Buffer
+    public IReadOnlyList<IPlotSeries>? Series
     {
-        get => GetValue(BufferProperty);
-        set => SetValue(BufferProperty, value);
+        get => GetValue(SeriesProperty);
+        set => SetValue(SeriesProperty, value);
     }
 
-    public IBrush? Stroke
+    public IPlotSeries? AxisSeries
     {
-        get => GetValue(StrokeProperty);
-        set => SetValue(StrokeProperty, value);
+        get => GetValue(AxisSeriesProperty);
+        set => SetValue(AxisSeriesProperty, value);
     }
 
     public IBrush? GridBrush
@@ -113,24 +97,6 @@ public class TimeSeriesPlot : Control
         set => SetValue(WindowSecondsProperty, value);
     }
 
-    public bool AutoScale
-    {
-        get => GetValue(AutoScaleProperty);
-        set => SetValue(AutoScaleProperty, value);
-    }
-
-    public double ManualMin
-    {
-        get => GetValue(ManualMinProperty);
-        set => SetValue(ManualMinProperty, value);
-    }
-
-    public double ManualMax
-    {
-        get => GetValue(ManualMaxProperty);
-        set => SetValue(ManualMaxProperty, value);
-    }
-
     // Margins around the plot area: room for y labels left, x labels below.
     private const double MarginLeft = 48;
     private const double MarginRight = 8;
@@ -139,7 +105,7 @@ public class TimeSeriesPlot : Control
     private const double LabelFontSize = 10;
     private const double XTickStep = 5; // seconds between vertical gridlines
 
-    // Scratch arrays reused across frames (sized to the buffer on first use).
+    // Scratch arrays reused across frames and series (sized to the largest buffer on first use).
     private double[]? _times;
     private float[]? _values;
     private double[]? _outTimes;
@@ -161,46 +127,101 @@ public class TimeSeriesPlot : Control
         }
 
         var typeface = new Typeface(TextElement.GetFontFamily(this));
-        var buffer = Buffer;
-
+        var series = Series;
         double t1 = AnchorTime;
         double t0 = t1 - WindowSeconds;
 
-        int count = 0;
-        if (buffer is not null && buffer.Count > 0)
+        if (series is null || series.Count == 0)
         {
-            EnsureScratch(buffer.Capacity, (int)plot.Width);
-            count = buffer.CopyWindow(t0, _times!, _values!);
-        }
-
-        if (count == 0)
-        {
-            DrawEmptyState(context, plot, typeface);
+            DrawEmptyState(context, plot, typeface, "no channels on this graph — toggle one above");
             return;
         }
 
-        double yMin;
-        double yMax;
-        double yTick;
-        if (!AutoScale && ManualMax > ManualMin)
+        // The axis is labeled from one series' range; everything else only needs its own range at
+        // draw time. Default to the first series so a single-series graph needs no configuration.
+        var axisSeries = AxisSeries is { } chosen && series.Contains(chosen) ? chosen : series[0];
+        (double Min, double Max, double Tick)? axisRange = EffectiveRange(axisSeries, t0, t1);
+        if (axisRange is { } range)
         {
-            // The configured range is exact — the user asked to look at precisely this window,
-            // so it is not widened to tick multiples; gridlines land on the multiples within it.
-            yMin = ManualMin;
-            yMax = ManualMax;
-            yTick = NiceStep((yMax - yMin) / 4);
+            DrawGridAndLabels(context, plot, typeface, t0, t1, range.Min, range.Max, range.Tick);
+        }
+
+        bool drewAnything = false;
+        foreach (var s in series)
+        {
+            if (EffectiveRange(s, t0, t1) is not { } r)
+            {
+                continue; // autoscale with no data in the window: nothing to fit, nothing to draw
+            }
+            int count = CopyWindow(s, t0);
+            if (count > 0)
+            {
+                DrawSeries(context, plot, s.Stroke, t0, t1, r.Min, r.Max, count);
+                drewAnything = true;
+            }
+        }
+
+        if (!drewAnything)
+        {
+            DrawEmptyState(
+                context,
+                plot,
+                typeface,
+                "no data yet — samples appear once a session streams"
+            );
+        }
+    }
+
+    /// <summary>The y-range this series is drawn against: its fixed Settings range when autoscale
+    /// is off (exact — the user asked to look at precisely that window), else a tick-widened fit
+    /// of its visible data. Null when autoscaling with nothing visible.</summary>
+    private (double Min, double Max, double Tick)? EffectiveRange(
+        IPlotSeries s,
+        double t0,
+        double t1
+    )
+    {
+        if (!s.AutoScale && s.AxisMax > s.AxisMin)
+        {
+            return (s.AxisMin, s.AxisMax, NiceStep((s.AxisMax - s.AxisMin) / 4));
+        }
+
+        int count = CopyWindow(s, t0);
+        if (count == 0)
+        {
+            return null;
+        }
+
+        double min = double.PositiveInfinity;
+        double max = double.NegativeInfinity;
+        for (int i = 0; i < count; i++)
+        {
+            min = Math.Min(min, _values![i]);
+            max = Math.Max(max, _values[i]);
+        }
+        // A flat line still needs a range to sit in; ±1 (or 10%) keeps it mid-strip.
+        if (max - min < 1e-9)
+        {
+            double flatPad = Math.Max(1, Math.Abs(max) * 0.1);
+            min -= flatPad;
+            max += flatPad;
         }
         else
         {
-            (yMin, yMax) = VisibleRange(count);
-            yTick = NiceStep((yMax - yMin) / 4);
-            // Widen to tick multiples so the top and bottom gridlines land on labeled values.
-            yMin = Math.Floor(yMin / yTick) * yTick;
-            yMax = Math.Ceiling(yMax / yTick) * yTick;
+            double pad = (max - min) * 0.08;
+            min -= pad;
+            max += pad;
         }
 
-        DrawGridAndLabels(context, plot, typeface, t0, t1, yMin, yMax, yTick);
-        DrawSeries(context, plot, t0, t1, yMin, yMax, count);
+        double tick = NiceStep((max - min) / 4);
+        // Widen to tick multiples so the top and bottom gridlines land on labeled values.
+        return (Math.Floor(min / tick) * tick, Math.Ceiling(max / tick) * tick, tick);
+    }
+
+    private int CopyWindow(IPlotSeries s, double t0)
+    {
+        EnsureScratch(s.Buffer.Capacity, (int)Math.Max(1, Bounds.Width));
+        return s.Buffer.CopyWindow(t0, _times!, _values!);
     }
 
     private void EnsureScratch(int bufferCapacity, int plotWidth)
@@ -216,31 +237,6 @@ public class TimeSeriesPlot : Control
             _outTimes = new double[needed];
             _outValues = new float[needed];
         }
-    }
-
-    private (double Min, double Max) VisibleRange(int count)
-    {
-        double min = double.PositiveInfinity;
-        double max = double.NegativeInfinity;
-        for (int i = 0; i < count; i++)
-        {
-            min = Math.Min(min, _values![i]);
-            max = Math.Max(max, _values[i]);
-        }
-        // A flat line still needs a range to sit in; ±1 (or 10%) keeps it mid-strip.
-        if (max - min < 1e-9)
-        {
-            double pad = Math.Max(1, Math.Abs(max) * 0.1);
-            min -= pad;
-            max += pad;
-        }
-        else
-        {
-            double pad = (max - min) * 0.08;
-            min -= pad;
-            max += pad;
-        }
-        return (min, max);
     }
 
     /// <summary>The nearest 1/2/5×10ⁿ at or above <paramref name="raw"/> — axis steps people can
@@ -286,7 +282,7 @@ public class TimeSeriesPlot : Control
         var gridPen = new Pen(GridBrush, 1);
 
         // Horizontal gridlines + y labels at each tick multiple inside the range (a manual range's
-        // bounds need not be multiples themselves).
+        // bounds need not be multiples themselves). Values are the axis series' alone.
         double firstTick = Math.Ceiling(yMin / yTick - 1e-9) * yTick;
         for (double y = firstTick; y <= yMax + yTick * 0.01; y += yTick)
         {
@@ -313,9 +309,12 @@ public class TimeSeriesPlot : Control
         }
     }
 
+    /// <summary>Draws the series currently in the scratch arrays against its own range — the
+    /// normalization that lets differently-scaled series share the strip.</summary>
     private void DrawSeries(
         DrawingContext context,
         Rect plot,
+        IBrush? stroke,
         double t0,
         double t1,
         double yMin,
@@ -349,7 +348,7 @@ public class TimeSeriesPlot : Control
             g.EndFigure(isClosed: false);
         }
 
-        var pen = new Pen(Stroke, 2) { LineJoin = PenLineJoin.Round, LineCap = PenLineCap.Round };
+        var pen = new Pen(stroke, 2) { LineJoin = PenLineJoin.Round, LineCap = PenLineCap.Round };
         using (context.PushClip(plot))
         {
             context.DrawGeometry(null, pen, geometry);
@@ -363,10 +362,15 @@ public class TimeSeriesPlot : Control
             );
     }
 
-    private void DrawEmptyState(DrawingContext context, Rect plot, Typeface typeface)
+    private void DrawEmptyState(
+        DrawingContext context,
+        Rect plot,
+        Typeface typeface,
+        string message
+    )
     {
         context.DrawRectangle(new Pen(GridBrush, 1), plot);
-        var label = Text("no data yet — samples appear once a session streams", typeface);
+        var label = Text(message, typeface);
         context.DrawText(
             label,
             new Point(

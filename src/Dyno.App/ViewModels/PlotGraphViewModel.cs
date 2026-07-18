@@ -4,10 +4,11 @@ using CommunityToolkit.Mvvm.Input;
 namespace Dyno.App.ViewModels;
 
 /// <summary>
-/// One graph on the Plots page: which channel it shows and how tall it is. Graphs are created and
-/// removed freely; the channels (and their recorded history) live on independently of them, so
-/// switching a graph to another channel — or adding a second graph of the same one — costs
-/// nothing and arrives with history.
+/// One graph on the Plots page: which channels it overlays, which of them labels the y-axis, and
+/// how tall it is. Series carry different units, so each is drawn normalized to its own configured
+/// range (Settings > Plots) or autoscale fit — never a shared or dual axis — and the numeric axis
+/// belongs to the one channel picked in <see cref="AxisChannel"/>. Graphs are created and removed
+/// freely; the channels (and their recorded history) live on independently of them.
 /// </summary>
 public partial class PlotGraphViewModel : ObservableObject
 {
@@ -16,11 +17,19 @@ public partial class PlotGraphViewModel : ObservableObject
 
     private readonly Action<PlotGraphViewModel> _remove;
 
-    /// <summary>The channel picker's choices — every channel, shared by reference from the page.</summary>
-    public IReadOnlyList<PlotChannelViewModel> Channels { get; }
+    /// <summary>One toggle per channel, in the channels' fixed order — the graph's header chips.</summary>
+    public IReadOnlyList<PlotGraphSeriesViewModel> Series { get; }
 
+    /// <summary>The toggled-on channels, in fixed order — what the plot draws. Rebuilt (not
+    /// mutated) on every toggle so bindings see one atomic change.</summary>
     [ObservableProperty]
-    private PlotChannelViewModel _channel;
+    private IReadOnlyList<PlotChannelViewModel> _shownChannels = [];
+
+    /// <summary>Which shown channel's range labels the y-axis, so the reader knows what the
+    /// numbers mean when differently-scaled series share the strip. Follows the shown set:
+    /// never null while anything is shown, never a hidden channel.</summary>
+    [ObservableProperty]
+    private PlotChannelViewModel? _axisChannel;
 
     /// <summary>Plot-area height in pixels, dragged via the grip under the graph. This is what
     /// "bigger than that one" means here: heights are independent, the page scrolls.</summary>
@@ -29,13 +38,26 @@ public partial class PlotGraphViewModel : ObservableObject
 
     public PlotGraphViewModel(
         IReadOnlyList<PlotChannelViewModel> channels,
-        PlotChannelViewModel channel,
+        PlotChannelViewModel initiallyShown,
         Action<PlotGraphViewModel> remove
     )
     {
-        Channels = channels;
-        _channel = channel;
         _remove = remove;
+        Series = channels.Select(c => new PlotGraphSeriesViewModel(c, RebuildShown)).ToList();
+        Series.First(s => s.Channel == initiallyShown).IsShown = true;
+    }
+
+    /// <summary>Whether this graph currently draws <paramref name="channel"/> — lets Add graph
+    /// default to something not yet on screen anywhere.</summary>
+    public bool Shows(PlotChannelViewModel channel) => ShownChannels.Contains(channel);
+
+    private void RebuildShown()
+    {
+        ShownChannels = Series.Where(s => s.IsShown).Select(s => s.Channel).ToList();
+        if (AxisChannel is null || !ShownChannels.Contains(AxisChannel))
+        {
+            AxisChannel = ShownChannels.FirstOrDefault();
+        }
     }
 
     public void Resize(double delta) =>

@@ -91,7 +91,7 @@ public partial class PlotsViewModel
     [RelayCommand]
     private void AddGraph()
     {
-        var channel = Channels.FirstOrDefault(c => !Graphs.Any(g => g.Channel == c)) ?? Channels[0];
+        var channel = Channels.FirstOrDefault(c => !Graphs.Any(g => g.Shows(c))) ?? Channels[0];
         Graphs.Add(new PlotGraphViewModel(Channels, channel, RemoveGraph));
     }
 

@@ -36,6 +36,19 @@
     <Style Selector="Thumb.resize:pointerover /template/ Border > Border">
       <Setter Property="Background" Value="{StaticResource AccentBrush}" />
     </Style>
+    <!-- Channel chips: toggle a channel onto/off a graph. The checked set doubles as the
+         graph's legend (swatch + name), so no line is ever identified by color alone. -->
+    <Style Selector="ToggleButton.chip">
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="Padding" Value="7,3" />
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="CornerRadius" Value="6" />
+    </Style>
+    <Style Selector="ToggleButton.chip:checked /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+      <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+    </Style>
   </UserControl.Styles>
 
   <Grid RowDefinitions="Auto,*" Margin="16" RowSpacing="14">
@@ -46,7 +59,7 @@
           <TextBlock
             Classes="label"
             FontSize="12"
-            Text="Each graph shows one channel over the last 30 s. Pick the channel on the graph, drag the grip under it to resize, add as many as you need."
+            Text="Toggle any set of channels onto a graph — each line is drawn against its own range (Settings > Plots, or autoscale), and the y-axis numbers belong to the channel picked on the graph. Drag the grip under a graph to resize it; add as many as you need."
             TextWrapping="Wrap"
           />
         </StackPanel>
@@ -60,8 +73,9 @@
       </Grid>
     </Border>
 
-    <!-- One card per graph: small multiples over a shared time window. The units differ per
-         channel, so each graph owns its y-axis; only time lines up. -->
+    <!-- One card per graph, each overlaying any set of channels over a shared time window.
+         Units differ per channel, so there is no shared or dual y-scale: every series is
+         normalized to its own configured range and the axis labels follow the picked channel. -->
     <ScrollViewer Grid.Row="1">
       <StackPanel Spacing="10">
         <ItemsControl ItemsSource="{Binding Plots.Graphs}">
@@ -73,56 +87,90 @@
           <ItemsControl.ItemTemplate>
             <DataTemplate x:DataType="vm:PlotGraphViewModel">
               <Border Classes="card" Padding="12,8,12,10">
-                <StackPanel Spacing="4">
-                  <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="8">
-                    <Border
-                      Grid.Column="0"
-                      Width="10"
-                      Height="10"
-                      CornerRadius="3"
-                      Background="{Binding Channel.Stroke}"
-                      VerticalAlignment="Center"
-                    />
-                    <ComboBox
-                      Grid.Column="1"
-                      ItemsSource="{Binding Channels}"
-                      SelectedItem="{Binding Channel}"
-                      MinWidth="230"
-                      FontSize="12"
-                    >
-                      <ComboBox.ItemTemplate>
-                        <DataTemplate x:DataType="vm:PlotChannelViewModel">
-                          <StackPanel Orientation="Horizontal" Spacing="7">
-                            <Border
-                              Width="10"
-                              Height="10"
-                              CornerRadius="3"
-                              Background="{Binding Stroke}"
-                              VerticalAlignment="Center"
-                            />
-                            <TextBlock Text="{Binding Title}" VerticalAlignment="Center" />
-                          </StackPanel>
+                <StackPanel Spacing="6">
+                  <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
+                    <ItemsControl Grid.Column="0" ItemsSource="{Binding Series}">
+                      <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                          <WrapPanel ItemSpacing="5" LineSpacing="5" />
+                        </ItemsPanelTemplate>
+                      </ItemsControl.ItemsPanel>
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:PlotGraphSeriesViewModel">
+                          <ToggleButton
+                            Classes="chip"
+                            IsChecked="{Binding IsShown}"
+                            ToolTip.Tip="{Binding Channel.Title}"
+                          >
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                              <Border
+                                Width="9"
+                                Height="9"
+                                CornerRadius="3"
+                                Background="{Binding Channel.Stroke}"
+                                VerticalAlignment="Center"
+                              />
+                              <TextBlock Text="{Binding Channel.Name}" VerticalAlignment="Center" />
+                            </StackPanel>
+                          </ToggleButton>
                         </DataTemplate>
-                      </ComboBox.ItemTemplate>
-                    </ComboBox>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- Every series is drawn against its own range (Settings > Plots, or its
+                         autoscale fit); the numbers on the left belong to this channel only. -->
+                    <StackPanel
+                      Grid.Column="1"
+                      Orientation="Horizontal"
+                      Spacing="6"
+                      VerticalAlignment="Center"
+                      ToolTip.Tip="Which channel's scale labels the y-axis. Every line is normalized to its own configured range, so shapes compare even when units differ."
+                    >
+                      <TextBlock
+                        Classes="label"
+                        Text="Y axis"
+                        FontSize="12"
+                        VerticalAlignment="Center"
+                      />
+                      <ComboBox
+                        ItemsSource="{Binding ShownChannels}"
+                        SelectedItem="{Binding AxisChannel}"
+                        MinWidth="185"
+                        FontSize="12"
+                      >
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate x:DataType="vm:PlotChannelViewModel">
+                            <StackPanel Orientation="Horizontal" Spacing="7">
+                              <Border
+                                Width="10"
+                                Height="10"
+                                CornerRadius="3"
+                                Background="{Binding Stroke}"
+                                VerticalAlignment="Center"
+                              />
+                              <TextBlock Text="{Binding Title}" VerticalAlignment="Center" />
+                            </StackPanel>
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                    </StackPanel>
+
                     <Button
-                      Grid.Column="3"
+                      Grid.Column="2"
                       Command="{Binding RemoveCommand}"
                       Padding="8,3"
                       FontSize="12"
-                      ToolTip.Tip="Remove this graph (the channel keeps recording)"
+                      VerticalAlignment="Center"
+                      ToolTip.Tip="Remove this graph (the channels keep recording)"
                     >
                       ✕
                     </Button>
                   </Grid>
                   <controls:TimeSeriesPlot
                     Height="{Binding PlotHeight}"
-                    Buffer="{Binding Channel.Buffer}"
-                    Stroke="{Binding Channel.Stroke}"
-                    AnchorTime="{Binding Channel.AnchorTime}"
-                    AutoScale="{Binding Channel.AutoScale}"
-                    ManualMin="{Binding Channel.AxisMin}"
-                    ManualMax="{Binding Channel.AxisMax}"
+                    Series="{Binding ShownChannels}"
+                    AxisSeries="{Binding AxisChannel}"
+                    AnchorTime="{Binding AxisChannel.AnchorTime, FallbackValue=0}"
                     GridBrush="{StaticResource StrokeBrush}"
                     LabelBrush="{StaticResource TextMutedBrush}"
                   />
