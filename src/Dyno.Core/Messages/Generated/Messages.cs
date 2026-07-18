@@ -22,7 +22,7 @@ public static class MessageConstants
     public const uint USB_FRAME_CRC_INIT = 0xFFFFu;   // 0xFFFFu
     public const uint USB_FRAME_CRC_POLY = 0x1021u;   // 0x1021u
     public const uint USB_RX_MAX_PAYLOAD = 128u;   // 128u
-    public const uint USB_PROTOCOL_VERSION = 4u;   // 4u
+    public const uint USB_PROTOCOL_VERSION = 5u;   // 5u
     public const uint SYSCFG_PARAM_COUNT = 35u;   // 35u  -- one past the highest sysconfig_param_t id; sizes the firmware store
 }
 
@@ -136,14 +136,17 @@ public struct usb_msg_header_t
     public uint payload_len;   // bytes following header
 }
 
-// ---- Host -> device framed command envelope -------------------------------
-// Inbound (PC -> STM32) frames are wrapped so the parser can resync after a ring
-// overflow drops bytes mid-stream:
+// ---- Framed envelope (both directions, as of v5) ---------------------------
+// Every frame on the wire -- PC -> STM32 commands and, since v5, the STM32 -> PC
+// stream too -- is wrapped so the receiver can detect corruption and resync after
+// bytes are lost mid-stream:
 //   [uint16_t USB_FRAME_SOF][usb_msg_header_t header][payload bytes][uint16_t crc]
 // crc is CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF) computed over the header
 // bytes followed by the payload bytes (the SOF marker and crc field themselves are
 // excluded). Multi-byte fields are little-endian, matching both the STM32 and the
-// x86 host. The same envelope is reused for the host-side parser.
+// x86 host. A receiver scans to the SOF, checks the CRC, and on a mismatch treats
+// the SOF as spurious -- so a cut-off record is *detected*, not inferred from
+// implausible header bytes as the unframed v4 stream had to.
 
 // Largest inbound payload the firmware accepts; frames claiming more are treated as
 // a spurious SOF and skipped during resync.
@@ -167,6 +170,11 @@ public struct usb_msg_header_t
 // v4 added session_controller_output_data (torque / power stream). A v4 host expects
 // those readouts during a session; against v3 firmware they would simply never arrive
 // and torque/power would sit blank next to live sensor data with nothing saying why.
+// 
+// v5 framed the device->host stream with the SOF+CRC envelope the other direction
+// already used. A v5 host scans for SOF markers and verifies CRCs; against unframed
+// v4 firmware nothing it receives would carry a SOF and the whole stream would be
+// skipped as garbage -- and v4 hosts would misread v5's SOF/CRC bytes as data.
 
 // Shared CRC so firmware and host compute identical checksums over a frame body.
 

@@ -216,8 +216,7 @@ void USBController::SendResponse(task_offset_t taskOffset, uint16_t opcode, uint
         .task_offset = taskOffset,
         .payload_len = sizeof(resp)
     };
-    AddToBuffer<usb_msg_header_t>(&header, sizeof(header));
-    AddToBuffer<usb_response_data_t>(&resp, sizeof(resp));
+    AppendFrame(header, &resp, sizeof(resp));
 }
 
 void USBController::SendDeviceReady()
@@ -232,8 +231,7 @@ void USBController::SendDeviceReady()
         .task_offset = TASK_OFFSET_USB_CONTROLLER,
         .payload_len = sizeof(evt)
     };
-    AddToBuffer<usb_msg_header_t>(&header, sizeof(header));
-    AddToBuffer<usb_device_ready_event>(&evt, sizeof(evt));
+    AppendFrame(header, &evt, sizeof(evt));
 }
 
 void USBController::SendSessionState(bool inSession)
@@ -252,8 +250,7 @@ void USBController::SendSessionState(bool inSession)
         .task_offset = TASK_OFFSET_SESSION_CONTROLLER,
         .payload_len = sizeof(evt)
     };
-    AddToBuffer<usb_msg_header_t>(&header, sizeof(header));
-    AddToBuffer<session_state_event>(&evt, sizeof(evt));
+    AppendFrame(header, &evt, sizeof(evt));
 }
 
 void USBController::AnnounceReadyIfDue()
@@ -296,6 +293,11 @@ void USBController::HandleHostDetach()
     _lastAnnounceTick = 0;  // 0 means "announce immediately", not up to 200ms from now
     _txBufferIndex = 0;
     usb_rx_flush();
+    // The drop tally belongs to the session that just ended; reporting it to the *next* host
+    // (which is how "TX saturated" appeared 9 ms before a fresh handshake even completed)
+    // would be telling it about data it never asked for.
+    _txDropsPending = 0;
+    _lastDropReportTick = 0;
 }
 
 void USBController::WaitForHandshake()
@@ -439,7 +441,7 @@ void USBController::Run()
                 osDelay(sysconfig_get_u32(SYSCFG_USB_TASK_OSDELAY));
                 continue; // host busy; keep the buffer and retry next iteration
             }
-            if (result != USBD_OK)
+            if (result != USBD_OK && _appReady)
             {
                 _txDropsPending++; // FAIL (e.g. device not configured): the batch never left
             }
@@ -506,9 +508,7 @@ void USBController::MockMessages(const bool forever)
         usb_header.msg_type = USB_MSG_STREAM;
         usb_header.task_offset = TASK_OFFSET_OPTICAL_ENCODER;
         usb_header.payload_len = sizeof(optical_encoder_output_data);
-
-        AddToBuffer<usb_msg_header_t>(&usb_header, sizeof(usb_msg_header_t));
-        AddToBuffer<optical_encoder_output_data>(&mock_data, sizeof(optical_encoder_output_data));
+        AppendFrame(usb_header, &mock_data, sizeof(optical_encoder_output_data));
         #endif
 
         #if !defined(FORCE_SENSOR_ADS1115_TASK_ENABLE) || !defined(FORCE_SENSOR_ADC_TASK_ENABLE)
@@ -524,9 +524,7 @@ void USBController::MockMessages(const bool forever)
         usb_header.msg_type = USB_MSG_STREAM;
         usb_header.task_offset = ACTIVE_FORCE_SENSOR_TASK_OFFSET;
         usb_header.payload_len = sizeof(forcesensor_output_data);
-
-        AddToBuffer<usb_msg_header_t>(&usb_header, sizeof(usb_msg_header_t));
-        AddToBuffer<forcesensor_output_data>(&mock_fs_data, sizeof(forcesensor_output_data));
+        AppendFrame(usb_header, &mock_fs_data, sizeof(forcesensor_output_data));
         #endif
 
         #if !defined(BPM_CONTROLLER_TASK_ENABLE)
@@ -542,8 +540,7 @@ void USBController::MockMessages(const bool forever)
         usb_header.msg_type = USB_MSG_STREAM;
         usb_header.task_offset = TASK_OFFSET_BPM_CONTROLLER;
         usb_header.payload_len = sizeof(bpm_output_data);
-        AddToBuffer<usb_msg_header_t>(&usb_header, sizeof(usb_msg_header_t));
-        AddToBuffer<bpm_output_data>(&mock_bpm_data, sizeof(bpm_output_data));
+        AppendFrame(usb_header, &mock_bpm_data, sizeof(bpm_output_data));
         #endif
 
         #if !defined(SESSION_CONTROLLER_TASK_ENABLE)
@@ -559,8 +556,7 @@ void USBController::MockMessages(const bool forever)
         usb_header.msg_type = USB_MSG_STREAM;
         usb_header.task_offset = TASK_OFFSET_SESSION_CONTROLLER;
         usb_header.payload_len = sizeof(session_controller_output_data);
-        AddToBuffer<usb_msg_header_t>(&usb_header, sizeof(usb_msg_header_t));
-        AddToBuffer<session_controller_output_data>(&mock_sc_data, sizeof(session_controller_output_data));
+        AppendFrame(usb_header, &mock_sc_data, sizeof(session_controller_output_data));
         #endif
 
         #if !defined(TASK_MONITOR_TASK_ENABLE)
@@ -577,8 +573,7 @@ void USBController::MockMessages(const bool forever)
         usb_header.msg_type = USB_MSG_STREAM;
         usb_header.task_offset = TASK_OFFSET_TASK_MONITOR;
         usb_header.payload_len = sizeof(task_monitor_output_data);
-        AddToBuffer<usb_msg_header_t>(&usb_header, sizeof(usb_msg_header_t));
-        AddToBuffer<task_monitor_output_data>(&mock_tm_data, sizeof(task_monitor_output_data));
+        AppendFrame(usb_header, &mock_tm_data, sizeof(task_monitor_output_data));
         #endif
 
         task_error_data mock_error_data = 
@@ -591,9 +586,7 @@ void USBController::MockMessages(const bool forever)
         usb_header.msg_type = USB_MSG_ERROR;
         usb_header.task_offset = TASK_OFFSET_SESSION_CONTROLLER;
         usb_header.payload_len = sizeof(task_error_data);
-
-        AddToBuffer<usb_msg_header_t>(&usb_header, sizeof(usb_header));
-        AddToBuffer<task_error_data>(&mock_error_data, sizeof(mock_error_data));
+        AppendFrame(usb_header, &mock_error_data, sizeof(mock_error_data));
 
         task_error_data mock_warning_data = PopulateTaskErrorDataStruct(
             timestamp++,
@@ -604,9 +597,7 @@ void USBController::MockMessages(const bool forever)
         usb_header.msg_type = USB_MSG_WARNING;
         usb_header.task_offset = TASK_OFFSET_FORCE_SENSOR_ADS1115;
         usb_header.payload_len = sizeof(task_error_data);
-
-        AddToBuffer<usb_msg_header_t>(&usb_header, sizeof(usb_header));
-        AddToBuffer<task_error_data>(&mock_warning_data, sizeof(mock_warning_data));
+        AppendFrame(usb_header, &mock_warning_data, sizeof(mock_warning_data));
 
 
         if (CDC_Transmit_FS(_txBuffer, _txBufferIndex) == USBD_BUSY) {
@@ -621,22 +612,20 @@ void USBController::MockMessages(const bool forever)
 
 void USBController::ProcessErrorsAndWarnings()
 {
-    while(_task_errors_buffer_reader.HasData()) 
+    while(_task_errors_buffer_reader.HasData())
     {
 
         StallIfIsBufferFull(IsBufferFull(sizeof(task_error_data)));
 
         task_error_data error_data;
         if (_task_errors_buffer_reader.GetElementAndIncrementIndex(error_data)) {
-            usb_msg_header_t header = 
+            usb_msg_header_t header =
             {
                 .msg_type = (error_data.error_code & WARNING_FLAG) ? USB_MSG_WARNING : USB_MSG_ERROR,
                 .task_offset = (task_offset_t)(error_data.error_code & TASK_OFFSET_MASK),
                 .payload_len = sizeof(task_error_data)
             };
-
-            AddToBuffer<usb_msg_header_t>(&header, sizeof(header));
-            AddToBuffer<task_error_data>(&error_data, sizeof(task_error_data));
+            AppendFrame(header, &error_data, sizeof(task_error_data));
         }
     }
 }
@@ -662,7 +651,13 @@ void USBController::StallIfIsBufferFull(bool bufferFull)
         osDelay(1);
     }
     _txBufferIndex = 0; // host not draining; drop this batch and move on
-    _txDropsPending++;
+    if (_appReady)
+    {
+        // Only an acked host was owed this data. Un-acked drops are routine (device-ready
+        // announcements piling up with nobody listening) and reporting them on the next
+        // handshake would tell that host about batches it was never meant to get.
+        _txDropsPending++;
+    }
 }
 
 void USBController::ReportTxDropsIfDue()
@@ -694,20 +689,20 @@ void USBController::ReportTxDropsIfDue()
         .task_offset = TASK_OFFSET_USB_CONTROLLER,
         .payload_len = sizeof(task_error_data)
     };
-    AddToBuffer<usb_msg_header_t>(&header, sizeof(header));
-    AddToBuffer<task_error_data>(&warning, sizeof(warning));
+    AppendFrame(header, &warning, sizeof(warning));
 
     _lastDropReportTick = now;
     _txDropsPending = 0;
 }
 
 bool USBController::IsBufferFull(std::size_t msgSize)
-{   
-    if (_txBufferIndex + sizeof(usb_msg_header_t) + msgSize >= USB_TX_BUFFER_SIZE) {
-        return true;   
+{
+    // Room for one full framed record: SOF + header + payload + CRC (see AppendFrame).
+    const std::size_t envelope = 2 * sizeof(uint16_t);
+    if (_txBufferIndex + envelope + sizeof(usb_msg_header_t) + msgSize >= USB_TX_BUFFER_SIZE) {
+        return true;
     }
-	return false;
-
+    return false;
 }
 
 extern "C" void usbcontroller_main(osMessageQueueId_t sessionControllerToUsbController,

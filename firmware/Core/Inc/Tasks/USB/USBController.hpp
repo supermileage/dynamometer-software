@@ -90,50 +90,64 @@ class USBController
         // Block until the host completes the USB_CMD_ACK handshake (mock/debug path).
         void WaitForHandshake();
 
-        template <typename T>
-        void AddToBuffer(T* msg, size_t msgSize) {
-            memcpy(_txBuffer + _txBufferIndex, msg, msgSize); 
-            _txBufferIndex += msgSize;
+        // Frames one record into the TX buffer with the shared SOF/CRC envelope (v5):
+        // [SOF][header][payload][crc16 over header+payload]. The caller has already reserved
+        // room via IsBufferFull, which accounts for the envelope bytes.
+        void AppendFrame(const usb_msg_header_t& header, const void* payload, size_t payloadLen)
+        {
+            const uint16_t sof = USB_FRAME_SOF;
+            memcpy(_txBuffer + _txBufferIndex, &sof, sizeof(sof));
+            _txBufferIndex += sizeof(sof);
+
+            const size_t crcFrom = _txBufferIndex;
+            memcpy(_txBuffer + _txBufferIndex, &header, sizeof(header));
+            _txBufferIndex += sizeof(header);
+            if (payloadLen > 0)
+            {
+                memcpy(_txBuffer + _txBufferIndex, payload, payloadLen);
+                _txBufferIndex += payloadLen;
+            }
+
+            const uint16_t crc = usb_frame_crc16(_txBuffer + crcFrom, sizeof(header) + payloadLen);
+            memcpy(_txBuffer + _txBufferIndex, &crc, sizeof(crc));
+            _txBufferIndex += sizeof(crc);
         }
 
         template <typename T>
         void ProcessTaskData(CircularBufferReader<T>& bufferReader, task_offset_t taskId)
-        {            
+        {
             T data; // Temporary variable to hold the data
             while (bufferReader.HasData()) { // Check if data is available
                 // Ensure the buffer is not full before adding data
                 StallIfIsBufferFull(IsBufferFull(sizeof(T)));
 
                 if (bufferReader.GetElementAndIncrementIndex(data)) {
-                    usb_msg_header_t header = 
+                    usb_msg_header_t header =
                     {
                         .msg_type = USB_MSG_STREAM,
                         .task_offset = taskId,
                         .payload_len = sizeof(T)
                     };
-                    AddToBuffer<usb_msg_header_t>(&header, sizeof(usb_msg_header_t));
-                    AddToBuffer<T>(&data, sizeof(T));
+                    AppendFrame(header, &data, sizeof(T));
                 }
             }
         }
 
         template <typename T>
         void ProcessTaskData(osMessageQueueId_t msgqHandle, task_offset_t taskId)
-        {            
+        {
             T data; // Temporary variable to hold the data
             while (osMessageQueueGet(msgqHandle, &data, 0, 0) == osOK) { // Check if data is available
                 // Ensure the buffer is not full before adding data
                 StallIfIsBufferFull(IsBufferFull(sizeof(T)));
 
-                usb_msg_header_t header = 
+                usb_msg_header_t header =
                 {
                     .msg_type = USB_MSG_STREAM,
                     .task_offset = taskId,
                     .payload_len = sizeof(T)
                 };
-                AddToBuffer<usb_msg_header_t>(&header, sizeof(usb_msg_header_t));
-                AddToBuffer<T>(&data, sizeof(T));
-                
+                AppendFrame(header, &data, sizeof(T));
             }
         }
 

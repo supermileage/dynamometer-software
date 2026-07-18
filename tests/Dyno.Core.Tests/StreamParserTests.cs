@@ -191,12 +191,13 @@ public class StreamParserTests
     }
 
     [Fact]
-    public void Rejects_HostToDeviceMessageType_AsImplausible()
+    public void AValidFrame_OfAHostToDeviceType_SurfacesAsUnknown_NotAsADesync()
     {
         var (parser, received) = NewParser();
 
-        // COMMAND is a host→device type and must never appear on the inbound stream; its header is
-        // treated as garbage (not decoded to an UnknownMessage as it would be if merely "in range").
+        // COMMAND is a host→device type that should never arrive inbound — but this frame's CRC
+        // is valid, so *something* really sent it. That's worth surfacing as an undecoded frame,
+        // not silently eating as if it were line noise.
         parser.Append(
             Wire.Message(
                 usb_msg_type_t.USB_MSG_COMMAND,
@@ -205,7 +206,8 @@ public class StreamParserTests
             )
         );
 
-        Assert.Empty(received);
+        var unknown = Assert.IsType<UnknownMessage>(Assert.Single(received));
+        Assert.Equal(usb_msg_type_t.USB_MSG_COMMAND, unknown.Header.msg_type);
     }
 
     [Fact]
@@ -233,16 +235,14 @@ public class StreamParserTests
     }
 
     [Fact]
-    public void AHeaderWithAnImpossibleTaskOffset_IsDesync_NotAMessage()
+    public void UnframedRecordBytes_AreGarbageNow_AndTheFrameBehindThemStillArrives()
     {
         var (parser, received) = NewParser();
 
-        // Exactly what a real link produced: a RESPONSE header claiming task 252 and a 4-byte
-        // payload. No task has that offset (they are 0, 0x10000, 0x20000 …) and a real
-        // usb_response_data_t is 8 bytes, so these 12 bytes are a window onto the middle of some
-        // other record — the tail of one that lost bytes. Believing it would cost us the 4 bytes
-        // behind it too, and put a fictional message in front of the user.
-        var bogus = new usb_msg_header_t
+        // A whole v4-style record (bare header + payload, no SOF, no CRC) ahead of a real frame —
+        // what a v4 firmware would send, or what a window onto lost bytes looks like. None of it
+        // carries a SOF, so all of it is skipped and the framed record behind it still decodes.
+        var bare = new usb_msg_header_t
         {
             msg_type = usb_msg_type_t.USB_MSG_RESPONSE,
             task_offset = (task_offset_t)252,
@@ -254,37 +254,40 @@ public class StreamParserTests
             new optical_encoder_output_data { timestamp = 9 }
         );
 
-        parser.Append([.. Wire.ToBytes(bogus), 1, 2, 3, 4, .. real]);
+        parser.Append([.. Wire.ToBytes(bare), 1, 2, 3, 4, .. real]);
 
-        // The garbage is skipped byte by byte and the record behind it still arrives.
         var sample = Assert.IsType<OpticalEncoderSample>(Assert.Single(received));
         Assert.Equal(9u, sample.Data.timestamp);
     }
 
     [Fact]
-    public void AKnownRecordAtTheWrongSize_IsDesync_NotAMessage()
+    public void ACorruptedFrame_FailsItsCrc_AndIsReportedAsLoss_NotDecoded()
     {
-        var (parser, received) = NewParser();
+        var parser = new StreamParser();
+        var received = new List<DeviceMessage>();
+        var resyncs = new List<ResyncDetails>();
+        parser.MessageReceived += received.Add;
+        parser.Resynced += resyncs.Add;
 
-        // A RESPONSE is always 8 bytes (the firmware static-asserts it), so a 4-byte one is not a
-        // short RESPONSE — it is not a RESPONSE. Handing it upward as an undecodable frame would be
-        // reporting a message the device never sent.
-        var wrongSize = new usb_msg_header_t
-        {
-            msg_type = usb_msg_type_t.USB_MSG_RESPONSE,
-            task_offset = task_offset_t.TASK_OFFSET_USB_CONTROLLER,
-            payload_len = 4,
-        };
-        byte[] real = Wire.Message(
+        byte[] corrupted = Wire.Message(
             usb_msg_type_t.USB_MSG_STREAM,
             task_offset_t.TASK_OFFSET_OPTICAL_ENCODER,
-            new optical_encoder_output_data { timestamp = 11 }
+            new optical_encoder_output_data { timestamp = 9, angular_velocity = 3.5f }
+        );
+        corrupted[^5] ^= 0xFF; // flip a payload byte: the CRC no longer matches
+        byte[] good = Wire.Message(
+            usb_msg_type_t.USB_MSG_STREAM,
+            task_offset_t.TASK_OFFSET_OPTICAL_ENCODER,
+            new optical_encoder_output_data { timestamp = 10 }
         );
 
-        parser.Append([.. Wire.ToBytes(wrongSize), 1, 2, 3, 4, .. real]);
+        parser.Append([.. corrupted, .. good]);
 
+        // The corrupted frame must not become a message — a wrong velocity shown as real data is
+        // worse than a gap — and its full length is reported as loss.
         var sample = Assert.IsType<OpticalEncoderSample>(Assert.Single(received));
-        Assert.Equal(11u, sample.Data.timestamp);
+        Assert.Equal(10u, sample.Data.timestamp);
+        Assert.Equal(corrupted.Length, Assert.Single(resyncs).BytesDropped);
     }
 
     [Fact]
@@ -292,17 +295,15 @@ public class StreamParserTests
     {
         var (parser, received) = NewParser();
 
-        // The other reason a frame fails to decode: it is real, from a real task, and this host
-        // simply has no decoder for it (a STATUS frame — nothing reads those yet). That is worth
-        // showing, and it is exactly what must not be confused with a desync.
-        var status = new usb_msg_header_t
-        {
-            msg_type = usb_msg_type_t.USB_MSG_STATUS,
-            task_offset = task_offset_t.TASK_OFFSET_PID_CONTROLLER,
-            payload_len = 4,
-        };
-
-        parser.Append([.. Wire.ToBytes(status), 1, 2, 3, 4]);
+        // A CRC-valid frame this host has no decoder for (a STATUS frame — nothing reads those
+        // yet). That is worth showing, and it is exactly what must not be confused with a desync.
+        parser.Append(
+            Wire.MessageRaw(
+                usb_msg_type_t.USB_MSG_STATUS,
+                task_offset_t.TASK_OFFSET_PID_CONTROLLER,
+                [1, 2, 3, 4]
+            )
+        );
 
         var unknown = Assert.IsType<UnknownMessage>(Assert.Single(received));
         Assert.Equal(usb_msg_type_t.USB_MSG_STATUS, unknown.Header.msg_type);

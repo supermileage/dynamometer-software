@@ -1,6 +1,8 @@
+using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Dyno.Core.Messages;
+using Dyno.Core.Protocol;
 
 namespace Dyno.Core.Tests;
 
@@ -15,17 +17,25 @@ internal static class Wire
         return bytes;
     }
 
-    /// <summary>An unframed STM32 → PC record: <c>usb_msg_header_t</c> + payload bytes.</summary>
+    /// <summary>A framed STM32 → PC record exactly as v5 firmware emits it:
+    /// <c>[SOF][usb_msg_header_t][payload][crc16]</c>.</summary>
     public static byte[] Message<T>(usb_msg_type_t type, task_offset_t offset, in T payload)
-        where T : struct
+        where T : struct => MessageRaw(type, offset, ToBytes(payload));
+
+    /// <summary>Same envelope over arbitrary payload bytes (odd sizes, empty payloads).</summary>
+    public static byte[] MessageRaw(usb_msg_type_t type, task_offset_t offset, byte[] body)
     {
-        byte[] body = ToBytes(payload);
         var header = new usb_msg_header_t
         {
             msg_type = type,
             task_offset = offset,
             payload_len = (uint)body.Length,
         };
-        return [.. ToBytes(header), .. body];
+        byte[] inner = [.. ToBytes(header), .. body];
+        var crc = new byte[2];
+        BinaryPrimitives.WriteUInt16LittleEndian(crc, UsbFrame.Crc16(inner));
+        var sof = new byte[2];
+        BinaryPrimitives.WriteUInt16LittleEndian(sof, UsbFrame.Sof);
+        return [.. sof, .. inner, .. crc];
     }
 }
