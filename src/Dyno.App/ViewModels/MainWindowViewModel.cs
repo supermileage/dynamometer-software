@@ -22,7 +22,7 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly ILoggerFactory _loggerFactory;
     private readonly Dictionary<task_offset_t, TaskMonitorRow> _taskRows = new();
     private DeviceClient? _client;
-    private TelemetryLogger? _telemetry;
+    private TelemetryLogWorker? _telemetry;
 
     public ObservableCollection<string> Ports { get; } = new();
     public ObservableCollection<TaskMonitorRow> Tasks { get; } = new();
@@ -316,9 +316,18 @@ public partial class MainWindowViewModel : ObservableObject
     {
         try
         {
-            _telemetry = TelemetryLogger.CreateFile(
-                Path.Combine("logs", $"telemetry-{DateTime.Now:yyyyMMdd-HHmmss}.csv")
+            _telemetry = new TelemetryLogWorker(
+                TelemetryLogger.CreateFile(
+                    Path.Combine("logs", $"telemetry-{DateTime.Now:yyyyMMdd-HHmmss}.csv")
+                )
             );
+            _telemetry.RowsDropped += n =>
+                Dispatcher.UIThread.Post(() =>
+                    AddEvent(
+                        $"[WARN] telemetry CSV fell behind — {n} row{(n == 1 ? "" : "s")} not "
+                            + "written (the stream, plots and readouts are unaffected)"
+                    )
+                );
             var connection = new SerialConnection(SelectedPort!);
             var client = new DeviceClient(connection, _loggerFactory.CreateLogger<DeviceClient>());
             // TEMP DIAGNOSTIC (slow-ack investigation): 4.7s is deliberately coprime to the
@@ -516,9 +525,11 @@ public partial class MainWindowViewModel : ObservableObject
 
     private void OnMessage(DeviceMessage message)
     {
-        // Runs on the DeviceClient read-loop thread (the single reader), so the non-thread-safe
-        // TelemetryLogger is fed here rather than on the UI thread; UI mutation is marshalled.
-        _telemetry?.Log(message);
+        // Runs on the DeviceClient read-loop thread — which must never wait on anything, or the
+        // OS serial buffer overflows and the stream loses bytes. Both handoffs here are
+        // constant-time: the CSV row goes to the telemetry worker's queue (its own thread owns
+        // the file), and the UI mutation is posted to the dispatcher.
+        _telemetry?.Enqueue(message);
         Dispatcher.UIThread.Post(() => Apply(message));
     }
 
