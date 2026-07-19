@@ -26,72 +26,77 @@ bool BPM::Init()
 
 void BPM::Run(void)
 {
-	session_controller_to_bpm scMsg;
 	bool readFromPID = false;
+	bool pwmEnabled = false;
+	float appliedDutyCycle = 0.0f;   // what the timer is really driving, after clamping
 
 	while(1) {
 
-		// do not want latest from queue since there may be specific instructions to address
-		while (osMessageQueueGet(_fromSCHandle, &scMsg, NULL, osWaitForever) == osOK)
+		// 1. Drain every SessionController command waiting right now. This poll must not block:
+		//    the task still has to follow the PID controller and emit telemetry on the passes
+		//    where no command arrives, and an osWaitForever here parks it on the first quiet
+		//    moment -- which is most of them, since manual mode only sends on a change.
+		session_controller_to_bpm scMsg;
+		while (osMessageQueueGet(_fromSCHandle, &scMsg, NULL, 0) == osOK)
 		{
 			switch(scMsg.op)
 			{
 				case READ_FROM_PID:
+					// Duty cycle now comes from the PID queue below; hold the current
+					// value until the controller produces its first one.
 					readFromPID = true;
 					break;
 				case START_PWM:
-					SetDutyCycle(scMsg.new_duty_cycle_percent);
-					if (!TogglePWM(true))
-					{
-						return;
-					}
 					readFromPID = false;
+					pwmEnabled = true;
+					appliedDutyCycle = SetDutyCycle(scMsg.new_duty_cycle_percent);
 					break;
 				case STOP_PWM:
-					if (!TogglePWM(false))
-					{
-						return;
-					}
 					readFromPID = false;
+					pwmEnabled = false;
+					appliedDutyCycle = 0.0f;
 					break;
 				default:
 					readFromPID = false;
 					break;
 			}
-
-
 		}
 
-		if (!readFromPID)
+		// 2. In PID mode, follow the controller's latest request. Nothing queued just means it
+		//    has not produced a new one since the last pass -- keep driving the current value.
+		if (readFromPID)
 		{
-			continue;
+			float latestDutyCycle;
+			if (GetLatestFromQueue(_fromPIDHandle, &latestDutyCycle, sizeof(latestDutyCycle), 0))
+			{
+				pwmEnabled = true;
+				appliedDutyCycle = SetDutyCycle(latestDutyCycle);
+			}
 		}
 
-		float latestDutyCycle;
-
-		// Get the latest available value (non-blocking)
-		if (!GetLatestFromQueue(_fromPIDHandle, &latestDutyCycle, sizeof(latestDutyCycle), 0))
+		// 3. Reconcile the PWM output with the requested state. TogglePWM only touches the
+		//    timer on a real edge, so calling it every pass costs a compare in steady state.
+		if (!TogglePWM(pwmEnabled))
 		{
-			continue;
+			break;   // start/stop failed and was logged; do not keep driving blind
 		}
 
-		SetDutyCycle(latestDutyCycle);
-		if (!TogglePWM(true))
-		{
-			return;
-		}
+		// 4. Record what is being driven -- every pass, not only when it changes. The host plots
+		//    this as a time series, which needs a continuous line, and a change-only stream
+		//    leaves the readout stale between adjustments (manual mode sends a command only when
+		//    the value moves, so that path produced no telemetry at all).
 		bpm_output_data outputData;
 		outputData.timestamp = get_timestamp();
-		outputData.duty_cycle = latestDutyCycle;
+		outputData.duty_cycle = pwmEnabled ? appliedDutyCycle : 0.0f;
+		outputData.raw_value = 0;   // padding in the wire struct; keep it deterministic
 		_data_buffer_writer.WriteElementAndIncrementIndex(outputData);
 
 		osDelay(sysconfig_get_u32(SYSCFG_BPM_TASK_OSDELAY));
-		
-	
-
-		
-
 	}
+
+	// A FreeRTOS thread function must never return: falling out of Run() would fall off the end
+	// of bpm_main() too. Park the task instead, leaving the error it just logged to be streamed.
+	osThreadSuspend(osThreadGetId());
 }
 
 
@@ -132,7 +137,9 @@ bool BPM::TogglePWM(bool enable)
 }
 
 
-void BPM::SetDutyCycle(float new_duty_cycle_percent)
+// Returns the duty cycle actually programmed into the timer, which is the requested value
+// clamped into the configured envelope -- telemetry reports what is driven, not what was asked.
+float BPM::SetDutyCycle(float new_duty_cycle_percent)
 {
 
 	// The two bounds are written independently over USB (the store range-checks each against
@@ -155,6 +162,8 @@ void BPM::SetDutyCycle(float new_duty_cycle_percent)
 	uint16_t new_duty_cycle = new_duty_cycle_percent * __HAL_TIM_GET_AUTORELOAD(bpmTimer);
 
 	__HAL_TIM_SET_COMPARE(bpmTimer, TIM_CHANNEL_1, new_duty_cycle);
+
+	return new_duty_cycle_percent;
 }
 
 extern "C" void bpm_main(osMessageQueueId_t sessionControllerToBpmHandle, osMessageQueueId_t pidControllerToBpmHandle)

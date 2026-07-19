@@ -27,11 +27,16 @@ private:
     size_t _size;
 };
 
+// The write index is owned by the buffer's storage (circular_buffers.c defines every index as a
+// statically zero-initialized global), deliberately NOT reset here. The task-error buffer is
+// written by every task, so each task constructing its own writer over the shared index would
+// otherwise rewind it to 0 -- discarding whatever the tasks that started earlier had already
+// logged. Boot-time errors are exactly the ones that get lost that way, and they are the ones
+// most worth seeing.
 template <typename T>
 inline CircularBufferWriter<T>::CircularBufferWriter(T* buffer, size_t* writerIndex, size_t size)
     : _buffer(buffer), _writerIndex(writerIndex), _size(size)
 {
-	*_writerIndex = 0;
 }
 
 template <typename T>

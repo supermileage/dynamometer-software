@@ -37,11 +37,14 @@ add_executable(fw_tests
   usb_rx_ring_tests.cpp
   usb_framer_tests.cpp
   sysconfig_tests.cpp
+  circular_buffer_tests.cpp
 )
 
 target_include_directories(fw_tests PRIVATE
   ${FIRMWARE_DIR}/Core/Inc
   ${FIRMWARE_DIR}/Drivers/ADS1115   # config.h includes ADS1115_main.h (register-code macros)
+  ${FIRMWARE_DIR}/Middlewares/CircularBuffer/Inc
+  stubs                             # no-op FreeRTOS critical-section macros for the buffer headers
 )
 
 target_compile_options(fw_tests PRIVATE -Wall -Wextra)
