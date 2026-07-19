@@ -11,47 +11,153 @@
   </Design.DataContext>
 
   <UserControl.Styles>
-    <!-- The drag grip along a graph's bottom edge (same affordance as the event log's): full
-         width, because a resize handle you have to hunt for is one nobody finds. -->
-    <Style Selector="Thumb.resize">
-      <Setter Property="Height" Value="10" />
+    <!-- The dividers between grid cells. Invisible until hovered — the gap between cards is
+         itself the affordance — then lit in accent like every other resize handle in the app. -->
+    <Style Selector="GridSplitter">
       <Setter Property="Background" Value="Transparent" />
-      <Setter Property="Cursor" Value="SizeNorthSouth" />
-      <Setter Property="Margin" Value="0,2,0,-6" />
-      <Setter Property="Template">
-        <ControlTemplate>
-          <Border Background="Transparent" HorizontalAlignment="Stretch">
-            <Border
-              Width="34"
-              Height="3"
-              CornerRadius="2"
-              Background="{StaticResource StrokeBrush}"
-              VerticalAlignment="Center"
-              HorizontalAlignment="Center"
-            />
-          </Border>
-        </ControlTemplate>
-      </Setter>
     </Style>
-    <Style Selector="Thumb.resize:pointerover /template/ Border > Border">
+    <Style Selector="GridSplitter:pointerover">
       <Setter Property="Background" Value="{StaticResource AccentBrush}" />
-    </Style>
-    <!-- Channel chips: toggle a channel onto/off a graph. The checked set doubles as the
-         graph's legend (swatch + name), so no line is ever identified by color alone. -->
-    <Style Selector="ToggleButton.chip">
-      <Setter Property="FontSize" Value="11" />
-      <Setter Property="Padding" Value="7,3" />
-      <Setter Property="MinHeight" Value="0" />
-      <Setter Property="MinWidth" Value="0" />
-      <Setter Property="CornerRadius" Value="6" />
-    </Style>
-    <Style Selector="ToggleButton.chip:checked /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
-      <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
     </Style>
   </UserControl.Styles>
 
-  <Grid RowDefinitions="Auto,*" Margin="16" RowSpacing="14">
+  <UserControl.Resources>
+    <!-- One graph card. Instantiated from code-behind (PlotsView.axaml.cs), which lays the cards
+         out in an auto-sized grid — a near-square arrangement recomputed as graphs come and go —
+         with GridSplitters between rows and columns. A template rather than markup here because
+         the grid's shape (and the splitters between cells) can't be expressed by a static panel. -->
+    <DataTemplate x:Key="GraphCardTemplate" x:DataType="vm:PlotGraphViewModel">
+      <Border Classes="card" Padding="12,8,12,10">
+        <DockPanel>
+          <Grid
+            DockPanel.Dock="Top"
+            ColumnDefinitions="*,Auto,Auto,Auto"
+            ColumnSpacing="8"
+            Margin="0,0,0,6"
+          >
+            <!-- The legend: only the channels this graph draws. Editing which lives in the
+                 Channels flyout, so a cell's header stays one row instead of eight chips. -->
+            <ItemsControl
+              Grid.Column="0"
+              ItemsSource="{Binding ShownChannels}"
+              VerticalAlignment="Center"
+            >
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <WrapPanel ItemSpacing="5" LineSpacing="4" />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:PlotChannelViewModel">
+                  <Border
+                    Background="{StaticResource SurfaceRaisedBrush}"
+                    CornerRadius="6"
+                    Padding="6,2"
+                    ToolTip.Tip="{Binding Title}"
+                  >
+                    <StackPanel Orientation="Horizontal" Spacing="5">
+                      <Border
+                        Width="9"
+                        Height="9"
+                        CornerRadius="3"
+                        Background="{Binding Stroke}"
+                        VerticalAlignment="Center"
+                      />
+                      <TextBlock Text="{Binding Name}" FontSize="11" VerticalAlignment="Center" />
+                    </StackPanel>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <DropDownButton
+              Grid.Column="1"
+              Content="Channels"
+              FontSize="12"
+              Padding="8,3"
+              VerticalAlignment="Center"
+              ToolTip.Tip="Choose which channels this graph draws"
+            >
+              <DropDownButton.Flyout>
+                <Flyout Placement="BottomEdgeAlignedRight">
+                  <ItemsControl ItemsSource="{Binding Series}">
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <StackPanel Spacing="2" />
+                      </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:PlotGraphSeriesViewModel">
+                        <CheckBox IsChecked="{Binding IsShown}" MinHeight="0" Padding="6,0,0,0">
+                          <StackPanel Orientation="Horizontal" Spacing="6">
+                            <Border
+                              Width="10"
+                              Height="10"
+                              CornerRadius="3"
+                              Background="{Binding Channel.Stroke}"
+                              VerticalAlignment="Center"
+                            />
+                            <TextBlock Text="{Binding Channel.Title}" VerticalAlignment="Center" />
+                          </StackPanel>
+                        </CheckBox>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </Flyout>
+              </DropDownButton.Flyout>
+            </DropDownButton>
+
+            <!-- Every series is drawn against its own range (Settings > Plots, or its
+                 autoscale fit); the numbers on the left belong to this channel only. -->
+            <ComboBox
+              Grid.Column="2"
+              ItemsSource="{Binding ShownChannels}"
+              SelectedItem="{Binding AxisChannel}"
+              MinWidth="150"
+              FontSize="12"
+              VerticalAlignment="Center"
+              ToolTip.Tip="Which channel's scale labels the y-axis. Every line is normalized to its own configured range, so shapes compare even when units differ."
+            >
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:PlotChannelViewModel">
+                  <StackPanel Orientation="Horizontal" Spacing="7">
+                    <Border
+                      Width="10"
+                      Height="10"
+                      CornerRadius="3"
+                      Background="{Binding Stroke}"
+                      VerticalAlignment="Center"
+                    />
+                    <TextBlock Text="{Binding Title}" VerticalAlignment="Center" />
+                  </StackPanel>
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+
+            <Button
+              Grid.Column="3"
+              Command="{Binding RemoveCommand}"
+              Padding="8,3"
+              FontSize="12"
+              VerticalAlignment="Center"
+              ToolTip.Tip="Remove this graph (the channels keep recording)"
+            >
+              ✕
+            </Button>
+          </Grid>
+          <controls:TimeSeriesPlot
+            Series="{Binding ShownChannels}"
+            AxisSeries="{Binding AxisChannel}"
+            AnchorTime="{Binding AxisChannel.AnchorTime, FallbackValue=0}"
+            GridBrush="{StaticResource StrokeBrush}"
+            LabelBrush="{StaticResource TextMutedBrush}"
+          />
+        </DockPanel>
+      </Border>
+    </DataTemplate>
+  </UserControl.Resources>
+
+  <Grid RowDefinitions="Auto,*" Margin="16" RowSpacing="10">
     <Border Grid.Row="0" Classes="card" Padding="12">
       <Grid ColumnDefinitions="*,Auto">
         <StackPanel Grid.Column="0" Spacing="3" VerticalAlignment="Center">
@@ -59,7 +165,7 @@
           <TextBlock
             Classes="label"
             FontSize="12"
-            Text="Toggle any set of channels onto a graph — each line is drawn against its own range (Settings > Plots, or autoscale), and the y-axis numbers belong to the channel picked on the graph. Drag the grip under a graph to resize it; add as many as you need."
+            Text="Toggle any set of channels onto a graph — each line is drawn against its own range (Settings > Plots, or autoscale), and the y-axis numbers belong to the channel picked on the graph. Graphs share the page in an automatic grid; drag the gaps between them to trade space."
             TextWrapping="Wrap"
           />
         </StackPanel>
@@ -73,126 +179,8 @@
       </Grid>
     </Border>
 
-    <!-- One card per graph, each overlaying any set of channels over a shared time window.
-         Units differ per channel, so there is no shared or dual y-scale: every series is
-         normalized to its own configured range and the axis labels follow the picked channel. -->
-    <ScrollViewer Grid.Row="1">
-      <StackPanel Spacing="10">
-        <ItemsControl ItemsSource="{Binding Plots.Graphs}">
-          <ItemsControl.ItemsPanel>
-            <ItemsPanelTemplate>
-              <StackPanel Spacing="10" />
-            </ItemsPanelTemplate>
-          </ItemsControl.ItemsPanel>
-          <ItemsControl.ItemTemplate>
-            <DataTemplate x:DataType="vm:PlotGraphViewModel">
-              <Border Classes="card" Padding="12,8,12,10">
-                <StackPanel Spacing="6">
-                  <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
-                    <ItemsControl Grid.Column="0" ItemsSource="{Binding Series}">
-                      <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                          <WrapPanel ItemSpacing="5" LineSpacing="5" />
-                        </ItemsPanelTemplate>
-                      </ItemsControl.ItemsPanel>
-                      <ItemsControl.ItemTemplate>
-                        <DataTemplate x:DataType="vm:PlotGraphSeriesViewModel">
-                          <ToggleButton
-                            Classes="chip"
-                            IsChecked="{Binding IsShown}"
-                            ToolTip.Tip="{Binding Channel.Title}"
-                          >
-                            <StackPanel Orientation="Horizontal" Spacing="5">
-                              <Border
-                                Width="9"
-                                Height="9"
-                                CornerRadius="3"
-                                Background="{Binding Channel.Stroke}"
-                                VerticalAlignment="Center"
-                              />
-                              <TextBlock Text="{Binding Channel.Name}" VerticalAlignment="Center" />
-                            </StackPanel>
-                          </ToggleButton>
-                        </DataTemplate>
-                      </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-
-                    <!-- Every series is drawn against its own range (Settings > Plots, or its
-                         autoscale fit); the numbers on the left belong to this channel only. -->
-                    <StackPanel
-                      Grid.Column="1"
-                      Orientation="Horizontal"
-                      Spacing="6"
-                      VerticalAlignment="Center"
-                      ToolTip.Tip="Which channel's scale labels the y-axis. Every line is normalized to its own configured range, so shapes compare even when units differ."
-                    >
-                      <TextBlock
-                        Classes="label"
-                        Text="Y axis"
-                        FontSize="12"
-                        VerticalAlignment="Center"
-                      />
-                      <ComboBox
-                        ItemsSource="{Binding ShownChannels}"
-                        SelectedItem="{Binding AxisChannel}"
-                        MinWidth="185"
-                        FontSize="12"
-                      >
-                        <ComboBox.ItemTemplate>
-                          <DataTemplate x:DataType="vm:PlotChannelViewModel">
-                            <StackPanel Orientation="Horizontal" Spacing="7">
-                              <Border
-                                Width="10"
-                                Height="10"
-                                CornerRadius="3"
-                                Background="{Binding Stroke}"
-                                VerticalAlignment="Center"
-                              />
-                              <TextBlock Text="{Binding Title}" VerticalAlignment="Center" />
-                            </StackPanel>
-                          </DataTemplate>
-                        </ComboBox.ItemTemplate>
-                      </ComboBox>
-                    </StackPanel>
-
-                    <Button
-                      Grid.Column="2"
-                      Command="{Binding RemoveCommand}"
-                      Padding="8,3"
-                      FontSize="12"
-                      VerticalAlignment="Center"
-                      ToolTip.Tip="Remove this graph (the channels keep recording)"
-                    >
-                      ✕
-                    </Button>
-                  </Grid>
-                  <controls:TimeSeriesPlot
-                    Height="{Binding PlotHeight}"
-                    Series="{Binding ShownChannels}"
-                    AxisSeries="{Binding AxisChannel}"
-                    AnchorTime="{Binding AxisChannel.AnchorTime, FallbackValue=0}"
-                    GridBrush="{StaticResource StrokeBrush}"
-                    LabelBrush="{StaticResource TextMutedBrush}"
-                  />
-                  <Thumb
-                    Classes="resize"
-                    DragDelta="OnResizeGraph"
-                    ToolTip.Tip="Drag to resize this graph"
-                  />
-                </StackPanel>
-              </Border>
-            </DataTemplate>
-          </ItemsControl.ItemTemplate>
-        </ItemsControl>
-
-        <TextBlock
-          Classes="label"
-          Text="No graphs — press Add graph to create one."
-          HorizontalAlignment="Center"
-          Margin="0,24,0,0"
-          IsVisible="{Binding !Plots.Graphs.Count}"
-        />
-      </StackPanel>
-    </ScrollViewer>
+    <!-- Filled by code-behind: graphs in a near-square grid (1, 2 stacked, 2x2, 3x2, 3x3 …)
+         with splitters between rows and columns. -->
+    <Grid Grid.Row="1" x:Name="GraphsHost" />
   </Grid>
 </UserControl>

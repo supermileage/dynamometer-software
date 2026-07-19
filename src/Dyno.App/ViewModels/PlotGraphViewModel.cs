@@ -4,17 +4,15 @@ using CommunityToolkit.Mvvm.Input;
 namespace Dyno.App.ViewModels;
 
 /// <summary>
-/// One graph on the Plots page: which channels it overlays, which of them labels the y-axis, and
-/// how tall it is. Series carry different units, so each is drawn normalized to its own configured
-/// range (Settings > Plots) or autoscale fit — never a shared or dual axis — and the numeric axis
+/// One graph on the Plots page: which channels it overlays and which of them labels the y-axis.
+/// Series carry different units, so each is drawn normalized to its own configured range
+/// (Settings > Plots) or autoscale fit — never a shared or dual axis — and the numeric axis
 /// belongs to the one channel picked in <see cref="AxisChannel"/>. Graphs are created and removed
-/// freely; the channels (and their recorded history) live on independently of them.
+/// freely (the channels and their recorded history live on independently) and share the page in
+/// the auto grid that <c>PlotsView</c> lays out; size is the grid's concern, not this model's.
 /// </summary>
 public partial class PlotGraphViewModel : ObservableObject
 {
-    public const double MinHeight = 80;
-    public const double MaxHeight = 600;
-
     private readonly Action<PlotGraphViewModel> _remove;
 
     /// <summary>One toggle per channel, in the channels' fixed order — the graph's header chips.</summary>
@@ -30,11 +28,6 @@ public partial class PlotGraphViewModel : ObservableObject
     /// never null while anything is shown, never a hidden channel.</summary>
     [ObservableProperty]
     private PlotChannelViewModel? _axisChannel;
-
-    /// <summary>Plot-area height in pixels, dragged via the grip under the graph. This is what
-    /// "bigger than that one" means here: heights are independent, the page scrolls.</summary>
-    [ObservableProperty]
-    private double _plotHeight = 150;
 
     public PlotGraphViewModel(
         IReadOnlyList<PlotChannelViewModel> channels,
@@ -59,9 +52,6 @@ public partial class PlotGraphViewModel : ObservableObject
             AxisChannel = ShownChannels.FirstOrDefault();
         }
     }
-
-    public void Resize(double delta) =>
-        PlotHeight = Math.Clamp(PlotHeight + delta, MinHeight, MaxHeight);
 
     [RelayCommand]
     private void Remove() => _remove(this);
