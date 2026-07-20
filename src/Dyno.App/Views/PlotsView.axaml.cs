@@ -1,8 +1,10 @@
 using System.Collections.Specialized;
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using Dyno.App.ViewModels;
 
 namespace Dyno.App.Views;
@@ -45,6 +47,59 @@ public partial class PlotsView : UserControl
 
     private void OnGraphsChanged(object? sender, NotifyCollectionChangedEventArgs e) =>
         RebuildGrid();
+
+    /// <summary>Saves the recorded channels to a CSV the user picks. The dialog belongs here rather
+    /// than in the view model because it needs this control's window; the file's contents come from
+    /// <see cref="PlotsViewModel.WriteExport"/>, which is where the format is decided and tested.</summary>
+    private async void OnExportClick(object? sender, RoutedEventArgs e)
+    {
+        var main = DataContext as MainWindowViewModel;
+        var plots = main?.Plots;
+        if (plots is null)
+        {
+            return;
+        }
+        if (!plots.HasRecordedData)
+        {
+            main!.AddEvent("[INFO] nothing to export yet — run a session first");
+            return;
+        }
+
+        var storage = TopLevel.GetTopLevel(this)?.StorageProvider;
+        if (storage is null)
+        {
+            return;
+        }
+
+        var file = await storage.SaveFilePickerAsync(
+            new FilePickerSaveOptions
+            {
+                Title = "Export plot data",
+                SuggestedFileName = $"dyno-export-{DateTime.Now:yyyyMMdd-HHmmss}.csv",
+                DefaultExtension = "csv",
+                FileTypeChoices = [new FilePickerFileType("CSV") { Patterns = ["*.csv"] }],
+            }
+        );
+        if (file is null)
+        {
+            return; // cancelled
+        }
+
+        try
+        {
+            // Read the buffers on the UI thread (their single-threaded contract) and write from
+            // here too: the file is small enough that the alternative -- copying every sample out
+            // first just to move the write off-thread -- would cost more than it saves.
+            await using var stream = await file.OpenWriteAsync();
+            await using var writer = new StreamWriter(stream);
+            int rows = plots.WriteExport(writer);
+            main!.AddEvent($"[INFO] exported {rows} row{(rows == 1 ? "" : "s")} to {file.Name}");
+        }
+        catch (Exception ex)
+        {
+            main!.AddEvent($"[ERR ] export failed — {ex.Message}");
+        }
+    }
 
     private void RebuildGrid()
     {

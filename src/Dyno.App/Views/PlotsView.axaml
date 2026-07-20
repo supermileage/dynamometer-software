@@ -181,6 +181,11 @@
         </StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
           <Button
+            Content="Export CSV"
+            Click="OnExportClick"
+            ToolTip.Tip="Save everything recorded so far as a CSV. One row per instant, with X in the fields not measured at that instant — the channels arrive from independent device tasks, so most rows carry one source."
+          />
+          <Button
             Content="Clear"
             Command="{Binding Plots.ClearCommand}"
             ToolTip.Tip="Discard everything recorded so far and start the next sample at 0. Stopping a session does not clear the plots — this is the only thing that does."

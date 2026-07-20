@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.Input;
+using Dyno.Core.Export;
 using Dyno.Core.Plotting;
 
 namespace Dyno.App.ViewModels;
@@ -129,6 +130,28 @@ public partial class PlotsViewModel
     /// and this one is appended after it, separated by however much time actually passed. Use
     /// <see cref="Clear"/> to start over.</summary>
     public void OnSessionStarted() { }
+
+    /// <summary>Whether there is anything to export yet — nothing has been recorded until at least
+    /// one channel holds a sample.</summary>
+    public bool HasRecordedData => Channels.Any(c => c.Buffer.Count > 0);
+
+    /// <summary>The channels as export columns, in the order they are listed on the page. Column
+    /// names are snake_case rather than the display titles, so the header is usable as a
+    /// identifier in whatever reads the file.</summary>
+    public IReadOnlyList<ExportChannel> ExportChannels() =>
+        [
+            new("angular_velocity_rad_s", AngularVelocity.Buffer),
+            new("angular_velocity_geared_rad_s", AngularVelocityGeared.Buffer),
+            new("angular_acceleration_rad_s2", AngularAcceleration.Buffer),
+            new("force_n", Force.Buffer),
+            new("torque_nm", Torque.Buffer),
+            new("torque_geared_nm", TorqueGeared.Buffer),
+            new("power_w", Power.Buffer),
+            new("bpm_duty_cycle", DutyCycle.Buffer),
+        ];
+
+    /// <summary>Writes everything recorded so far as a sparse CSV. Returns the row count.</summary>
+    public int WriteExport(TextWriter writer) => TelemetryExporter.Write(writer, ExportChannels());
 
     /// <summary>Discards every recorded sample and restarts the time origin, so the next sample
     /// begins a fresh run at 0.</summary>

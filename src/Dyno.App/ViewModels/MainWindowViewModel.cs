@@ -683,7 +683,9 @@ public partial class MainWindowViewModel : ObservableObject
                 )
         );
 
-    private void AddEvent(string text)
+    /// <summary>Appends a line to the event log. Public so the views can report the outcome of
+    /// something the user started there — the CSV export says where the file went.</summary>
+    public void AddEvent(string text)
     {
         var line = $"{DateTime.Now:HH:mm:ss.fff}  {text}";
         Events.Insert(0, line);
