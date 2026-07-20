@@ -64,6 +64,16 @@
                         VerticalAlignment="Center"
                       />
                       <TextBlock Text="{Binding Name}" FontSize="11" VerticalAlignment="Center" />
+                      <!-- A channel that is streaming nothing draws no line and no axis; say so,
+                           or it is indistinguishable from one hidden off-range. -->
+                      <TextBlock
+                        Text="no data"
+                        FontSize="10"
+                        FontStyle="Italic"
+                        Opacity="0.7"
+                        VerticalAlignment="Center"
+                        IsVisible="{Binding !HasData}"
+                      />
                     </StackPanel>
                   </Border>
                 </DataTemplate>

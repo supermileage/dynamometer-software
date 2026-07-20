@@ -138,10 +138,14 @@ public class TimeSeriesPlot : Control
         }
 
         // The axis is labeled from one series' range; everything else only needs its own range at
-        // draw time. Default to the first series so a single-series graph needs no configuration.
-        var axisSeries = AxisSeries is { } chosen && series.Contains(chosen) ? chosen : series[0];
-        (double Min, double Max, double Tick)? axisRange = EffectiveRange(axisSeries, t0, t1);
-        if (axisRange is { } range)
+        // draw time. The pick must be a series that actually has data — pointing the axis at a
+        // silent channel would otherwise leave the graph with no gridlines at all, hiding the
+        // scale of the lines that are drawn. Falls back to the first series with data.
+        var axisSeries =
+            AxisSeries is { } chosen && series.Contains(chosen) && HasDataInWindow(chosen, t0)
+                ? chosen
+                : series.FirstOrDefault(s => HasDataInWindow(s, t0));
+        if (axisSeries is not null && EffectiveRange(axisSeries, t0, t1) is { } range)
         {
             DrawGridAndLabels(context, plot, typeface, t0, t1, range.Min, range.Max, range.Tick);
         }
@@ -172,15 +176,30 @@ public class TimeSeriesPlot : Control
         }
     }
 
+    /// <summary>Whether this series has any sample inside the window. O(1): the buffer's times are
+    /// non-decreasing, so the newest one landing at or after <paramref name="t0"/> is the whole
+    /// test.</summary>
+    private static bool HasDataInWindow(IPlotSeries s, double t0) =>
+        s.Buffer.Count > 0 && s.Buffer.LatestTime >= t0;
+
     /// <summary>The y-range this series is drawn against: its fixed Settings range when autoscale
     /// is off (exact — the user asked to look at precisely that window), else a tick-widened fit
-    /// of its visible data. Null when autoscaling with nothing visible.</summary>
+    /// of its visible data. Null when the series has nothing in the window.</summary>
     private (double Min, double Max, double Tick)? EffectiveRange(
         IPlotSeries s,
         double t0,
         double t1
     )
     {
+        // Checked before the configured range, not after: a channel with no samples is absent,
+        // not flat, and must contribute nothing at all — no line and no axis. A fixed range that
+        // outlived its data would otherwise draw a fully labeled axis for a channel that never
+        // streamed, which reads as data sitting at those values.
+        if (!HasDataInWindow(s, t0))
+        {
+            return null;
+        }
+
         if (!s.AutoScale && s.AxisMax > s.AxisMin)
         {
             return (s.AxisMin, s.AxisMax, NiceStep((s.AxisMax - s.AxisMin) / 4));

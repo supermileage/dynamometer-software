@@ -29,6 +29,12 @@ public partial class PlotChannelViewModel : ObservableObject, IPlotSeries
     [ObservableProperty]
     private double _anchorTime;
 
+    /// <summary>Whether this channel has any sample inside the plotted window. Drives the legend's
+    /// "no data" marking: without it a channel that never streamed looks exactly like one whose
+    /// line is simply off-range or hidden under another. Updated by the page's frame timer.</summary>
+    [ObservableProperty]
+    private bool _hasData;
+
     // ---- Applied y-axis range (Settings > Plots) -----------------------------------------------
     // These are the *applied* values every graph of this channel renders with — the Settings page
     // stages edits in its own editor and writes here only on Apply, which is what makes Apply the

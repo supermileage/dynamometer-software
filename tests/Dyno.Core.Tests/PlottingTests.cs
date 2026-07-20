@@ -123,3 +123,82 @@ public class EnvelopeTests
         Assert.Equal(0, Envelope.Decimate([], [], 0, 0, 1, 10, new double[20], new float[20]));
     }
 }
+
+/// <summary>
+/// The plot decides whether a channel is present in the visible window with an O(1) shortcut --
+/// <c>Count > 0 &amp;&amp; LatestTime >= windowStart</c> -- rather than copying the window first.
+/// That shortcut gates the channel's line <em>and</em> its axis, so a disagreement with the real
+/// windowing would either hide a live channel or draw a labeled axis for a silent one.
+/// </summary>
+public class WindowPresenceTests
+{
+    private static bool HasDataInWindow(TimeSeriesBuffer buffer, double windowStart) =>
+        buffer.Count > 0 && buffer.LatestTime >= windowStart;
+
+    private static bool CopyFindsData(TimeSeriesBuffer buffer, double windowStart)
+    {
+        var times = new double[buffer.Capacity];
+        var values = new float[buffer.Capacity];
+        return buffer.CopyWindow(windowStart, times, values) > 0;
+    }
+
+    [Fact]
+    public void AnEmptyBufferIsAbsentFromEveryWindow()
+    {
+        var buffer = new TimeSeriesBuffer(16);
+
+        Assert.False(HasDataInWindow(buffer, 0));
+        Assert.False(CopyFindsData(buffer, 0));
+        Assert.False(HasDataInWindow(buffer, -100));
+        Assert.False(CopyFindsData(buffer, -100));
+    }
+
+    [Fact]
+    public void AChannelThatStoppedStreamingLeavesTheWindowOnceItsLastSampleScrollsOff()
+    {
+        var buffer = new TimeSeriesBuffer(16);
+        for (int i = 0; i < 5; i++)
+        {
+            buffer.Add(i, i);
+        }
+
+        // Newest sample is at t=4; a window still reaching it keeps the channel present...
+        Assert.True(HasDataInWindow(buffer, 4.0));
+        Assert.True(CopyFindsData(buffer, 4.0));
+
+        // ...and the instant the window starts past it, the channel is gone -- no line, no axis.
+        Assert.False(HasDataInWindow(buffer, 4.001));
+        Assert.False(CopyFindsData(buffer, 4.001));
+    }
+
+    [Theory]
+    [InlineData(-1.0)]
+    [InlineData(0.0)]
+    [InlineData(2.5)]
+    [InlineData(9.0)]
+    [InlineData(9.5)]
+    [InlineData(100.0)]
+    public void TheShortcutAgreesWithCopyWindowAtEveryOffset(double windowStart)
+    {
+        var buffer = new TimeSeriesBuffer(8);
+        for (int i = 0; i < 10; i++) // wraps: exercises the ring, not just a fresh buffer
+        {
+            buffer.Add(i, i * 2f);
+        }
+
+        Assert.Equal(CopyFindsData(buffer, windowStart), HasDataInWindow(buffer, windowStart));
+    }
+
+    [Fact]
+    public void ClearingForANewSessionMakesTheChannelAbsentAgain()
+    {
+        var buffer = new TimeSeriesBuffer(16);
+        buffer.Add(1, 1);
+        Assert.True(HasDataInWindow(buffer, 0));
+
+        buffer.Clear();
+
+        Assert.False(HasDataInWindow(buffer, 0));
+        Assert.False(CopyFindsData(buffer, 0));
+    }
+}

@@ -107,9 +107,13 @@ public partial class PlotsViewModel
                 latest = Math.Max(latest, channel.Buffer.LatestTime);
             }
         }
+        double windowStart = latest - WindowSeconds;
         foreach (var channel in Channels)
         {
             channel.AnchorTime = latest; // no-op notification when unchanged
+            // Same test the plot renders by, so the legend can never claim data the strip is not
+            // drawing. O(1): buffer times are non-decreasing, so only the newest one matters.
+            channel.HasData = channel.Buffer.Count > 0 && channel.Buffer.LatestTime >= windowStart;
         }
     }
 
