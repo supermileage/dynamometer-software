@@ -567,13 +567,9 @@ public partial class MainWindowViewModel : ObservableObject
                     s.Data.angular_acceleration,
                     GearRatio
                 );
-                ApplyDerived(
-                    _derived.OnEncoder(
-                        s.Data.timestamp,
-                        s.Data.angular_velocity,
-                        s.Data.angular_acceleration
-                    )
-                );
+                // Updates the held ω/α only; torque and power are clocked off force so they stay
+                // on one device clock (see DerivedQuantities).
+                _derived.OnEncoder(s.Data.angular_velocity, s.Data.angular_acceleration);
                 break;
             case ForceSensorSample s:
                 Force = s.Data.force;

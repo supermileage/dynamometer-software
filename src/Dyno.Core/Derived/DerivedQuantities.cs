@@ -1,8 +1,8 @@
 namespace Dyno.Core.Derived;
 
 /// <summary>One derived reading: what the dyno was doing at the instant a measurement landed.</summary>
-/// <param name="Timestamp">Device timestamp of the sample that produced it — the newly arrived
-/// one, since that is the only value known to be current.</param>
+/// <param name="Timestamp">Device timestamp of the force sample that produced it. Always the force
+/// task's clock, never the encoder's, so a run of these is ordered.</param>
 public readonly record struct DerivedSample(
     uint Timestamp,
     float Torque,
@@ -26,11 +26,19 @@ public readonly record struct DerivedSample(
 /// </code>
 ///
 /// Force and encoder samples arrive from independent device tasks at different rates and never
-/// share a timestamp, so a reading is produced whenever <em>either</em> arrives, pairing it with
-/// the most recent value of the other — the same sample-and-hold the firmware did, just on this
-/// side of the wire. Nothing is emitted until both have been seen at least once: the firmware
-/// began from a zeroed struct and so published torque derived from a force of zero before the
-/// load cell had ever reported.
+/// share a timestamp. Readings are clocked off <em>force alone</em>, against the held ω and α of
+/// the most recent encoder sample — the same sample-and-hold the firmware did, just on this side
+/// of the wire. Nothing is emitted until both have been seen at least once: the firmware began
+/// from a zeroed struct and so published torque derived from a force of zero before the load cell
+/// had ever reported.
+///
+/// Deriving on either arrival would interleave two device clocks into one series, and they are
+/// not mutually ordered — a few ms of inter-task skew is normal, so the timestamps could step
+/// backwards. Everything downstream (the plot buffers, the decimator, the CSV merge) is built on
+/// times that only ever increase. Force is the right clock to keep: it runs 10× faster than the
+/// encoder (1 ms against 10 ms), and it carries the term that actually moves during a pull.
+/// Nothing is lost by not emitting on the encoder, because ω and α are held values either way —
+/// a fresh one simply applies from the next force sample, at most a millisecond later.
 ///
 /// Not thread-safe: drive it from one thread (the UI thread, alongside the readouts it feeds).
 /// </remarks>
@@ -62,17 +70,13 @@ public sealed class DerivedQuantities
         return Compute(timestamp);
     }
 
-    /// <summary>Takes an encoder sample; returns the reading it produces, or null while unprimed.</summary>
-    public DerivedSample? OnEncoder(
-        uint timestamp,
-        float angularVelocity,
-        float angularAcceleration
-    )
+    /// <summary>Takes an encoder sample. Emits nothing by design — it updates the held ω and α,
+    /// which the next force sample derives against (see the class remarks).</summary>
+    public void OnEncoder(float angularVelocity, float angularAcceleration)
     {
         _angularVelocity = angularVelocity;
         _angularAcceleration = angularAcceleration;
         _haveEncoder = true;
-        return Compute(timestamp);
     }
 
     /// <summary>Forgets the held samples, so nothing is derived until both arrive again. Used when

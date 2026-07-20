@@ -216,8 +216,9 @@ public partial class PlotsViewModel
         Force.Buffer.Add(Elapsed(timestamp), force);
 
     /// <summary>Torque and power as derived on this PC (see <c>DerivedQuantities</c>), stamped with
-    /// the measurement that produced them so they line up with the force or velocity they came
-    /// from rather than with a separate device task's clock.</summary>
+    /// the force sample that produced them so they line up with the measurement they came from
+    /// rather than with a separate device task's clock. Force-clocked throughout, which is what
+    /// keeps these times non-decreasing — <c>TimeSeriesBuffer</c> requires it.</summary>
     public void RecordDerived(uint timestamp, float torque, float torqueGeared, float power)
     {
         double now = Elapsed(timestamp);

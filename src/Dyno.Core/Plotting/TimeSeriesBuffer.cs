@@ -57,6 +57,17 @@ public sealed class TimeSeriesBuffer
 
     public void Add(double time, float value)
     {
+        // The non-decreasing requirement is load-bearing well beyond this class — CopyWindow
+        // binary-searches on it, Envelope.Decimate's output bound depends on it, and the CSV
+        // exporter's merge assumes it — yet a violation is silent everywhere: the plot just draws
+        // a line that doubles back. Feeding one buffer from two device tasks did exactly that.
+        // Debug-only, so the cost is nil in a release build and the fault surfaces in testing.
+        System.Diagnostics.Debug.Assert(
+            _count == 0 || time >= LatestTime,
+            $"TimeSeriesBuffer times must be non-decreasing; got {time} after {LatestTime}. "
+                + "Is this buffer being fed from more than one device task's clock?"
+        );
+
         if (_count == Capacity && Capacity < _maxCapacity)
         {
             Grow();
