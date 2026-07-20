@@ -8,7 +8,9 @@ namespace Dyno.Core;
 /// Records the device's streaming measurement samples to a CSV file for later analysis — the
 /// host-side successor to the firmware-era per-module data logger. Emits one long-format row per
 /// sample with unrelated columns left blank, so independently-streamed channels (e.g. speed and
-/// force) can be re-joined on the device timestamp. Diagnostic and control traffic (task-monitor
+/// force) can be re-joined on the device timestamp. It records only what the device measured --
+/// torque and power are derived on this PC from these columns and the constants in the app's PC
+/// Constants section, so they are reproducible from this file rather than frozen into it. Diagnostic and control traffic (task-monitor
 /// health, faults, responses) is not measurement data and is ignored here — that goes to the
 /// structured event log instead.
 /// </summary>
@@ -23,7 +25,7 @@ public sealed class TelemetryLogger : IDisposable
 {
     /// <summary>CSV column order; kept in one place so the header and rows can't drift.</summary>
     public const string Header =
-        "host_time,device_ts,source,angular_velocity,angular_acceleration,force,duty_cycle,torque,power,raw_value";
+        "host_time,device_ts,source,angular_velocity,angular_acceleration,force,duty_cycle,raw_value";
 
     private readonly TextWriter _writer;
     private readonly bool _ownsWriter;
@@ -95,14 +97,6 @@ public sealed class TelemetryLogger : IDisposable
                     rawValue: s.Data.raw_value
                 );
                 break;
-            case SessionControllerSample s:
-                Write(
-                    s.Data.timestamp,
-                    "SESSION_CONTROLLER",
-                    torque: s.Data.torque,
-                    power: s.Data.power
-                );
-                break;
         }
     }
 
@@ -113,8 +107,6 @@ public sealed class TelemetryLogger : IDisposable
         float? angularAcceleration = null,
         float? force = null,
         float? dutyCycle = null,
-        float? torque = null,
-        float? power = null,
         uint? rawValue = null
     )
     {
@@ -129,8 +121,6 @@ public sealed class TelemetryLogger : IDisposable
                 Fmt(angularAcceleration, c),
                 Fmt(force, c),
                 Fmt(dutyCycle, c),
-                Fmt(torque, c),
-                Fmt(power, c),
                 rawValue?.ToString(c) ?? string.Empty
             )
         );

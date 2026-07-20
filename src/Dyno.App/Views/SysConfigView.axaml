@@ -104,6 +104,78 @@
 
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
       <StackPanel Spacing="12">
+        <!-- ===================== PC CONSTANTS ===================== -->
+        <!-- Host-only values. Nothing here is sent to the device: the firmware streams what it
+             measures and this app derives torque, power and the geared readouts from it, so these
+             are its own inputs. Editing one recomputes from the next sample, with no reflash. -->
+        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="10" Margin="4,0">
+          <TextBlock
+            Grid.Column="0"
+            Classes="sectiontitle"
+            Text="PC CONSTANTS"
+            VerticalAlignment="Center"
+          />
+          <Border Grid.Column="1" Classes="filebadge">
+            <TextBlock Text="used by this app · never sent to the device" />
+          </Border>
+        </Grid>
+        <TextBlock
+          Text="Torque = I·α + F·r, power = torque × ω. The device no longer computes these, so correcting a constant here recomputes what follows instead of needing a rebuild."
+          Classes="paramdesc"
+          Margin="4,-6,4,0"
+          TextWrapping="Wrap"
+        />
+
+        <Border Classes="card">
+          <ItemsControl ItemsSource="{Binding SysConfig.PcConstants}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <StackPanel Spacing="10" />
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:PcConstantViewModel">
+                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
+                  <StackPanel Grid.Column="0" Spacing="2">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                      <TextBlock Text="{Binding Label}" VerticalAlignment="Center" />
+                      <TextBlock
+                        Text="{Binding Unit}"
+                        Classes="paramdesc"
+                        VerticalAlignment="Center"
+                        IsVisible="{Binding HasUnit}"
+                      />
+                    </StackPanel>
+                    <TextBlock
+                      Text="{Binding Description}"
+                      Classes="paramdesc"
+                      TextWrapping="Wrap"
+                    />
+                    <TextBlock
+                      Text="{Binding Error}"
+                      Foreground="#E5484D"
+                      FontSize="11"
+                      IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}"
+                    />
+                  </StackPanel>
+                  <TextBlock
+                    Grid.Column="1"
+                    Text="{Binding RangeText}"
+                    Classes="paramdesc"
+                    VerticalAlignment="Center"
+                  />
+                  <TextBox
+                    Grid.Column="2"
+                    Text="{Binding EditedText}"
+                    MinWidth="120"
+                    VerticalAlignment="Center"
+                  />
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </Border>
+
         <!-- ===================== DEVICE RUNTIME ===================== -->
         <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="10" Margin="4,0">
           <TextBlock

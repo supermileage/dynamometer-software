@@ -432,8 +432,11 @@ void FSM::InSessionState()
     ClearDisplay();
     
     // The actual data will be managed in the session controller
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 0, 0, "n:     0 T: 0.00", sizeof("n:     0 T: 0.00") - 1);
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 0, "P:     0.00    0", sizeof("P:     0.00    0") - 1);
+    // Two measured quantities and the drive mode. Torque and power used to sit here, but the
+    // device no longer derives them -- the host does, from these same measurements.
+    //          col: 0123456789012345
+    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 0, 0, "n:     0 rpm    ", sizeof("n:     0 rpm    ") - 1);
+    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 0, "F:    0.00 N    ", sizeof("F:    0.00 N    ") - 1);
 }
 
 
@@ -446,24 +449,15 @@ void FSM::DisplayRpm(float rpm)
     AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 0, 3, buf, sizeof(buf) - 1);
 }
 
-void FSM::DisplayTorque(float torque)
+void FSM::DisplayForce(float force)
 {
-    char buf[6]; // Enough for torque with 2 decimals
-    float value = std::round(torque * 100.0) / 100.0;
-    snprintf(buf, sizeof(buf), "%5.2f", value);
+    char buf[7]; // Enough for force with 2 decimals
+    float value = std::round(force * 100.0) / 100.0;
+    snprintf(buf, sizeof(buf), "%6.2f", value);
 
-    // %5.2f is 5 chars wide; start at col 11 (blank separator) so it fits cols 11-15
-    // instead of overflowing past col 15 and wrapping onto col 0 (overwriting 'n').
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 0, 11, buf, sizeof(buf) - 1);
-}
-
-void FSM::DisplayPower(float power)
-{
-    char buf[9]; // Enough for big power numbers with 2 decimals
-    float value = std::round(power * 100.0) / 100.0;
-    snprintf(buf, sizeof(buf), "%8.2f", value);
-
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 3, buf, sizeof(buf) - 1);
+    // %6.2f is 6 chars wide, at cols 2-7: clear of the "F:" label and of the drive-mode
+    // field at col 12, so neither can be overwritten however large the reading gets.
+    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 2, buf, sizeof(buf) - 1);
 }
 
 void FSM::DisplayPIDEnabled()

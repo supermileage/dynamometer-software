@@ -65,6 +65,23 @@ public partial class SysConfigViewModel : ObservableObject
     /// <summary>Compile-time section cards currently visible, in file order.</summary>
     public ObservableCollection<ConfigCategoryViewModel> FilteredCategories { get; } = new();
 
+    /// <summary>The constants this PC derives torque, power and gearing from. They sit on this page
+    /// beside the device's parameters because that is where a user looks for "the dyno's numbers",
+    /// but they are host-only: nothing in the firmware reads them, and nothing is pushed.</summary>
+    public ObservableCollection<PcConstantViewModel> PcConstants { get; } = new();
+
+    /// <summary>Raised after Apply commits a PC constant, so the derivation picks up the new value
+    /// without waiting for a reconnect.</summary>
+    public event Action? PcConstantsChanged;
+
+    public const string MomentOfInertiaName = "MOMENT_OF_INERTIA_KG_M2";
+    public const string ForceLeverArmName = "DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M";
+    public const string GearRatioName = "GEAR_RATIO";
+
+    /// <summary>The value in force for a PC constant, or its default when unknown.</summary>
+    public double PcConstant(string name) =>
+        PcConstants.FirstOrDefault(c => c.Name == name)?.Value ?? 1.0;
+
     [ObservableProperty]
     private string _searchText = string.Empty;
 
@@ -143,6 +160,92 @@ public partial class SysConfigViewModel : ObservableObject
                 )
             );
         }
+
+        BuildPcConstants();
+    }
+
+    private void BuildPcConstants()
+    {
+        IReadOnlyDictionary<string, double> saved;
+        try
+        {
+            saved = _store?.LoadAllPcConstants() ?? new Dictionary<string, double>();
+        }
+        catch
+        {
+            saved = new Dictionary<string, double>();
+        }
+
+        void Add(
+            string name,
+            string label,
+            string unit,
+            string description,
+            double min,
+            double max,
+            double fallback
+        ) =>
+            PcConstants.Add(
+                new PcConstantViewModel(
+                    name,
+                    label,
+                    unit,
+                    description,
+                    min,
+                    max,
+                    fallback,
+                    saved.TryGetValue(name, out var value) ? value : null,
+                    Recount
+                )
+            );
+
+        Add(
+            ForceLeverArmName,
+            "Force sensor lever arm",
+            "m",
+            "Distance from the force sensor to the shaft centre. Scales the F·r term of the torque.",
+            1.0e-6,
+            1000.0,
+            1.0
+        );
+        Add(
+            MomentOfInertiaName,
+            "Moment of inertia",
+            "kg·m²",
+            "Rotating assembly's moment of inertia. 0 drops the I·α term until it has been measured.",
+            0.0,
+            1.0e6,
+            0.0
+        );
+        Add(
+            GearRatioName,
+            "Gear ratio",
+            "",
+            "Sensed shaft to output ratio; 1.0 is direct drive. Multiplies the geared torque and velocity readouts.",
+            1.0e-6,
+            1000.0,
+            1.0
+        );
+    }
+
+    private int SavePcConstants()
+    {
+        var saved = 0;
+        foreach (var constant in PcConstants.Where(c => c.IsDirty).ToList())
+        {
+            if (constant.ParsedValue is not double value)
+            {
+                continue;
+            }
+            _store?.SavePcConstant(constant.Name, value);
+            constant.MarkSaved();
+            saved++;
+        }
+        if (saved > 0)
+        {
+            PcConstantsChanged?.Invoke();
+        }
+        return saved;
     }
 
     private bool CanApply => PendingCount > 0;
@@ -157,6 +260,7 @@ public partial class SysConfigViewModel : ObservableObject
     {
         var savedRuntime = SaveRuntime();
         SaveCompileTime();
+        SavePcConstants();
 
         if (savedRuntime > 0)
         {
@@ -340,7 +444,10 @@ public partial class SysConfigViewModel : ObservableObject
         _getClient() is { IsHandshaked: true } client ? client : null;
 
     private void Recount() =>
-        PendingCount = _runtimeParameters.Count(p => p.IsDirty) + _parameters.Count(p => p.IsDirty);
+        PendingCount =
+            _runtimeParameters.Count(p => p.IsDirty)
+            + _parameters.Count(p => p.IsDirty)
+            + PcConstants.Count(c => c.IsDirty);
 
     /// <summary>Re-reads the headers, discarding staged edits to them. Saved values survive: they
     /// live in the database, not in the files.</summary>

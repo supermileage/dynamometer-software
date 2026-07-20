@@ -61,21 +61,10 @@ public class TelemetryLoggerTests
                 }
             )
         );
-        logger.Log(
-            new SessionControllerSample(
-                new session_controller_output_data
-                {
-                    timestamp = 103,
-                    torque = 2.5f,
-                    power = 31.25f,
-                }
-            )
-        );
-
         string[] lines = Lines(sink);
-        Assert.Equal(5, lines.Length); // header + four rows
+        Assert.Equal(4, lines.Length); // header + three rows
 
-        // header order: host_time,device_ts,source,angular_velocity,angular_acceleration,force,duty_cycle,torque,power,raw_value
+        // header order: host_time,device_ts,source,angular_velocity,angular_acceleration,force,duty_cycle,raw_value
         var encoder = lines[1].Split(',');
         Assert.Equal("100", encoder[1]);
         Assert.Equal("OPTICAL_ENCODER", encoder[2]);
@@ -83,9 +72,7 @@ public class TelemetryLoggerTests
         Assert.Equal((-0.25f).ToString("R", CultureInfo.InvariantCulture), encoder[4]);
         Assert.Equal("", encoder[5]); // force blank
         Assert.Equal("", encoder[6]); // duty blank
-        Assert.Equal("", encoder[7]); // torque blank
-        Assert.Equal("", encoder[8]); // power blank
-        Assert.Equal("7", encoder[9]);
+        Assert.Equal("7", encoder[7]); // raw value
 
         var force = lines[2].Split(',');
         Assert.Equal("FORCE_SENSOR_ADS1115", force[2]);
@@ -95,13 +82,6 @@ public class TelemetryLoggerTests
         var bpm = lines[3].Split(',');
         Assert.Equal("BPM_CONTROLLER", bpm[2]);
         Assert.Equal(0.75f.ToString("R", CultureInfo.InvariantCulture), bpm[6]);
-
-        var session = lines[4].Split(',');
-        Assert.Equal("SESSION_CONTROLLER", session[2]);
-        Assert.Equal("", session[6]); // duty blank
-        Assert.Equal(2.5f.ToString("R", CultureInfo.InvariantCulture), session[7]);
-        Assert.Equal(31.25f.ToString("R", CultureInfo.InvariantCulture), session[8]);
-        Assert.Equal("", session[9]); // no raw value on derived data
     }
 
     [Fact]

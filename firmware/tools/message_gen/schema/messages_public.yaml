@@ -248,7 +248,15 @@ sections:
       v4 firmware nothing it receives would carry a SOF and the whole stream would be
       skipped as garbage -- and v4 hosts would misread v5's SOF/CRC bytes as data.
 
-  - { kind: define, name: USB_PROTOCOL_VERSION, value: "5u" }
+      v6 removed session_controller_output_data again: torque and power are derived on
+      the host from the raw force and velocity streams, so the constants behind them
+      (moment of inertia, force-sensor lever arm, gear ratio) live on the PC and can be
+      corrected after a run instead of being baked into the recording. Their sysconfig
+      ids went with them, which renumbers every parameter after them -- a v6 host pushing
+      to v5 firmware would write PID gains into mechanical constants. Hence the version
+      bump: the handshake refuses the link rather than letting that happen.
+
+  - { kind: define, name: USB_PROTOCOL_VERSION, value: "6u" }
 
   - kind: comment
     text: |-
@@ -404,8 +412,10 @@ sections:
       One id per runtime-tunable parameter. The name matches the config.h #define
       that provides its boot default. Ids are positional: append only.
     params:
-      - { name: DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M, type: float, min: 1.0e-6, max: 1000.0, category: "Mechanical", unit: "m", description: "Lever arm from the force sensor to the shaft center, used in the torque calculation." }
-      - { name: MOMENT_OF_INERTIA_KG_M2, type: float, min: 0.0, max: 1.0e6, category: "Mechanical", unit: "kg·m²", description: "Rotating assembly's moment of inertia, used in the torque calculation. 0 drops the I·α term until the inertia is measured." }
+      # The torque constants (lever arm, moment of inertia) and the gear ratio are NOT here:
+      # nothing on the device reads them now that the host derives torque and power, so they
+      # are host-only settings kept in the app's own database. Removing them renumbered every
+      # id below -- see the v6 note above.
       - { name: K_P, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Proportional gain." }
       - { name: K_I, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Integral gain." }
       - { name: K_D, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Derivative gain." }
@@ -493,21 +503,12 @@ sections:
 
   - { kind: static_assert, expr: "sizeof(bpm_output_data) == 4 + 4 + 4", message: "Size of bpm_output_data must be 12 bytes" }
 
-  - kind: comment
-    text: |-
-      Derived dyno quantities, computed by the SessionController from the sensor streams:
-      torque = I*alpha + F*r (+ mechanical losses), power = torque * omega. Streamed as
-      USB_MSG_STREAM with task_offset TASK_OFFSET_SESSION_CONTROLLER while a session runs,
-      so the host shows the same numbers the LCD does without re-deriving them.
-
-  - kind: struct
-    name: session_controller_output_data
-    fields:
-      - { type: uint32_t, name: timestamp }
-      - { type: float,    name: torque, comment: "N·m, at the sensed shaft" }
-      - { type: float,    name: power,  comment: "W" }
-
-  - { kind: static_assert, expr: "sizeof(session_controller_output_data) == 4 + 4 + 4", message: "Size of session_controller_output_data must be 12 bytes" }
+  # Torque and power are deliberately absent: the device no longer derives them. It streams
+  # what it measures (force, velocity, acceleration, duty cycle) and the host computes
+  # torque = I*alpha + F*r and power = torque * omega from that, using constants it keeps in
+  # its own database. Recomputing a past run after correcting the inertia or the lever arm is
+  # then just a matter of re-reading the raw stream, rather than being impossible because the
+  # wrong numbers were already baked in on the device.
 
   - kind: struct
     name: task_monitor_output_data

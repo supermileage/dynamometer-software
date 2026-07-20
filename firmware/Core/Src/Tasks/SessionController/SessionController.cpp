@@ -12,12 +12,9 @@ extern forcesensor_output_data forcesensor_circular_buffer[FORCESENSOR_CIRCULAR_
 extern size_t optical_encoder_circular_buffer_index_writer;
 extern optical_encoder_output_data optical_encoder_circular_buffer[OPTICAL_ENCODER_CIRCULAR_BUFFER_SIZE];
 
-extern size_t session_controller_circular_buffer_index_writer;
-extern session_controller_output_data session_controller_circular_buffer[SESSION_CONTROLLER_CIRCULAR_BUFFER_SIZE];
 
 SessionController::SessionController(session_controller_os_task_queues* task_queues, osMutexId_t usart1Mutex) :
                 _task_error_buffer_writer(task_error_circular_buffer, &task_error_circular_buffer_index_writer, TASK_ERROR_CIRCULAR_BUFFER_SIZE),
-                _session_controller_buffer_writer(session_controller_circular_buffer, &session_controller_circular_buffer_index_writer, SESSION_CONTROLLER_CIRCULAR_BUFFER_SIZE),
                 _forcesensor_buffer_reader(forcesensor_circular_buffer, &forcesensor_circular_buffer_index_writer, FORCESENSOR_CIRCULAR_BUFFER_SIZE),
                 _optical_encoder_buffer_reader(optical_encoder_circular_buffer, &optical_encoder_circular_buffer_index_writer, OPTICAL_ENCODER_CIRCULAR_BUFFER_SIZE),
                 _fsm(task_queues->lumex_lcd),
@@ -180,9 +177,7 @@ void SessionController::Run()
             if (InSessionRisingEdge)
             {
                 _fsm.DisplayRpm(0);
-
-                _fsm.DisplayTorque(0);
-                _fsm.DisplayPower(0);
+                _fsm.DisplayForce(0);
 
                 if (PIDOptionToggleableEnabled) _fsm.DisplayPIDEnabled();
                 else if (_fsm.GetManualBpmModeStatus()) _fsm.DisplayManualBPMDutyCycle();
@@ -296,30 +291,23 @@ void SessionController::Run()
         // Get the most recent optical encoder data
         while(_optical_encoder_buffer_reader.GetElementAndIncrementIndex(optical_encoder_data));
 
-        float angularAcceleration = optical_encoder_data.angular_acceleration;
         float angularVelocity = optical_encoder_data.angular_velocity;
         float force = force_data.force;
 
-        float torque = CalculateTorque(angularAcceleration, force, angularVelocity);
-        float power = CalculatePower(torque, angularVelocity);
-
-        session_controller_output_data outputData;
-        outputData.timestamp = get_timestamp();
-        outputData.torque = torque;
-        outputData.power = power;
-        _session_controller_buffer_writer.WriteElementAndIncrementIndex(outputData);
-
+        // Nothing is derived here any more. The device streams what it measures and the host
+        // computes torque and power from it, so the constants involved (inertia, lever arm,
+        // gear ratio) live on the PC and a past run can be recomputed after correcting one.
+        // The LCD shows the two measured quantities directly, so the dyno still reads out
+        // usefully with no computer attached.
         if (prevAngularVelocity != angularVelocity)
         {
-            _fsm.DisplayRpm(optical_encoder_data.angular_velocity);
-
-            if (prevForce != force)
-            {
-                _fsm.DisplayTorque(torque);
-                _fsm.DisplayPower(power);
-                prevForce = force;
-            }
+            _fsm.DisplayRpm(angularVelocity);
             prevAngularVelocity = angularVelocity;
+        }
+        if (prevForce != force)
+        {
+            _fsm.DisplayForce(force);
+            prevForce = force;
         }
 
 
@@ -335,22 +323,6 @@ void SessionController::Run()
     }
 }
 
-float SessionController::CalculateTorque(float angularAcceleration, float force, float angularVelocity)
-{
-    return (sysconfig_get_float(SYSCFG_MOMENT_OF_INERTIA_KG_M2) * angularAcceleration
-            + force * sysconfig_get_float(SYSCFG_DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M)
-            + CalculateMechanicalLosses(angularAcceleration, angularVelocity));
-}
-
-float SessionController::CalculatePower(float torque, float angularVelocity)
-{
-    return torque * angularVelocity;
-}
-
-float SessionController::CalculateMechanicalLosses(float angularAcceleration, float angularVelocity)
-{
-    return 0;
-}
 
 extern "C" void sessioncontroller_main(session_controller_os_task_queues* task_queues, osMutexId_t usart1Mutex)
 {

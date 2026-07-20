@@ -12,13 +12,11 @@
 // Voltage Reference (should be 3V3)
 #define VREF 3.3f
 
-// Mechanical Power Calculation Constants
-#define DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M 1.0f
-// Not measured yet; 0 drops the I*alpha term from the torque calculation until it is.
-#define MOMENT_OF_INERTIA_KG_M2 0.0f
-// Sensed-shaft to output ratio; 1.0 = direct drive. Compile-time only (not sysconfig, not
-// streamed): the desktop app reads it from its own copy of this header for the geared readouts.
-#define GEAR_RATIO 1.0f
+// The torque constants (force-sensor lever arm, moment of inertia) and the gear ratio used to
+// live here. They are gone from the firmware entirely: the device streams what it measures and
+// the desktop app derives torque and power, so those constants are its to keep -- editable in
+// the app's PC Constants section and stored in its database. That way correcting a value
+// recomputes past runs, instead of needing a rebuild and reflash to fix the next one.
 
 // Main PID controller parameters
 #define K_P 1.0f
@@ -38,7 +36,6 @@
 // streams totalled ~38 kB/s, which saturated the USB TX path once a session started (rising
 // heartbeat RTTs, dropped batches); these halve the load with no visible loss on the plots.
 #define SESSIONCONTROLLER_TASK_OSDELAY 10
-#define SESSION_CONTROLLER_CIRCULAR_BUFFER_SIZE 100 // torque/power samples awaiting USB streaming
 
 // BPM Config
 #define MIN_DUTY_CYCLE_PERCENT 0.0f

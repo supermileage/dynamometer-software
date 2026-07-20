@@ -13,28 +13,6 @@ public static class SysConfigCatalog
         new SysConfigParameterDef[]
         {
             new(
-                sysconfig_param_t.SYSCFG_DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M,
-                "DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M",
-                "Mechanical",
-                "m",
-                "Lever arm from the force sensor to the shaft center, used in the torque calculation.",
-                IsFloat: true,
-                Default: 1.0,
-                Min: 1e-06,
-                Max: 1000.0
-            ),
-            new(
-                sysconfig_param_t.SYSCFG_MOMENT_OF_INERTIA_KG_M2,
-                "MOMENT_OF_INERTIA_KG_M2",
-                "Mechanical",
-                "kg·m²",
-                "Rotating assembly's moment of inertia, used in the torque calculation. 0 drops the I·α term until the inertia is measured.",
-                IsFloat: true,
-                Default: 0.0,
-                Min: 0.0,
-                Max: 1000000.0
-            ),
-            new(
                 sysconfig_param_t.SYSCFG_K_P,
                 "K_P",
                 "PID Controller",

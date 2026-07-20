@@ -4,6 +4,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Dyno.Core;
+using Dyno.Core.Derived;
 using Dyno.Core.Messages;
 using Dyno.Core.Protocol;
 using Dyno.Core.Serial;
@@ -204,33 +205,30 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty]
     private double _power;
 
-    /// <summary>The compile-time GEAR_RATIO from this PC's copy of the firmware config — the saved
-    /// override if one exists, else config.h itself. Nothing on the wire carries it, so this shows
-    /// what the firmware *should* have been built with; a board flashed from a different tree can
-    /// disagree.</summary>
+    /// <summary>Gear ratio from the SysConfig page's PC Constants. Nothing on the wire carries it
+    /// and no firmware reads it — it is this app's own number, applied to the geared readouts.</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(TorqueGeared))]
     [NotifyPropertyChangedFor(nameof(AngularVelocityGeared))]
     private double _gearRatio = 1.0;
 
-    /// <summary>Re-reads GEAR_RATIO from the SysConfig page's compile-time settings. Values there
-    /// are C literals ("1.0f"), hence the suffix strip. An unreadable or missing define falls back
-    /// to 1.0 — direct drive — so the geared readouts degrade to the sensor values, never to 0.</summary>
-    private void RefreshGearRatio()
+    /// <summary>Derives torque and power here rather than taking them from the device, so the
+    /// constants behind them stay editable and a past run can be recomputed after a correction.</summary>
+    private readonly DerivedQuantities _derived = new();
+
+    /// <summary>Re-reads the PC Constants and applies them to the derivation, so an Apply on the
+    /// SysConfig page changes the next sample rather than waiting for a reconnect.</summary>
+    private void RefreshPcConstants()
     {
-        string? raw = SysConfig.CompileTimeValue("GEAR_RATIO");
-        GearRatio =
-            raw is not null
-            && double.TryParse(
-                raw.TrimEnd('f', 'F', 'u', 'U', 'l', 'L'),
-                CultureInfo.InvariantCulture,
-                out double value
-            )
-                ? value
-                : 1.0;
+        GearRatio = SysConfig.PcConstant(SysConfigViewModel.GearRatioName);
+        _derived.GearRatio = GearRatio;
+        _derived.MomentOfInertiaKgM2 = SysConfig.PcConstant(SysConfigViewModel.MomentOfInertiaName);
+        _derived.ForceLeverArmM = SysConfig.PcConstant(SysConfigViewModel.ForceLeverArmName);
     }
 
-    public double TorqueGeared => Torque * GearRatio;
+    /// <summary>Torque with the gear ratio applied. Derived alongside the sensed torque rather than
+    /// multiplied here, so the readout and the plotted channel are the same number.</summary>
+    [ObservableProperty]
+    private double _torqueGeared;
 
     public double AngularVelocityGeared => AngularVelocity * GearRatio;
 
@@ -245,11 +243,11 @@ public partial class MainWindowViewModel : ObservableObject
         // The connect-time restore is the one device write the user never asked for, and the only
         // one they cannot see happen on the page they're not looking at.
         SysConfig.DeviceSyncLogged += line => Dispatcher.UIThread.Post(() => AddEvent(line));
-        // The geared readouts multiply by the compile-time GEAR_RATIO from the SysConfig page.
+        // The geared readouts and the derived torque/power use the SysConfig page's PC Constants.
         // Its constructor has already loaded the headers (so the event for that firing is gone);
         // read once now, then follow reloads and applied edits.
-        SysConfig.CompileTimeSettingsChanged += () => Dispatcher.UIThread.Post(RefreshGearRatio);
-        RefreshGearRatio();
+        SysConfig.PcConstantsChanged += () => Dispatcher.UIThread.Post(RefreshPcConstants);
+        RefreshPcConstants();
         Firmware = new FirmwareViewModel(
             SysConfig.CompileTimeOverrides,
             () => SysConfig.PendingCount
@@ -533,6 +531,21 @@ public partial class MainWindowViewModel : ObservableObject
         Dispatcher.UIThread.Post(() => Apply(message));
     }
 
+    /// <summary>Publishes a derived reading to the readouts and the plots. Null while the
+    /// derivation is still waiting for its first force or encoder sample — better to show nothing
+    /// than a torque computed against a load cell that has not reported yet.</summary>
+    private void ApplyDerived(DerivedSample? derived)
+    {
+        if (derived is not { } d)
+        {
+            return;
+        }
+        Torque = d.Torque;
+        TorqueGeared = d.TorqueGeared;
+        Power = d.Power;
+        Plots.RecordDerived(d.Timestamp, d.Torque, d.TorqueGeared, d.Power);
+    }
+
     private void Apply(DeviceMessage message)
     {
         switch (message)
@@ -542,10 +555,7 @@ public partial class MainWindowViewModel : ObservableObject
             // disagree: samples framed just before a session stopped can still be in flight behind
             // the stop event, and applying those would leave the readouts holding data the user has
             // just been told is over.
-            case OpticalEncoderSample
-            or ForceSensorSample
-            or BpmSample
-            or SessionControllerSample when !IsSessionActive:
+            case OpticalEncoderSample or ForceSensorSample or BpmSample when !IsSessionActive:
                 break;
             case OpticalEncoderSample s:
                 AngularVelocity = s.Data.angular_velocity;
@@ -557,25 +567,24 @@ public partial class MainWindowViewModel : ObservableObject
                     s.Data.angular_acceleration,
                     GearRatio
                 );
+                ApplyDerived(
+                    _derived.OnEncoder(
+                        s.Data.timestamp,
+                        s.Data.angular_velocity,
+                        s.Data.angular_acceleration
+                    )
+                );
                 break;
             case ForceSensorSample s:
                 Force = s.Data.force;
                 Plots.RecordForce(s.Data.timestamp, s.Data.force);
+                ApplyDerived(_derived.OnForce(s.Data.timestamp, s.Data.force));
                 break;
             case BpmSample s:
                 DutyCycle = s.Data.duty_cycle;
                 Plots.RecordDutyCycle(s.Data.timestamp, s.Data.duty_cycle);
                 break;
-            case SessionControllerSample s:
-                Torque = s.Data.torque;
-                Power = s.Data.power;
-                Plots.RecordSessionController(
-                    s.Data.timestamp,
-                    s.Data.torque,
-                    s.Data.power,
-                    GearRatio
-                );
-                break;
+
             case SessionState:
                 // Applied via DeviceClient.SessionStateChanged, which reports only real
                 // transitions; the raw announcement repeats after every heartbeat ack and would

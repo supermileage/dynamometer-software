@@ -171,11 +171,14 @@ public partial class PlotsViewModel
     public void RecordForce(uint timestamp, float force) =>
         Force.Buffer.Add(Elapsed(timestamp), force);
 
-    public void RecordSessionController(uint timestamp, float torque, float power, double gearRatio)
+    /// <summary>Torque and power as derived on this PC (see <c>DerivedQuantities</c>), stamped with
+    /// the measurement that produced them so they line up with the force or velocity they came
+    /// from rather than with a separate device task's clock.</summary>
+    public void RecordDerived(uint timestamp, float torque, float torqueGeared, float power)
     {
         double now = Elapsed(timestamp);
         Torque.Buffer.Add(now, torque);
-        TorqueGeared.Buffer.Add(now, (float)(torque * gearRatio));
+        TorqueGeared.Buffer.Add(now, torqueGeared);
         Power.Buffer.Add(now, power);
     }
 

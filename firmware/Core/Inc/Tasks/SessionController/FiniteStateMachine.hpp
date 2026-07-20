@@ -83,8 +83,7 @@ public:
     float GetDesiredAngularVelocity() const;
 
     void DisplayRpm(float rpm);
-    void DisplayTorque(float torque);
-    void DisplayPower(float power);
+    void DisplayForce(float force);
     void DisplayPIDEnabled();
     void DisplayManualBPMDutyCycle();
     void DisplayManualThrottleDutyCycle();

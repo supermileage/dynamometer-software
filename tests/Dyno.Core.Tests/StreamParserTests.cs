@@ -65,28 +65,27 @@ public class StreamParserTests
     }
 
     [Fact]
-    public void Parses_SessionControllerStream()
+    public void ADerivedQuantityStreamIsNoLongerRecognised()
     {
+        // Protocol v6 withdrew session_controller_output_data: torque and power are the host's to
+        // derive. A frame still claiming that task offset is foreign traffic, and must surface as
+        // Unknown rather than being decoded into something plausible.
         var (parser, received) = NewParser();
-        var payload = new session_controller_output_data
-        {
-            timestamp = 5678,
-            torque = 2.5f,
-            power = 31.25f,
-        };
 
         parser.Append(
             Wire.Message(
                 usb_msg_type_t.USB_MSG_STREAM,
                 task_offset_t.TASK_OFFSET_SESSION_CONTROLLER,
-                payload
+                new bpm_output_data
+                {
+                    timestamp = 5678,
+                    duty_cycle = 2.5f,
+                    raw_value = 0,
+                }
             )
         );
 
-        var sample = Assert.IsType<SessionControllerSample>(Assert.Single(received));
-        Assert.Equal(5678u, sample.Data.timestamp);
-        Assert.Equal(2.5f, sample.Data.torque);
-        Assert.Equal(31.25f, sample.Data.power);
+        Assert.IsType<UnknownMessage>(Assert.Single(received));
     }
 
     [Fact]

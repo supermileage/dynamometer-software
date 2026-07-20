@@ -218,8 +218,16 @@ DYNO_STATIC_ASSERT(sizeof(usb_msg_header_t) == 12, "Size of usb_msg_header_t mus
 // already used. A v5 host scans for SOF markers and verifies CRCs; against unframed
 // v4 firmware nothing it receives would carry a SOF and the whole stream would be
 // skipped as garbage -- and v4 hosts would misread v5's SOF/CRC bytes as data.
+// 
+// v6 removed session_controller_output_data again: torque and power are derived on
+// the host from the raw force and velocity streams, so the constants behind them
+// (moment of inertia, force-sensor lever arm, gear ratio) live on the PC and can be
+// corrected after a run instead of being baked into the recording. Their sysconfig
+// ids went with them, which renumbers every parameter after them -- a v6 host pushing
+// to v5 firmware would write PID gains into mechanical constants. Hence the version
+// bump: the handshake refuses the link rather than letting that happen.
 
-#define USB_PROTOCOL_VERSION 5u
+#define USB_PROTOCOL_VERSION 6u
 
 // Shared CRC so firmware and host compute identical checksums over a frame body.
 
@@ -326,44 +334,42 @@ DYNO_STATIC_ASSERT(sizeof(session_state_event) == 4 + 4, "Size of session_state_
 // that provides its boot default. Ids are positional: append only.
 typedef enum : uint16_t
 {
-    SYSCFG_DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M = 0,   // float, m
-    SYSCFG_MOMENT_OF_INERTIA_KG_M2 = 1,   // float, kg·m²
-    SYSCFG_K_P = 2,   // float
-    SYSCFG_K_I = 3,   // float
-    SYSCFG_K_D = 4,   // float
-    SYSCFG_PID_MAX_OUTPUT = 5,   // float
-    SYSCFG_THROTTLE_GAIN = 6,   // float
-    SYSCFG_BRAKE_GAIN = 7,   // float
-    SYSCFG_HORIZONTAL_BIAS = 8,   // float
-    SYSCFG_VERTICAL_BIAS = 9,   // float
-    SYSCFG_MIN_DUTY_CYCLE_PERCENT = 10,   // float, 0–1
-    SYSCFG_MAX_DUTY_CYCLE_PERCENT = 11,   // float, 0–1
-    SYSCFG_MAX_FORCE_LBF = 12,   // float, lbf
-    SYSCFG_SESSIONCONTROLLER_TASK_OSDELAY = 13,   // uint32, ms
-    SYSCFG_BPM_TASK_OSDELAY = 14,   // uint32, ms
-    SYSCFG_FORCESENSOR_TASK_OSDELAY = 15,   // uint32, ms
-    SYSCFG_FORCESENSOR_COMMAND_POLL_OSDELAY = 16,   // uint32, ms
-    SYSCFG_FORCESENSOR_CONVERSION_TIMEOUT_MS = 17,   // uint32, ms
-    SYSCFG_OPTICAL_ENCODER_TASK_OSDELAY = 18,   // uint32, ms
-    SYSCFG_NUM_APERTURES = 19,   // uint32
-    SYSCFG_PID_TASK_OSDELAY = 20,   // uint32, ms
-    SYSCFG_USB_TASK_OSDELAY = 21,   // uint32, ms
-    SYSCFG_USB_TX_FLUSH_MAX_RETRIES = 22,   // uint32, attempts
-    SYSCFG_LCD_TASK_OSDELAY = 23,   // uint32, ms
-    SYSCFG_LED_TASK_OSDELAY = 24,   // uint32, ms
-    SYSCFG_TASK_WARNING_RETRY_OSDELAY = 25,   // uint32, ms
-    SYSCFG_TASK_MONITOR_TASK_OSDELAY = 26,   // uint32, ms
-    SYSCFG_ADS1115_RATE = 27,   // enum
-    SYSCFG_ADS1115_GAIN = 28,   // enum
-    SYSCFG_ADS1115_MUX = 29,   // enum
-    SYSCFG_ADS1115_MODE = 30,   // enum
-    SYSCFG_ADS1115_COMP_MODE = 31,   // enum
-    SYSCFG_ADS1115_COMP_POL = 32,   // enum
-    SYSCFG_ADS1115_COMP_LAT = 33,   // enum
-    SYSCFG_ADS1115_COMP_QUE = 34,   // enum
+    SYSCFG_K_P = 0,   // float
+    SYSCFG_K_I = 1,   // float
+    SYSCFG_K_D = 2,   // float
+    SYSCFG_PID_MAX_OUTPUT = 3,   // float
+    SYSCFG_THROTTLE_GAIN = 4,   // float
+    SYSCFG_BRAKE_GAIN = 5,   // float
+    SYSCFG_HORIZONTAL_BIAS = 6,   // float
+    SYSCFG_VERTICAL_BIAS = 7,   // float
+    SYSCFG_MIN_DUTY_CYCLE_PERCENT = 8,   // float, 0–1
+    SYSCFG_MAX_DUTY_CYCLE_PERCENT = 9,   // float, 0–1
+    SYSCFG_MAX_FORCE_LBF = 10,   // float, lbf
+    SYSCFG_SESSIONCONTROLLER_TASK_OSDELAY = 11,   // uint32, ms
+    SYSCFG_BPM_TASK_OSDELAY = 12,   // uint32, ms
+    SYSCFG_FORCESENSOR_TASK_OSDELAY = 13,   // uint32, ms
+    SYSCFG_FORCESENSOR_COMMAND_POLL_OSDELAY = 14,   // uint32, ms
+    SYSCFG_FORCESENSOR_CONVERSION_TIMEOUT_MS = 15,   // uint32, ms
+    SYSCFG_OPTICAL_ENCODER_TASK_OSDELAY = 16,   // uint32, ms
+    SYSCFG_NUM_APERTURES = 17,   // uint32
+    SYSCFG_PID_TASK_OSDELAY = 18,   // uint32, ms
+    SYSCFG_USB_TASK_OSDELAY = 19,   // uint32, ms
+    SYSCFG_USB_TX_FLUSH_MAX_RETRIES = 20,   // uint32, attempts
+    SYSCFG_LCD_TASK_OSDELAY = 21,   // uint32, ms
+    SYSCFG_LED_TASK_OSDELAY = 22,   // uint32, ms
+    SYSCFG_TASK_WARNING_RETRY_OSDELAY = 23,   // uint32, ms
+    SYSCFG_TASK_MONITOR_TASK_OSDELAY = 24,   // uint32, ms
+    SYSCFG_ADS1115_RATE = 25,   // enum
+    SYSCFG_ADS1115_GAIN = 26,   // enum
+    SYSCFG_ADS1115_MUX = 27,   // enum
+    SYSCFG_ADS1115_MODE = 28,   // enum
+    SYSCFG_ADS1115_COMP_MODE = 29,   // enum
+    SYSCFG_ADS1115_COMP_POL = 30,   // enum
+    SYSCFG_ADS1115_COMP_LAT = 31,   // enum
+    SYSCFG_ADS1115_COMP_QUE = 32,   // enum
 } sysconfig_param_t;
 
-#define SYSCFG_PARAM_COUNT 35u              // one past the highest sysconfig_param_t id; sizes the firmware store
+#define SYSCFG_PARAM_COUNT 33u              // one past the highest sysconfig_param_t id; sizes the firmware store
 
 DYNO_STATIC_ASSERT(sizeof(sysconfig_param_t) == 2, "Size of sysconfig_param_t must be 2 bytes");
 
@@ -403,19 +409,6 @@ typedef struct {
 } bpm_output_data;
 
 DYNO_STATIC_ASSERT(sizeof(bpm_output_data) == 4 + 4 + 4, "Size of bpm_output_data must be 12 bytes");
-
-// Derived dyno quantities, computed by the SessionController from the sensor streams:
-// torque = I*alpha + F*r (+ mechanical losses), power = torque * omega. Streamed as
-// USB_MSG_STREAM with task_offset TASK_OFFSET_SESSION_CONTROLLER while a session runs,
-// so the host shows the same numbers the LCD does without re-deriving them.
-
-typedef struct {
-    uint32_t timestamp;
-    float torque;   // N·m, at the sensed shaft
-    float power;   // W
-} session_controller_output_data;
-
-DYNO_STATIC_ASSERT(sizeof(session_controller_output_data) == 4 + 4 + 4, "Size of session_controller_output_data must be 12 bytes");
 
 typedef struct {
     uint32_t timestamp;

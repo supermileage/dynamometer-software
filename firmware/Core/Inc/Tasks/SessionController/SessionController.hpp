@@ -51,7 +51,6 @@ class SessionController
 
     private:
         CircularBufferWriter<task_error_data> _task_error_buffer_writer;
-        CircularBufferWriter<session_controller_output_data> _session_controller_buffer_writer;
         CircularBufferReader<forcesensor_output_data> _forcesensor_buffer_reader;
         CircularBufferReader<optical_encoder_output_data> _optical_encoder_buffer_reader;
 
@@ -65,11 +64,6 @@ class SessionController
         bool _prevInSession;
 
         bool CheckTaskQueuesValid();
-
-        inline float CalculateTorque(float angularAcceleration, float force, float angularVelocity);
-        inline float CalculatePower(float torque, float angularVelocity);
-        inline float CalculateMechanicalLosses(float angularAcceleration, float angularVelocity);
-
 };
 
 #ifdef __cplusplus
