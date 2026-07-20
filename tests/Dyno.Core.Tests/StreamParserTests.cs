@@ -393,4 +393,108 @@ public class StreamParserTests
         );
         Assert.Equal(task_offset_t.TASK_OFFSET_OPTICAL_ENCODER, resync.NextHeader.task_offset);
     }
+
+    private static byte[] Encoder(uint timestamp) =>
+        Wire.Message(
+            usb_msg_type_t.USB_MSG_STREAM,
+            task_offset_t.TASK_OFFSET_OPTICAL_ENCODER,
+            new optical_encoder_output_data { timestamp = timestamp }
+        );
+
+    [Fact]
+    public void BatchTrailer_IsConsumedAsFramingNotPublished()
+    {
+        var (parser, received) = NewParser();
+
+        parser.Append(Wire.Batch(1, Encoder(10), Encoder(20)));
+
+        // Two samples, and no third message for the trailer: it is envelope, like the SOF and CRC.
+        Assert.Equal(2, received.Count);
+        Assert.All(received, m => Assert.IsType<OpticalEncoderSample>(m));
+    }
+
+    [Fact]
+    public void IntactBatches_AreAccountedSilently()
+    {
+        var (parser, _) = NewParser();
+        var faults = new List<BatchAccounting>();
+        parser.BatchMisaccounted += faults.Add;
+
+        parser.Append(Wire.Batch(1, Encoder(10)));
+        parser.Append(Wire.Batch(2, Encoder(20), Encoder(30)));
+        parser.Append(Wire.Batch(3, Encoder(40)));
+
+        Assert.Empty(faults);
+    }
+
+    [Fact]
+    public void FirstBatch_EstablishesBaselineWithoutReporting()
+    {
+        var (parser, _) = NewParser();
+        var faults = new List<BatchAccounting>();
+        parser.BatchMisaccounted += faults.Add;
+
+        // Joining mid-transfer: the first trailer closes a batch whose opening we never saw, so its
+        // byte count is short by construction. Reporting that would be reporting our own late start.
+        byte[] batch = Wire.Batch(7, Encoder(10), Encoder(20));
+        parser.Append(batch.AsSpan(40));
+
+        Assert.Empty(faults);
+    }
+
+    [Fact]
+    public void TruncatedBatch_ReportsTheShortfallAgainstWhatTheDeviceSent()
+    {
+        var (parser, _) = NewParser();
+        var faults = new List<BatchAccounting>();
+        var resyncs = new List<ResyncDetails>();
+        parser.BatchMisaccounted += faults.Add;
+        parser.Resynced += resyncs.Add;
+
+        // The observed field failure, reproduced: a transfer arrives with its leading 16 bytes gone
+        // — SOF + header + the first two payload bytes of its opening record. The envelope alone can
+        // only say "16 bytes were skipped"; the trailer is what identifies them as bytes the device
+        // framed and submitted, rather than bytes it never sent.
+        parser.Append(Wire.Batch(1, Encoder(10)));
+        byte[] second = Wire.Batch(2, Encoder(20), Encoder(30));
+        parser.Append(second.AsSpan(16));
+
+        var fault = Assert.Single(faults);
+        Assert.Equal(2u, fault.Sequence);
+        Assert.Equal(0u, fault.MissingTransfers);
+        Assert.Equal(16, fault.Shortfall);
+        Assert.Equal((uint)second.Length, fault.DeclaredBytes);
+
+        // And the resync fires too: the two are complementary, not redundant. The resync shows the
+        // orphaned tail, the accounting shows whose fault it was.
+        Assert.Equal(16, Assert.Single(resyncs).BytesDropped);
+    }
+
+    [Fact]
+    public void MissingBatches_AreReportedAsLostTransfersNotAsAByteCount()
+    {
+        var (parser, _) = NewParser();
+        var faults = new List<BatchAccounting>();
+        parser.BatchMisaccounted += faults.Add;
+
+        parser.Append(Wire.Batch(1, Encoder(10)));
+        parser.Append(Wire.Batch(4, Encoder(20))); // 2 and 3 never landed
+
+        var fault = Assert.Single(faults);
+        Assert.Equal(4u, fault.Sequence);
+        Assert.Equal(2u, fault.MissingTransfers);
+    }
+
+    [Fact]
+    public void SequenceWrap_IsNotReadAsFourBillionLostTransfers()
+    {
+        var (parser, _) = NewParser();
+        var faults = new List<BatchAccounting>();
+        parser.BatchMisaccounted += faults.Add;
+
+        parser.Append(Wire.Batch(uint.MaxValue, Encoder(10)));
+        parser.Append(Wire.Batch(0, Encoder(20)));
+
+        Assert.Empty(faults);
+    }
 }

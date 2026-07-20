@@ -38,6 +38,23 @@ class USBController
         bool IsBufferFull(std::size_t msgSize);
         void ProcessErrorsAndWarnings();
 
+        // One framed usb_tx_batch_trailer: SOF + header + payload + CRC. Every transfer ends with
+        // one, so IsBufferFull holds this much back at all times and TransmitBatch always fits.
+        static constexpr std::size_t BATCH_TRAILER_FRAME_SIZE =
+            2 * sizeof(uint16_t) + sizeof(usb_msg_header_t) + sizeof(usb_tx_batch_trailer);
+
+        // Frames the usb_tx_batch_trailer that closes the pending transfer. Written last, and
+        // deliberately so: the loss this instruments eats the *leading* bytes of a transfer, which
+        // is exactly where a marker would be destroyed by the thing it is meant to measure.
+        void AppendBatchTrailer();
+
+        // Stamps the trailer onto the pending batch and hands it to the CDC driver. Returns
+        // CDC_Transmit_FS's result; the caller still owns _txBufferIndex. Anything but USBD_OK
+        // rewinds the trailer, because the batch it described was refused: a BUSY retry goes out
+        // with whatever else accumulated meanwhile and must be described by one trailer, not two,
+        // and a FAIL batch the caller abandons must leave no stamp behind at all.
+        uint8_t TransmitBatch();
+
         // Frame a rate-limited WARNING_USB_TX_BATCH_DROPPED whenever give-up drops have happened,
         // so link saturation shows in the host's event log instead of being silent sample loss.
         void ReportTxDropsIfDue();
@@ -177,6 +194,13 @@ class USBController
         // last WARNING_USB_TX_BATCH_DROPPED went out, and when that was (ReportTxDropsIfDue).
         uint32_t _txDropsPending = 0;
         uint32_t _lastDropReportTick = 0;
+
+        // Transfers the CDC driver has accepted, stamped into each usb_tx_batch_trailer. Advanced
+        // on USBD_OK alone -- not on BUSY, and not on FAIL, which the same iteration of Run counts
+        // as a drop -- so a batch the driver refused leaves no gap for the host to misread as a
+        // transfer that vanished in flight. A sequence number the host never receives is
+        // indistinguishable, from its side, from one that was sent and lost.
+        uint32_t _batchSeq = 0;
 };
 
 #endif // INC_TASKS_USB_USBCONTROLLER_HPP_

@@ -22,7 +22,37 @@ public sealed record ResyncDetails(
 }
 
 /// <summary>
-/// Decodes the framed STM32 → PC stream (protocol v5): each record travels as
+/// One CDC transfer that did not add up, as measured against the <see cref="usb_tx_batch_trailer"/>
+/// closing it: what the device said it sent (<paramref name="DeclaredBytes"/>) against what actually
+/// arrived (<paramref name="ObservedBytes"/>), and how many transfers went missing outright
+/// (<paramref name="MissingTransfers"/>, from a gap in the device's sequence).
+/// </summary>
+/// <remarks>
+/// This is what separates the two halves of the link. A resync says bytes were lost; it cannot say
+/// whether the device failed to send them or the host failed to receive them. A short transfer
+/// (<c>ObservedBytes &lt; DeclaredBytes</c>, sequence contiguous) means the device framed those bytes
+/// and handed them to the CDC driver, and they did not land — the loss is below the firmware. A
+/// sequence gap means a whole transfer the driver accepted never arrived. Both numbers adding up
+/// while a resync still fires means the loss is inside a record the device itself framed wrong.
+///
+/// <see cref="ObservedBytes"/> counts every byte that arrived between the two trailers, decoded and
+/// skipped alike: the question is what reached the host, not what it could make sense of.
+/// </remarks>
+public sealed record BatchAccounting(
+    uint Sequence,
+    uint DeclaredBytes,
+    long ObservedBytes,
+    uint MissingTransfers
+)
+{
+    /// <summary>Bytes the device sent that never arrived (negative would mean bytes appeared from
+    /// nowhere — a framing bug on our side, not a lossy link). Meaningful only when
+    /// <see cref="MissingTransfers"/> is 0; across a gap the count spans transfers we never saw.</summary>
+    public long Shortfall => DeclaredBytes - ObservedBytes;
+}
+
+/// <summary>
+/// Decodes the framed STM32 → PC stream (protocol v7): each record travels as
 /// <c>[uint16 SOF][usb_msg_header_t][payload][uint16 crc16]</c> — the same envelope the
 /// host→device direction always used. <see cref="Append"/> accumulates bytes and emits one
 /// <see cref="DeviceMessage"/> per CRC-valid frame via <see cref="MessageReceived"/>.
@@ -35,6 +65,13 @@ public sealed record ResyncDetails(
 /// the next SOF rather than the old byte-by-byte header-plausibility guessing. A spurious SOF
 /// inside payload data is caught the same way — its CRC cannot match — at the cost of rescanning
 /// from one byte past it.
+///
+/// Since v7 every CDC transfer closes with a <see cref="usb_tx_batch_trailer"/>, which this class
+/// consumes rather than publishes: it is framing, like the SOF and CRC around it. It carries the
+/// byte count the device handed to its USB driver, so the bytes arriving between two trailers can
+/// be weighed against what was sent — see <see cref="BatchMisaccounted"/>. That is what makes the
+/// loss *attributable*: the envelope detects it, the trailer says which side of the link it
+/// happened on.
 /// </remarks>
 public sealed class StreamParser
 {
@@ -61,6 +98,12 @@ public sealed class StreamParser
     /// per chunk would turn a single fault into a stutter of near-identical warnings.</summary>
     public event Action<ResyncDetails>? Resynced;
 
+    /// <summary>Raised for each CDC transfer whose bytes did not add up against the trailer closing
+    /// it. Silent while the link is healthy, so a capture that shows resyncs but no accounting
+    /// failures is itself the answer: the bytes all arrived and the fault is in what the device
+    /// framed, not in what reached us. See <see cref="BatchAccounting"/>.</summary>
+    public event Action<BatchAccounting>? BatchMisaccounted;
+
     /// <summary>Bytes discarded since the last record decoded cleanly — a desync in progress.</summary>
     private int _dropped;
 
@@ -71,6 +114,15 @@ public sealed class StreamParser
 
     /// <summary>Header of the last record decoded cleanly — names what the lost bytes came after.</summary>
     private usb_msg_header_t? _lastGoodHeader;
+
+    /// <summary>Bytes that have arrived since the last <see cref="usb_tx_batch_trailer"/> — decoded
+    /// and skipped alike — to be weighed against the next trailer's declared length.</summary>
+    private long _bytesSinceTrailer;
+
+    /// <summary>Sequence of the last trailer seen, once one has been. Until then there is no
+    /// baseline: the first trailer closes a transfer we joined partway through, so its byte count
+    /// means nothing and neither does its distance from a previous sequence we never saw.</summary>
+    private uint? _lastBatchSeq;
 
     public void Append(ReadOnlySpan<byte> data)
     {
@@ -141,7 +193,21 @@ public sealed class StreamParser
             }
 
             var payload = bytes.Slice(pos + 2 + HeaderSize, payloadLen);
-            MessageReceived?.Invoke(Decode(header, payload));
+
+            // The trailer is framing, not telemetry: it is consumed here and never published. It
+            // closes the transfer it describes, so its own bytes are part of the count it is
+            // weighed against — hence the accounting before the counter resets.
+            if (IsBatchTrailer(header) && TryRead<usb_tx_batch_trailer>(payload, out var trailer))
+            {
+                AccountForBatch(trailer, _bytesSinceTrailer + frameLen);
+                _bytesSinceTrailer = 0;
+            }
+            else
+            {
+                MessageReceived?.Invoke(Decode(header, payload));
+                _bytesSinceTrailer += frameLen;
+            }
+
             _lastGoodHeader = header;
             pos += frameLen;
         }
@@ -159,6 +225,38 @@ public sealed class StreamParser
             _skipped.Add(value);
         }
         _dropped++;
+        // Skipped bytes still *arrived*, and the trailer's length is what the device *sent*, so
+        // they belong in the comparison. Leaving them out would turn every resync into a phantom
+        // shortfall and hide the one case worth seeing: bytes that never reached us at all.
+        _bytesSinceTrailer++;
+    }
+
+    private static bool IsBatchTrailer(in usb_msg_header_t h) =>
+        h.msg_type == usb_msg_type_t.USB_MSG_STATUS
+        && h.task_offset == task_offset_t.TASK_OFFSET_USB_CONTROLLER;
+
+    private void AccountForBatch(in usb_tx_batch_trailer trailer, long observed)
+    {
+        // Sequence arithmetic is unsigned and deliberately wrapping: the counter is a uint32 on the
+        // device and rolls over after ~4 billion transfers, which at a few hundred a second is days
+        // of continuous streaming — reachable, and not worth a spurious "4 billion transfers lost".
+        uint missing = _lastBatchSeq is { } previous
+            ? unchecked(trailer.batch_seq - previous - 1)
+            : 0;
+
+        // No baseline yet: this trailer closes a transfer we joined partway through, so its byte
+        // count is short by however much preceded us and would report as loss that never happened.
+        bool haveBaseline = _lastBatchSeq is not null;
+        _lastBatchSeq = trailer.batch_seq;
+
+        if (!haveBaseline || (missing == 0 && observed == trailer.batch_len))
+        {
+            return;
+        }
+
+        BatchMisaccounted?.Invoke(
+            new BatchAccounting(trailer.batch_seq, trailer.batch_len, observed, missing)
+        );
     }
 
     private static DeviceMessage Decode(in usb_msg_header_t h, ReadOnlySpan<byte> payload) =>

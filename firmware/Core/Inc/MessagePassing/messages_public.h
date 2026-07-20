@@ -226,8 +226,15 @@ DYNO_STATIC_ASSERT(sizeof(usb_msg_header_t) == 12, "Size of usb_msg_header_t mus
 // ids went with them, which renumbers every parameter after them -- a v6 host pushing
 // to v5 firmware would write PID gains into mechanical constants. Hence the version
 // bump: the handshake refuses the link rather than letting that happen.
+// 
+// v7 added usb_tx_batch_trailer, which closes every CDC transfer. A v7 host uses it to
+// account for the bytes in each transfer, so it can tell a transfer that arrived short
+// from one that never left; against v6 firmware no trailer ever arrives and the host's
+// accounting would report the whole stream as unaccounted-for. In the other direction a
+// v6 host would decode the trailer as an unknown STATUS record and log it a few hundred
+// times a second.
 
-#define USB_PROTOCOL_VERSION 6u
+#define USB_PROTOCOL_VERSION 7u
 
 // Shared CRC so firmware and host compute identical checksums over a frame body.
 
@@ -317,6 +324,37 @@ typedef struct {
 } session_state_event;
 
 DYNO_STATIC_ASSERT(sizeof(session_state_event) == 4 + 4, "Size of session_state_event must be 8 bytes");
+
+// Transfer accounting (STM32 -> PC): emitted as USB_MSG_STATUS with task_offset
+// TASK_OFFSET_USB_CONTROLLER as the *last* record of every CDC transfer, describing the
+// transfer it closes. It is a framing-layer record, not telemetry: the host's parser
+// consumes it for accounting and never publishes it as a message.
+// 
+// This exists to make a short transfer distinguishable from a lost one. The framed
+// envelope already tells the host that bytes went missing (a record whose CRC fails, or
+// whose SOF never arrives), but not *where* they went missing -- and the two answers point
+// at opposite halves of the link. batch_len is the exact byte count the device handed to
+// CDC_Transmit_FS, including this trailer, so a host that counts the bytes it actually
+// decoded and skipped between two trailers learns which it is:
+// 
+//   observed == batch_len, seq contiguous   the transfer arrived whole; any loss the
+//                                           parser reported happened inside a record the
+//                                           device itself framed wrong
+//   observed <  batch_len, seq contiguous   the transfer arrived short -- the device
+//                                           framed and submitted bytes that never landed
+//   seq gap                                 an entire transfer the device believes it
+//                                           sent never arrived
+// 
+// seq counts transfers the driver *accepted*: it advances only when CDC_Transmit_FS
+// returns something other than USBD_BUSY, so a batch the firmware gave up on (and reported
+// as WARNING_USB_TX_BATCH_DROPPED) never burns a number and never shows up here as a gap.
+
+typedef struct {
+    uint32_t batch_seq;   // monotonic per accepted transfer; a gap = a whole transfer lost
+    uint32_t batch_len;   // bytes in this transfer, including this trailer record
+} usb_tx_batch_trailer;
+
+DYNO_STATIC_ASSERT(sizeof(usb_tx_batch_trailer) == 4 + 4, "Size of usb_tx_batch_trailer must be 8 bytes");
 
 // ---- Runtime system configuration -----------------------------------------
 // The tunable quantities from Config/config.h (gains, task delays, thresholds)

@@ -22,7 +22,7 @@ public static class MessageConstants
     public const uint USB_FRAME_CRC_INIT = 0xFFFFu;   // 0xFFFFu
     public const uint USB_FRAME_CRC_POLY = 0x1021u;   // 0x1021u
     public const uint USB_RX_MAX_PAYLOAD = 128u;   // 128u
-    public const uint USB_PROTOCOL_VERSION = 6u;   // 6u
+    public const uint USB_PROTOCOL_VERSION = 7u;   // 7u
     public const uint SYSCFG_PARAM_COUNT = 33u;   // 33u  -- one past the highest sysconfig_param_t id; sizes the firmware store
 }
 
@@ -183,6 +183,13 @@ public struct usb_msg_header_t
 // ids went with them, which renumbers every parameter after them -- a v6 host pushing
 // to v5 firmware would write PID gains into mechanical constants. Hence the version
 // bump: the handshake refuses the link rather than letting that happen.
+// 
+// v7 added usb_tx_batch_trailer, which closes every CDC transfer. A v7 host uses it to
+// account for the bytes in each transfer, so it can tell a transfer that arrived short
+// from one that never left; against v6 firmware no trailer ever arrives and the host's
+// accounting would report the whole stream as unaccounted-for. In the other direction a
+// v6 host would decode the trailer as an unknown STATUS record and log it a few hundred
+// times a second.
 
 // Shared CRC so firmware and host compute identical checksums over a frame body.
 
@@ -256,6 +263,37 @@ public struct session_state_event
 {
     public uint timestamp;
     public uint in_session;   // 1 = session running, 0 = idle
+}
+
+// Transfer accounting (STM32 -> PC): emitted as USB_MSG_STATUS with task_offset
+// TASK_OFFSET_USB_CONTROLLER as the *last* record of every CDC transfer, describing the
+// transfer it closes. It is a framing-layer record, not telemetry: the host's parser
+// consumes it for accounting and never publishes it as a message.
+// 
+// This exists to make a short transfer distinguishable from a lost one. The framed
+// envelope already tells the host that bytes went missing (a record whose CRC fails, or
+// whose SOF never arrives), but not *where* they went missing -- and the two answers point
+// at opposite halves of the link. batch_len is the exact byte count the device handed to
+// CDC_Transmit_FS, including this trailer, so a host that counts the bytes it actually
+// decoded and skipped between two trailers learns which it is:
+// 
+//   observed == batch_len, seq contiguous   the transfer arrived whole; any loss the
+//                                           parser reported happened inside a record the
+//                                           device itself framed wrong
+//   observed <  batch_len, seq contiguous   the transfer arrived short -- the device
+//                                           framed and submitted bytes that never landed
+//   seq gap                                 an entire transfer the device believes it
+//                                           sent never arrived
+// 
+// seq counts transfers the driver *accepted*: it advances only when CDC_Transmit_FS
+// returns something other than USBD_BUSY, so a batch the firmware gave up on (and reported
+// as WARNING_USB_TX_BATCH_DROPPED) never burns a number and never shows up here as a gap.
+
+[StructLayout(LayoutKind.Sequential)]
+public struct usb_tx_batch_trailer
+{
+    public uint batch_seq;   // monotonic per accepted transfer; a gap = a whole transfer lost
+    public uint batch_len;   // bytes in this transfer, including this trailer record
 }
 
 // ---- Runtime system configuration -----------------------------------------
@@ -376,6 +414,7 @@ public static class MessageContract
         (typeof(usb_response_data_t), 8),
         (typeof(usb_device_ready_event), 4),
         (typeof(session_state_event), 8),
+        (typeof(usb_tx_batch_trailer), 8),
         (typeof(sysconfig_param_t), 2),
         (typeof(sysconfig_set_param_body), 6),
         (typeof(optical_encoder_output_data), 16),

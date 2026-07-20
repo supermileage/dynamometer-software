@@ -62,6 +62,28 @@ app logs it as a warning: dropped bytes are the *only* evidence this link ever l
 are a link fault to surface, not noise to swallow. An `UnknownMessage` now means what it says — a
 well-formed record this host has no decoder for.
 
+### Transfer accounting, and why a resync alone is not enough
+A resync proves bytes were lost. It cannot say *whose* bytes — whether the firmware failed to send
+them or this host failed to receive them — and those point at opposite halves of the link. Since v7
+each CDC transfer closes with a `usb_tx_batch_trailer` carrying the byte count the device handed to
+its USB driver, so the parser can weigh what arrived against what was sent. It counts every byte
+between two trailers, **decoded and skipped alike**: the question is what reached us, not what we
+could make sense of, and excluding skipped bytes would turn every resync into a phantom shortfall.
+
+| what the trailer shows | what it means |
+|---|---|
+| counts match, sequence contiguous | the transfer arrived whole; a resync here means the device framed a record wrong |
+| `ObservedBytes < DeclaredBytes` | the device framed and submitted those bytes and they did not land — the loss is below the firmware |
+| `batch_seq` gap | an entire transfer the driver accepted never arrived |
+
+Discrepancies raise `BatchMisaccounted` (`BatchAccounting`), which `DeviceClient` re-raises and the
+app logs beside the resync warning. It is **silent when the link is healthy**, so the absence of it
+next to a resync is itself a finding. The trailer is framing, not telemetry: the parser consumes it
+and never publishes it as a `DeviceMessage`, so it costs consumers nothing at a few hundred
+transfers a second. The first trailer after connect only establishes a baseline — it closes a
+transfer we joined partway through, and reporting its short count would be reporting our own late
+start.
+
 ## Transmit path (PC → STM32)
 `UsbFrame.BuildCommandFrame` wraps a `usb_cmd_header_t` (opcode + msg_id) + body in the
 framed envelope with a CRC-16/CCITT-FALSE over header+payload. `DeviceClient.SendCommandAsync`

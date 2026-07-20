@@ -84,6 +84,13 @@ public sealed class DeviceClient : IDisposable
     /// that shows up. Fires on the read-loop thread.</summary>
     public event Action<ResyncDetails>? StreamResynced;
 
+    /// <summary>Raised when a CDC transfer's bytes did not match the trailer closing it — either it
+    /// arrived short, or the device's sequence skipped transfers we never saw. Where
+    /// <see cref="StreamResynced"/> says the stream lost data, this says which side lost it: the
+    /// device's own count of what it handed the CDC driver is the reference. Fires on the read-loop
+    /// thread.</summary>
+    public event Action<BatchAccounting>? BatchMisaccounted;
+
     public event Action<string>? CommandSent;
 
     /// <summary>Raised when a described command runs out of attempts without an ack — a timeout, or
@@ -137,6 +144,30 @@ public sealed class DeviceClient : IDisposable
         _log = logger ?? NullLogger<DeviceClient>.Instance;
         _parser.MessageReceived += OnParsed;
         _parser.Resynced += OnResynced;
+        _parser.BatchMisaccounted += OnBatchMisaccounted;
+    }
+
+    private void OnBatchMisaccounted(BatchAccounting batch)
+    {
+        if (batch.MissingTransfers > 0)
+        {
+            _log.LogWarning(
+                "{Missing} USB transfer(s) never arrived before batch {Sequence}; the device sent them and the host never saw them",
+                batch.MissingTransfers,
+                batch.Sequence
+            );
+        }
+        else
+        {
+            _log.LogWarning(
+                "USB batch {Sequence} arrived {Shortfall} bytes short ({Observed} of {Declared}); the loss is below the firmware, not in its framing",
+                batch.Sequence,
+                batch.Shortfall,
+                batch.ObservedBytes,
+                batch.DeclaredBytes
+            );
+        }
+        BatchMisaccounted?.Invoke(batch);
     }
 
     private void OnResynced(ResyncDetails details)

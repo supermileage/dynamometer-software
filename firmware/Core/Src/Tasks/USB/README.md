@@ -38,7 +38,8 @@ Each iteration:
    - `bpm_output_data`
 7. **Health + faults** — whenever `_appReady`, session or not: `task_monitor_output_data` and
    errors via `ProcessErrorsAndWarnings()`.
-8. `CDC_Transmit_FS(_txBuffer, …)`; delay `USB_TASK_OSDELAY`.
+8. `TransmitBatch()` — stamp the batch trailer onto the pending records and hand the buffer to
+   `CDC_Transmit_FS`; delay `USB_TASK_OSDELAY`.
 
 Step 5 runs *before* step 6 on purpose: a session-start event is framed ahead of the samples it
 authorizes, so the host — which displays sensor data only while it believes a session is running —
@@ -116,6 +117,30 @@ Complementary halves of the same idea, both in `DeviceClient` (see `src/Dyno.Cor
 - **Probe** — if no announcement arrives within 1 s of connecting, the host sends an unsolicited
   `USB_CMD_ACK` rather than waiting. This is what rescues a reconnect to a board running firmware
   *without* the detach fix above (which is still silently `_appReady` and so never announces).
+
+## Transfer accounting (`usb_tx_batch_trailer`)
+Every transfer ends with a `usb_tx_batch_trailer` (`USB_MSG_STATUS`, `TASK_OFFSET_USB_CONTROLLER`)
+carrying a monotonic `batch_seq` and the `batch_len` handed to `CDC_Transmit_FS` — including the
+trailer itself. It exists to make byte loss **attributable**. The SOF/CRC envelope already tells the
+host that bytes went missing; it cannot say whether they were lost above the driver or below it, and
+those are opposite bugs. Counting the bytes that arrive between two trailers against `batch_len`
+answers it: short means the firmware framed and submitted bytes that never landed, a `batch_seq` gap
+means a whole accepted transfer vanished, and everything adding up while the parser still resyncs
+means the device framed a record wrong in the first place.
+
+Three details carry the weight:
+
+- **It is a trailer, not a header.** The loss it was built to diagnose eats the *leading* bytes of a
+  transfer, which is exactly where a marker would be destroyed by the thing it is meant to measure.
+- **`IsBufferFull` reserves its 24 bytes permanently**, which is what lets `TransmitBatch()` be
+  infallible. Flushes happen from paths with no way to report "no room", and a batch that could not
+  be stamped is a batch the host cannot account for — the one case this record exists to rule out.
+- **`batch_seq` advances only on acceptance.** A batch the driver refused and `StallIfIsBufferFull`
+  gave up on burns no number, so it cannot be misread as a transfer lost in flight; that case is
+  already reported as `WARNING_USB_TX_BATCH_DROPPED`.
+
+The host's parser consumes the trailer as framing and never publishes it as a message — see
+`StreamParser` / `BatchAccounting` in `src/Dyno.Core/README.md`.
 
 ## Error/warning framing
 `ProcessErrorsAndWarnings()` reads `task_error_data` from `task_error_circular_buffer` and sets

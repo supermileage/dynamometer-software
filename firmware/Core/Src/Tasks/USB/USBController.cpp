@@ -250,6 +250,46 @@ void USBController::SendSessionState(bool inSession)
     AppendFrame(header, &evt, sizeof(evt));
 }
 
+void USBController::AppendBatchTrailer()
+{
+    // batch_len describes the transfer as the host will see it, so it counts this record too --
+    // the host compares it against the bytes it decoded and skipped between two trailers, and a
+    // length that excluded itself would read as a 24-byte shortfall on every healthy batch.
+    usb_tx_batch_trailer trailer =
+    {
+        .batch_seq = _batchSeq,
+        .batch_len = static_cast<uint32_t>(_txBufferIndex) + BATCH_TRAILER_FRAME_SIZE
+    };
+
+    // No IsBufferFull check: the reserve it holds back guarantees the room (see IsBufferFull).
+    usb_msg_header_t header =
+    {
+        .msg_type = USB_MSG_STATUS,
+        .task_offset = TASK_OFFSET_USB_CONTROLLER,
+        .payload_len = sizeof(trailer)
+    };
+    AppendFrame(header, &trailer, sizeof(trailer));
+}
+
+uint8_t USBController::TransmitBatch()
+{
+    AppendBatchTrailer();
+
+    uint8_t result = CDC_Transmit_FS(_txBuffer, _txBufferIndex);
+    if (result != USBD_OK)
+    {
+        // Refused -- BUSY (retry later) or FAIL (batch abandoned by the caller). Either way these
+        // bytes did not go out, so the stamp comes back off and the sequence does not move: a
+        // number the host never receives, spent on a transfer that never left, reads to it as a
+        // transfer lost in flight. That is the one conclusion this record exists to rule out.
+        _txBufferIndex -= BATCH_TRAILER_FRAME_SIZE;
+        return result;
+    }
+
+    _batchSeq++;
+    return result;
+}
+
 void USBController::AnnounceReadyIfDue()
 {
     uint32_t now = osKernelGetTickCount();
@@ -305,7 +345,7 @@ void USBController::WaitForHandshake()
         ProcessIncomingFrames();
         AnnounceReadyIfDue();
 
-        if (_txBufferIndex > 0 && CDC_Transmit_FS(_txBuffer, _txBufferIndex) != USBD_BUSY)
+        if (_txBufferIndex > 0 && TransmitBatch() != USBD_BUSY)
         {
             _txBufferIndex = 0;
         }
@@ -427,7 +467,7 @@ void USBController::Run()
         //    stream records. Nothing is transmitted when the buffer is empty.
         if (_txBufferIndex > 0)
         {
-            uint8_t result = CDC_Transmit_FS(_txBuffer, _txBufferIndex);
+            uint8_t result = TransmitBatch();
             if (result == USBD_BUSY)
             {
                 osDelay(sysconfig_get_u32(SYSCFG_USB_TASK_OSDELAY));
@@ -576,7 +616,7 @@ void USBController::MockMessages(const bool forever)
         AppendFrame(usb_header, &mock_warning_data, sizeof(mock_warning_data));
 
 
-        if (CDC_Transmit_FS(_txBuffer, _txBufferIndex) == USBD_BUSY) {
+        if (TransmitBatch() == USBD_BUSY) {
             continue;
         }
         _txBufferIndex = 0;
@@ -620,7 +660,15 @@ void USBController::StallIfIsBufferFull(bool bufferFull)
     // retry.
     const uint32_t maxRetries = sysconfig_get_u32(SYSCFG_USB_TX_FLUSH_MAX_RETRIES);
     for (uint32_t attempt = 0; attempt < maxRetries; ++attempt) {
-        if (CDC_Transmit_FS(_txBuffer, _txBufferIndex) != USBD_BUSY) {
+        const uint8_t result = TransmitBatch();
+        if (result != USBD_BUSY) {
+            // A FAIL here loses the batch exactly as the give-up below does, so it is counted the
+            // same way. Leaving it uncounted made drops on the flush path the one kind that never
+            // reached the event log -- silent precisely when the link is unhealthy enough to hit
+            // this function at all.
+            if (result != USBD_OK && _appReady) {
+                _txDropsPending++;
+            }
             _txBufferIndex = 0;
             return;
         }
@@ -673,9 +721,14 @@ void USBController::ReportTxDropsIfDue()
 
 bool USBController::IsBufferFull(std::size_t msgSize)
 {
-    // Room for one full framed record: SOF + header + payload + CRC (see AppendFrame).
+    // Room for one full framed record: SOF + header + payload + CRC (see AppendFrame), plus the
+    // trailer every transfer ends with. Reserving the trailer here rather than checking for it in
+    // TransmitBatch is what lets that function be infallible: a flush is called from paths that
+    // have no way to report "no room", and a batch that could not be stamped would be a batch the
+    // host cannot account for -- precisely the case this record exists to rule out.
     const std::size_t envelope = 2 * sizeof(uint16_t);
-    if (_txBufferIndex + envelope + sizeof(usb_msg_header_t) + msgSize >= USB_TX_BUFFER_SIZE) {
+    const std::size_t needed = envelope + sizeof(usb_msg_header_t) + msgSize + BATCH_TRAILER_FRAME_SIZE;
+    if (_txBufferIndex + needed >= USB_TX_BUFFER_SIZE) {
         return true;
     }
     return false;

@@ -345,6 +345,7 @@ public partial class MainWindowViewModel : ObservableObject
             client.CommandSent += OnCommandSent;
             client.CommandFailed += OnCommandFailed;
             client.StreamResynced += OnStreamResynced;
+            client.BatchMisaccounted += OnBatchMisaccounted;
             _client = client;
             ConnectionStatus = $"Connecting to {SelectedPort}…";
             // Opening the serial port starts blocking I/O that, on a Linux USB-CDC device, can
@@ -408,6 +409,7 @@ public partial class MainWindowViewModel : ObservableObject
         client.CommandSent -= OnCommandSent;
         client.CommandFailed -= OnCommandFailed;
         client.StreamResynced -= OnStreamResynced;
+        client.BatchMisaccounted -= OnBatchMisaccounted;
     }
 
     private void OnHandshaked()
@@ -729,6 +731,25 @@ public partial class MainWindowViewModel : ObservableObject
                     + $"skipped: {hex}"
             );
         });
+
+    /// <summary>A CDC transfer that did not add up against the trailer closing it. This is the line
+    /// that says which side of the link lost the bytes a [WARN] resync reports: a shortfall means
+    /// the device framed and submitted bytes that never landed, a sequence gap means a whole
+    /// transfer vanished, and a resync with neither means the device framed the record wrong in the
+    /// first place. Deliberately worded as the conclusion rather than the raw counts — the numbers
+    /// are here to be read by whoever is chasing the desync, not decoded.</summary>
+    private void OnBatchMisaccounted(BatchAccounting b) =>
+        Dispatcher.UIThread.Post(() =>
+            AddEvent(
+                b.MissingTransfers > 0
+                    ? $"[WARN] {b.MissingTransfers} USB transfer{(b.MissingTransfers == 1 ? "" : "s")} "
+                        + $"never arrived before batch #{b.Sequence} — the device sent them, the host "
+                        + "never saw them"
+                    : $"[WARN] USB batch #{b.Sequence} arrived {b.Shortfall} byte"
+                        + $"{(b.Shortfall == 1 ? "" : "s")} short ({b.ObservedBytes} of "
+                        + $"{b.DeclaredBytes} B) — the bytes left the firmware and were lost below it"
+            )
+        );
 
     /// <summary>A command going out. Logged from the client rather than from each call site so the
     /// sysconfig writes pushed on a handshake — which no button press announces — show up too.
