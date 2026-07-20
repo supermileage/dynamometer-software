@@ -8,8 +8,10 @@ using Dyno.Core.Plotting;
 namespace Dyno.App.Controls;
 
 /// <summary>
-/// A scrolling strip chart of one or more series over the last <see cref="WindowSeconds"/> seconds
-/// ending at <see cref="AnchorTime"/>. Series carry different units, so there is no shared y-scale
+/// A chart of one or more series over a whole run: the x axis always starts at 0 — the first
+/// sample of the session — and extends to <see cref="AnchorTime"/>, the newest sample. It does not
+/// scroll; it grows, and stops growing when the device stops streaming, so a finished run stays on
+/// screen in full. Series carry different units, so there is no shared y-scale
 /// and no dual axis: each series is normalized to its <em>own</em> effective range — the fixed
 /// range configured in Settings, or its per-frame autoscale fit — and drawn on the common
 /// vertical. The numeric labels belong to <see cref="AxisSeries"/> alone; the picker above the
@@ -37,17 +39,20 @@ public class TimeSeriesPlot : Control
         IBrush?
     >(nameof(LabelBrush), new SolidColorBrush(Color.Parse("#8892A2")));
 
-    /// <summary>Right edge of the window (seconds, same clock as the buffers' samples). Advanced
-    /// by the page's frame timer; every change repaints the strip.</summary>
+    /// <summary>Right edge of the plot: seconds since the run's first sample, on the device's own
+    /// clock. Advanced by the page's frame timer; every change repaints.</summary>
     public static readonly StyledProperty<double> AnchorTimeProperty = AvaloniaProperty.Register<
         TimeSeriesPlot,
         double
     >(nameof(AnchorTime));
 
-    public static readonly StyledProperty<double> WindowSecondsProperty = AvaloniaProperty.Register<
+    /// <summary>A silence longer than this breaks the line instead of being spanned by a straight
+    /// segment. Stopping a session, or a dropped link, leaves a real hole in the record; drawing
+    /// through it would invent readings that were never taken.</summary>
+    public static readonly StyledProperty<double> GapSecondsProperty = AvaloniaProperty.Register<
         TimeSeriesPlot,
         double
-    >(nameof(WindowSeconds), 30.0);
+    >(nameof(GapSeconds), 1.0);
 
     static TimeSeriesPlot()
     {
@@ -57,7 +62,7 @@ public class TimeSeriesPlot : Control
             GridBrushProperty,
             LabelBrushProperty,
             AnchorTimeProperty,
-            WindowSecondsProperty
+            GapSecondsProperty
         );
     }
 
@@ -91,10 +96,10 @@ public class TimeSeriesPlot : Control
         set => SetValue(AnchorTimeProperty, value);
     }
 
-    public double WindowSeconds
+    public double GapSeconds
     {
-        get => GetValue(WindowSecondsProperty);
-        set => SetValue(WindowSecondsProperty, value);
+        get => GetValue(GapSecondsProperty);
+        set => SetValue(GapSecondsProperty, value);
     }
 
     // Margins around the plot area: room for y labels left, x labels below.
@@ -103,7 +108,7 @@ public class TimeSeriesPlot : Control
     private const double MarginTop = 6;
     private const double MarginBottom = 18;
     private const double LabelFontSize = 10;
-    private const double XTickStep = 5; // seconds between vertical gridlines
+    private const double MinimumSpanSeconds = 1; // keeps a just-started run from being degenerate
 
     // Scratch arrays reused across frames and series (sized to the largest buffer on first use).
     private double[]? _times;
@@ -128,8 +133,10 @@ public class TimeSeriesPlot : Control
 
         var typeface = new Typeface(TextElement.GetFontFamily(this));
         var series = Series;
-        double t1 = AnchorTime;
-        double t0 = t1 - WindowSeconds;
+        // The run always starts at 0 -- PlotsViewModel records each sample's device timestamp
+        // relative to the first one it saw -- and the axis stretches to the newest sample.
+        double t0 = 0;
+        double t1 = Math.Max(AnchorTime, MinimumSpanSeconds);
 
         if (series is null || series.Count == 0)
         {
@@ -311,15 +318,15 @@ public class TimeSeriesPlot : Control
             context.DrawText(label, new Point(plot.Left - 6 - label.Width, py - label.Height / 2));
         }
 
-        // Vertical gridlines + relative-seconds labels, anchored so "0" is the newest edge.
-        for (double t = 0; t >= -(t1 - t0); t -= XTickStep)
+        // Vertical gridlines + elapsed-seconds labels, starting at 0 on the left. The step is
+        // chosen per frame rather than fixed: the same axis has to stay readable at 5 seconds and
+        // at an hour, so it walks the 1/2/5 sequence as the run grows.
+        double xTick = NiceStep((t1 - t0) / 6);
+        for (double t = 0; t <= t1 + xTick * 0.01; t += xTick)
         {
-            double px = plot.Right + t / (t1 - t0) * plot.Width;
+            double px = plot.Left + (t - t0) / (t1 - t0) * plot.Width;
             context.DrawLine(gridPen, new Point(px, plot.Top), new Point(px, plot.Bottom));
-            var label = Text(
-                t == 0 ? "now" : $"{t.ToString("0", CultureInfo.InvariantCulture)}s",
-                typeface
-            );
+            var label = Text(FormatSeconds(t, xTick), typeface);
             double lx = Math.Max(
                 plot.Left,
                 Math.Min(px - label.Width / 2, plot.Right - label.Width)
@@ -327,6 +334,13 @@ public class TimeSeriesPlot : Control
             context.DrawText(label, new Point(lx, plot.Bottom + 3));
         }
     }
+
+    /// <summary>Elapsed time in seconds, per the request that every plot read in seconds. The
+    /// decimals follow the tick step, so a 0.5 s grid does not label every line "0".</summary>
+    private static string FormatSeconds(double seconds, double tick) =>
+        tick >= 1
+            ? seconds.ToString("0", CultureInfo.InvariantCulture) + "s"
+            : seconds.ToString(tick >= 0.1 ? "0.#" : "0.##", CultureInfo.InvariantCulture) + "s";
 
     /// <summary>Draws the series currently in the scratch arrays against its own range — the
     /// normalization that lets differently-scaled series share the strip.</summary>
@@ -356,12 +370,25 @@ public class TimeSeriesPlot : Control
             return;
         }
 
+        // A silence longer than the gap threshold starts a new figure rather than being bridged.
+        // The threshold also has to clear a few decimation buckets: once a run is long enough that
+        // one pixel column spans several seconds, adjacent output points are legitimately that far
+        // apart and must not read as holes.
+        double bucketSeconds = (t1 - t0) / Math.Max(1, plot.Width);
+        double gapThreshold = Math.Max(GapSeconds, bucketSeconds * 3);
+
         var geometry = new StreamGeometry();
         using (var g = geometry.Open())
         {
             g.BeginFigure(ToPixel(0), isFilled: false);
             for (int i = 1; i < points; i++)
             {
+                if (_outTimes![i] - _outTimes[i - 1] > gapThreshold)
+                {
+                    g.EndFigure(isClosed: false);
+                    g.BeginFigure(ToPixel(i), isFilled: false);
+                    continue;
+                }
                 g.LineTo(ToPixel(i));
             }
             g.EndFigure(isClosed: false);

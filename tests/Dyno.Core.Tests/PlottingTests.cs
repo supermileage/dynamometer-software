@@ -26,7 +26,7 @@ public class TimeSeriesBufferTests
     [Fact]
     public void WhenFull_OldestSamplesAreOverwritten()
     {
-        var buffer = new TimeSeriesBuffer(4);
+        var buffer = new TimeSeriesBuffer(4, maxCapacity: 4); // at the ceiling: no room to grow
         for (int i = 0; i < 6; i++)
         {
             buffer.Add(i, i);
@@ -180,7 +180,7 @@ public class WindowPresenceTests
     [InlineData(100.0)]
     public void TheShortcutAgreesWithCopyWindowAtEveryOffset(double windowStart)
     {
-        var buffer = new TimeSeriesBuffer(8);
+        var buffer = new TimeSeriesBuffer(8, maxCapacity: 8);
         for (int i = 0; i < 10; i++) // wraps: exercises the ring, not just a fresh buffer
         {
             buffer.Add(i, i * 2f);
@@ -200,5 +200,101 @@ public class WindowPresenceTests
 
         Assert.False(HasDataInWindow(buffer, 0));
         Assert.False(CopyFindsData(buffer, 0));
+    }
+}
+
+/// <summary>
+/// Depth behaviour. The plots show a whole run rather than a trailing window, so the buffer grows
+/// with what has actually been recorded instead of allocating for the worst case up front — and
+/// says so when a run finally outgrows the ceiling and its start is no longer on screen.
+/// </summary>
+public class TimeSeriesBufferGrowthTests
+{
+    [Fact]
+    public void GrowsInsteadOfDroppingUntilTheCeilingIsReached()
+    {
+        var buffer = new TimeSeriesBuffer(initialCapacity: 4, maxCapacity: 64);
+        for (int i = 0; i < 40; i++)
+        {
+            buffer.Add(i, i);
+        }
+
+        Assert.Equal(40, buffer.Count);
+        Assert.False(buffer.HasDroppedSamples);
+        Assert.Equal(0.0, buffer.EarliestTime); // the very first sample is still there
+        Assert.Equal(39.0, buffer.LatestTime);
+        Assert.True(buffer.Capacity >= 40);
+        Assert.True(buffer.Capacity <= 64);
+    }
+
+    [Fact]
+    public void GrowthPreservesEverySampleInOrder()
+    {
+        var buffer = new TimeSeriesBuffer(initialCapacity: 2, maxCapacity: 1024);
+        for (int i = 0; i < 100; i++)
+        {
+            buffer.Add(i * 0.5, i);
+        }
+
+        var times = new double[buffer.Capacity];
+        var values = new float[buffer.Capacity];
+        int count = buffer.CopyWindow(double.MinValue, times, values);
+
+        Assert.Equal(100, count);
+        for (int i = 0; i < 100; i++)
+        {
+            Assert.Equal(i * 0.5, times[i]);
+            Assert.Equal(i, values[i]);
+        }
+    }
+
+    [Fact]
+    public void GrowthAfterAWrapStillPreservesOrder()
+    {
+        // Fill to the initial capacity and past it so _start is mid-array, then force a grow.
+        var buffer = new TimeSeriesBuffer(initialCapacity: 4, maxCapacity: 4);
+        for (int i = 0; i < 6; i++)
+        {
+            buffer.Add(i, i);
+        }
+        Assert.True(buffer.HasDroppedSamples);
+
+        var times = new double[buffer.Capacity];
+        var values = new float[buffer.Capacity];
+        int count = buffer.CopyWindow(double.MinValue, times, values);
+        Assert.Equal([2.0, 3.0, 4.0, 5.0], times.Take(count));
+    }
+
+    [Fact]
+    public void PastTheCeilingTheOldestSamplesRollOffAndItIsReported()
+    {
+        var buffer = new TimeSeriesBuffer(initialCapacity: 4, maxCapacity: 8);
+        for (int i = 0; i < 8; i++)
+        {
+            buffer.Add(i, i);
+        }
+        Assert.False(buffer.HasDroppedSamples);
+
+        buffer.Add(8, 8);
+
+        Assert.True(buffer.HasDroppedSamples);
+        Assert.Equal(8, buffer.Count);
+        Assert.Equal(1.0, buffer.EarliestTime); // sample 0 is gone: the run's start is lost
+    }
+
+    [Fact]
+    public void ClearForgetsThatSamplesWereEverDropped()
+    {
+        var buffer = new TimeSeriesBuffer(initialCapacity: 2, maxCapacity: 2);
+        for (int i = 0; i < 5; i++)
+        {
+            buffer.Add(i, i);
+        }
+        Assert.True(buffer.HasDroppedSamples);
+
+        buffer.Clear();
+
+        Assert.False(buffer.HasDroppedSamples);
+        Assert.Equal(0, buffer.Count);
     }
 }

@@ -1,38 +1,67 @@
 namespace Dyno.Core.Plotting;
 
 /// <summary>
-/// Fixed-capacity ring of (time, value) samples for one plotted channel. Appends drop the oldest
-/// sample once full, so it always holds the most recent stretch of a stream — which is all a
-/// scrolling time plot can show anyway.
+/// Growing ring of (time, value) samples for one plotted channel. Starts small and doubles as it
+/// fills, so memory tracks how much has actually been recorded; past <see cref="MaxCapacity"/> it
+/// stops growing and drops the oldest sample per append.
 /// </summary>
 /// <remarks>
+/// The plots show a whole run rather than a trailing window, so depth is the difference between
+/// "since the session started" and "since a few minutes ago". At roughly 100 samples/second the
+/// default ceiling holds about 87 minutes per channel; a run longer than that loses its oldest
+/// samples, and the plot's left edge stops being the start of the session.
+///
 /// Not thread-safe: writes and reads must come from one thread (the UI thread — samples arrive
 /// through the same dispatcher post that updates the readouts). Times must be non-decreasing;
 /// <see cref="CopyWindow"/> binary-searches on that assumption.
 /// </remarks>
 public sealed class TimeSeriesBuffer
 {
-    private readonly double[] _times;
-    private readonly float[] _values;
+    public const int DefaultInitialCapacity = 4096;
+    public const int DefaultMaxCapacity = 524288; // ~87 min at 100 Hz, 6.3 MB per channel
+
+    private readonly int _maxCapacity;
+    private double[] _times;
+    private float[] _values;
     private int _start; // physical index of the oldest sample
     private int _count;
 
-    public TimeSeriesBuffer(int capacity)
+    public TimeSeriesBuffer(
+        int initialCapacity = DefaultInitialCapacity,
+        int maxCapacity = DefaultMaxCapacity
+    )
     {
-        ArgumentOutOfRangeException.ThrowIfLessThan(capacity, 1);
-        _times = new double[capacity];
-        _values = new float[capacity];
+        ArgumentOutOfRangeException.ThrowIfLessThan(initialCapacity, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxCapacity, initialCapacity);
+        _maxCapacity = maxCapacity;
+        _times = new double[initialCapacity];
+        _values = new float[initialCapacity];
     }
 
+    /// <summary>Currently allocated depth. Grows up to <see cref="MaxCapacity"/> as samples arrive.</summary>
     public int Capacity => _times.Length;
 
+    public int MaxCapacity => _maxCapacity;
+
     public int Count => _count;
+
+    /// <summary>Whether the ring has started discarding the oldest samples — past this point the
+    /// buffer no longer holds the whole run.</summary>
+    public bool HasDroppedSamples { get; private set; }
+
+    /// <summary>Time of the oldest retained sample; meaningless (0) while empty.</summary>
+    public double EarliestTime => _count == 0 ? 0 : _times[Physical(0)];
 
     /// <summary>Time of the newest sample; meaningless (0) while empty — check <see cref="Count"/>.</summary>
     public double LatestTime => _count == 0 ? 0 : _times[Physical(_count - 1)];
 
     public void Add(double time, float value)
     {
+        if (_count == Capacity && Capacity < _maxCapacity)
+        {
+            Grow();
+        }
+
         int index = Physical(_count);
         _times[index] = time;
         _values[index] = value;
@@ -43,13 +72,33 @@ public sealed class TimeSeriesBuffer
         else
         {
             _start = Physical(1); // overwrote the oldest; the next one along is now oldest
+            HasDroppedSamples = true;
         }
+    }
+
+    /// <summary>Doubles the storage (capped), re-laying the samples oldest-first so the ring
+    /// starts from zero again.</summary>
+    private void Grow()
+    {
+        int grown = (int)Math.Min((long)Capacity * 2, _maxCapacity);
+        var times = new double[grown];
+        var values = new float[grown];
+        for (int i = 0; i < _count; i++)
+        {
+            int index = Physical(i);
+            times[i] = _times[index];
+            values[i] = _values[index];
+        }
+        _times = times;
+        _values = values;
+        _start = 0;
     }
 
     public void Clear()
     {
         _start = 0;
         _count = 0;
+        HasDroppedSamples = false;
     }
 
     /// <summary>

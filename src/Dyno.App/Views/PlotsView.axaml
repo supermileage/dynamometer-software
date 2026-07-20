@@ -175,17 +175,18 @@
           <TextBlock
             Classes="label"
             FontSize="12"
-            Text="Toggle any set of channels onto a graph — each line is drawn against its own range (Settings > Plots, or autoscale), and the y-axis numbers belong to the channel picked on the graph. Graphs share the page in an automatic grid; drag the gaps between them to trade space."
+            Text="Plots cover the whole run: the x axis starts at 0 and reads elapsed seconds from the device's own timestamps. Stopping a session freezes the trace where it is; the next one is appended after the real gap, and only Clear empties the graphs. Each line is drawn against its own range (Settings > Plots, or autoscale), and the y-axis numbers belong to the channel picked on the graph."
             TextWrapping="Wrap"
           />
         </StackPanel>
-        <Button
-          Grid.Column="1"
-          Classes="accent"
-          Content="Add graph"
-          Command="{Binding Plots.AddGraphCommand}"
-          VerticalAlignment="Center"
-        />
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+          <Button
+            Content="Clear"
+            Command="{Binding Plots.ClearCommand}"
+            ToolTip.Tip="Discard everything recorded so far and start the next sample at 0. Stopping a session does not clear the plots — this is the only thing that does."
+          />
+          <Button Classes="accent" Content="Add graph" Command="{Binding Plots.AddGraphCommand}" />
+        </StackPanel>
       </Grid>
     </Border>
 

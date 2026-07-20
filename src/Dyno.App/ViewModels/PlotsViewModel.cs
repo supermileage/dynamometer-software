@@ -1,18 +1,24 @@
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.Input;
+using Dyno.Core.Plotting;
 
 namespace Dyno.App.ViewModels;
 
 /// <summary>
-/// The Plots page: a user-built list of graphs, each showing one telemetry channel over time and
-/// each independently resizable. Different channels carry different units, so a graph shows
-/// exactly one — there is deliberately no shared (or dual) y-axis, and only the time axis lines
-/// up across graphs.
+/// The Plots page: a user-built set of graphs showing telemetry channels over a whole run.
 /// </summary>
 /// <remarks>
+/// Time comes from the device, not from the host: every sample is placed at its own hardware
+/// timestamp (TIM2 at 1 MHz), measured from the first sample of the run, so the x axis starts at 0
+/// and reads in elapsed seconds. Host-side scheduling jitter therefore cannot smear the trace, and
+/// a stop/start shows the real time that passed in between rather than collapsing it.
+///
+/// The buffers deliberately survive a session ending: stopping freezes the plot where it is (the
+/// right edge is the newest sample, which stops advancing), and a later session appends after the
+/// gap at its own timestamps. <see cref="Clear"/> is the only thing that empties them.
+///
 /// Samples are recorded from <see cref="MainWindowViewModel.Apply"/> on the UI thread — the same
 /// gate the numeric readouts use, so the plots record exactly what the readouts showed. Rendering
 /// reads the buffers on the UI thread too, so nothing here locks.
@@ -23,11 +29,15 @@ namespace Dyno.App.ViewModels;
 /// </remarks>
 public partial class PlotsViewModel
 {
-    /// <summary>Seconds of history each strip shows.</summary>
-    public const double WindowSeconds = 30;
-
-    private readonly Stopwatch _clock = Stopwatch.StartNew();
     private readonly DispatcherTimer _frameTimer;
+
+    /// <summary>Folds the device counter's 71.6-minute rollovers into continuous seconds.</summary>
+    private readonly TimestampUnwrapper _clock = new();
+
+    /// <summary>Unwrapped seconds of the first sample of the run; every recorded time is measured
+    /// from here, which is what puts the left edge of every graph at 0. Null until the first
+    /// sample arrives.</summary>
+    private double? _originSeconds;
 
     public PlotChannelViewModel AngularVelocity { get; } =
         new("Angular velocity", "rad/s", Color.Parse("#3987E5"));
@@ -107,47 +117,68 @@ public partial class PlotsViewModel
                 latest = Math.Max(latest, channel.Buffer.LatestTime);
             }
         }
-        double windowStart = latest - WindowSeconds;
         foreach (var channel in Channels)
         {
             channel.AnchorTime = latest; // no-op notification when unchanged
-            // Same test the plot renders by, so the legend can never claim data the strip is not
-            // drawing. O(1): buffer times are non-decreasing, so only the newest one matters.
-            channel.HasData = channel.Buffer.Count > 0 && channel.Buffer.LatestTime >= windowStart;
+            // The axis spans the whole run, so anything recorded is on screen.
+            channel.HasData = channel.Buffer.Count > 0;
         }
     }
 
-    /// <summary>A new session began: drop the previous run so the strips start clean.</summary>
-    public void OnSessionStarted()
+    /// <summary>A new session began. Deliberately does nothing: the previous run stays on screen
+    /// and this one is appended after it, separated by however much time actually passed. Use
+    /// <see cref="Clear"/> to start over.</summary>
+    public void OnSessionStarted() { }
+
+    /// <summary>Discards every recorded sample and restarts the time origin, so the next sample
+    /// begins a fresh run at 0.</summary>
+    [RelayCommand]
+    private void Clear()
     {
         foreach (var channel in Channels)
         {
             channel.Buffer.Clear();
         }
+        _clock.Reset();
+        _originSeconds = null;
+        AdvanceAnchor();
+    }
+
+    /// <summary>Seconds since the run began for a raw device timestamp, adopting the first sample
+    /// seen as the origin.</summary>
+    private double Elapsed(uint deviceTimestamp)
+    {
+        double seconds = _clock.ToSeconds(deviceTimestamp);
+        _originSeconds ??= seconds;
+        // Tasks are read in turn, so a sample can arrive stamped a little before the one that
+        // opened the run; clamp rather than plot a negative time.
+        return Math.Max(0, seconds - _originSeconds.Value);
     }
 
     public void RecordOpticalEncoder(
+        uint timestamp,
         float angularVelocity,
         float angularAcceleration,
         double gearRatio
     )
     {
-        double now = _clock.Elapsed.TotalSeconds;
+        double now = Elapsed(timestamp);
         AngularVelocity.Buffer.Add(now, angularVelocity);
         AngularVelocityGeared.Buffer.Add(now, (float)(angularVelocity * gearRatio));
         AngularAcceleration.Buffer.Add(now, angularAcceleration);
     }
 
-    public void RecordForce(float force) => Force.Buffer.Add(_clock.Elapsed.TotalSeconds, force);
+    public void RecordForce(uint timestamp, float force) =>
+        Force.Buffer.Add(Elapsed(timestamp), force);
 
-    public void RecordSessionController(float torque, float power, double gearRatio)
+    public void RecordSessionController(uint timestamp, float torque, float power, double gearRatio)
     {
-        double now = _clock.Elapsed.TotalSeconds;
+        double now = Elapsed(timestamp);
         Torque.Buffer.Add(now, torque);
         TorqueGeared.Buffer.Add(now, (float)(torque * gearRatio));
         Power.Buffer.Add(now, power);
     }
 
-    public void RecordDutyCycle(float dutyCycle) =>
-        DutyCycle.Buffer.Add(_clock.Elapsed.TotalSeconds, dutyCycle);
+    public void RecordDutyCycle(uint timestamp, float dutyCycle) =>
+        DutyCycle.Buffer.Add(Elapsed(timestamp), dutyCycle);
 }

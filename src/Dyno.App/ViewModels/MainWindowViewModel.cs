@@ -552,6 +552,7 @@ public partial class MainWindowViewModel : ObservableObject
                 AngularAcceleration = s.Data.angular_acceleration;
                 LastTimestamp = s.Data.timestamp;
                 Plots.RecordOpticalEncoder(
+                    s.Data.timestamp,
                     s.Data.angular_velocity,
                     s.Data.angular_acceleration,
                     GearRatio
@@ -559,16 +560,21 @@ public partial class MainWindowViewModel : ObservableObject
                 break;
             case ForceSensorSample s:
                 Force = s.Data.force;
-                Plots.RecordForce(s.Data.force);
+                Plots.RecordForce(s.Data.timestamp, s.Data.force);
                 break;
             case BpmSample s:
                 DutyCycle = s.Data.duty_cycle;
-                Plots.RecordDutyCycle(s.Data.duty_cycle);
+                Plots.RecordDutyCycle(s.Data.timestamp, s.Data.duty_cycle);
                 break;
             case SessionControllerSample s:
                 Torque = s.Data.torque;
                 Power = s.Data.power;
-                Plots.RecordSessionController(s.Data.torque, s.Data.power, GearRatio);
+                Plots.RecordSessionController(
+                    s.Data.timestamp,
+                    s.Data.torque,
+                    s.Data.power,
+                    GearRatio
+                );
                 break;
             case SessionState:
                 // Applied via DeviceClient.SessionStateChanged, which reports only real
