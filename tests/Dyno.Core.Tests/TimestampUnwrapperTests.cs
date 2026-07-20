@@ -140,4 +140,42 @@ public class TimestampUnwrapperTests
             raw = unchecked(raw + step);
         }
     }
+
+    /// <summary>
+    /// The export recovers each row's device timestamp from the elapsed seconds the plot buffers
+    /// hold, so that conversion has to be lossless. It is only lossless because a tick offset is a
+    /// whole number and a double carries whole numbers exactly at these magnitudes — worth pinning
+    /// down, since a silent off-by-one-tick would misalign the export against the raw telemetry log.
+    /// </summary>
+    [Theory]
+    [InlineData(0u)]
+    [InlineData(1_000_000u)]
+    [InlineData(Max - 400_000u)] // straddles the rollover
+    public void ElapsedSecondsRoundTripBackToTheDeviceTimestamp(uint start)
+    {
+        var clock = new TimestampUnwrapper();
+        ulong origin = 0;
+        uint raw = start;
+
+        for (int i = 0; i < 5_000; i++)
+        {
+            ulong ticks = clock.ToTicks(raw);
+            if (i == 0)
+            {
+                origin = ticks;
+            }
+
+            // What the plot buffer stores...
+            double elapsedSeconds = (ticks - origin) / TimestampUnwrapper.TicksPerSecond;
+
+            // ...and what the export turns it back into.
+            ulong recovered =
+                origin + (ulong)Math.Round(elapsedSeconds * TimestampUnwrapper.TicksPerSecond);
+
+            Assert.Equal(ticks, recovered);
+            Assert.Equal(raw, (uint)(recovered & 0xFFFF_FFFF));
+
+            raw = unchecked(raw + 9_973); // a prime step, so offsets are not all round numbers
+        }
+    }
 }

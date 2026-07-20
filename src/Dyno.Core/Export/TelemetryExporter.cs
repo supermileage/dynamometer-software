@@ -27,18 +27,28 @@ public static class TelemetryExporter
     /// <summary>What a field that was not measured at this instant is written as.</summary>
     public const string Missing = "X";
 
-    /// <summary>Header of the leading time column: seconds since the first sample of the run, the
-    /// same number the plots put on their x axis.</summary>
-    public const string TimeColumn = "elapsed_s";
-
-    /// <summary>Writes every sample in <paramref name="channels"/> and returns the row count.</summary>
-    public static int Write(TextWriter writer, IReadOnlyList<ExportChannel> channels)
+    /// <summary>
+    /// Writes every sample in <paramref name="channels"/> and returns the row count.
+    /// </summary>
+    /// <param name="timeColumnName">Header for the leading time column.</param>
+    /// <param name="formatTime">Renders a buffer time as that column's value. The buffers hold
+    /// elapsed seconds because that is what the plots draw; the export turns each back into the
+    /// device timestamp it came from, so a row can be matched against the raw telemetry log.</param>
+    public static int Write(
+        TextWriter writer,
+        IReadOnlyList<ExportChannel> channels,
+        string timeColumnName,
+        Func<double, string> formatTime
+    )
     {
         ArgumentNullException.ThrowIfNull(writer);
         ArgumentNullException.ThrowIfNull(channels);
+        ArgumentNullException.ThrowIfNull(formatTime);
 
         var culture = CultureInfo.InvariantCulture;
-        writer.WriteLine(string.Join(',', channels.Select(c => c.ColumnName).Prepend(TimeColumn)));
+        writer.WriteLine(
+            string.Join(',', channels.Select(c => c.ColumnName).Prepend(timeColumnName))
+        );
 
         int channelCount = channels.Count;
         var times = new double[channelCount][];
@@ -91,7 +101,7 @@ public static class TelemetryExporter
                 }
             }
 
-            writer.Write(next.ToString("0.000000", culture));
+            writer.Write(formatTime(next));
             for (int i = 0; i < channelCount; i++)
             {
                 writer.Write(',');

@@ -1,3 +1,4 @@
+using System.Globalization;
 using Dyno.Core.Export;
 using Dyno.Core.Plotting;
 using Xunit;
@@ -22,10 +23,17 @@ public class TelemetryExporterTests
         return buffer;
     }
 
+    /// <summary>Exports with a stand-in time column, so these tests cover the row shape rather
+    /// than how the app happens to render an instant.</summary>
     private static string[] Export(params ExportChannel[] channels)
     {
         var writer = new StringWriter();
-        TelemetryExporter.Write(writer, channels);
+        TelemetryExporter.Write(
+            writer,
+            channels,
+            "t",
+            time => time.ToString("0.000", CultureInfo.InvariantCulture)
+        );
         return writer.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries);
     }
 
@@ -37,7 +45,7 @@ public class TelemetryExporterTests
             new ExportChannel("torque_nm", Buffer((0.0, 2f)))
         );
 
-        Assert.Equal("elapsed_s,force_n,torque_nm", lines[0]);
+        Assert.Equal("t,force_n,torque_nm", lines[0]);
     }
 
     [Fact]
@@ -50,8 +58,8 @@ public class TelemetryExporterTests
         );
 
         Assert.Equal(3, lines.Length); // header + two rows
-        Assert.Equal("0.000000,10,X", lines[1]);
-        Assert.Equal("1.000000,X,20", lines[2]);
+        Assert.Equal("0.000,10,X", lines[1]);
+        Assert.Equal("1.000,X,20", lines[2]);
     }
 
     /// <summary>Fields recorded from one device message share a timestamp exactly, so they belong
@@ -67,7 +75,7 @@ public class TelemetryExporterTests
         );
 
         Assert.Equal(2, lines.Length); // header + one row
-        Assert.Equal("2.500000,60,-3,12", lines[1]);
+        Assert.Equal("2.500,60,-3,12", lines[1]);
     }
 
     [Fact]
@@ -78,10 +86,7 @@ public class TelemetryExporterTests
             new ExportChannel("b", Buffer((1.0, 2f), (3.0, 4f)))
         );
 
-        Assert.Equal(
-            ["0.000000,1,X", "1.000000,X,2", "2.000000,3,X", "3.000000,X,4"],
-            lines.Skip(1)
-        );
+        Assert.Equal(["0.000,1,X", "1.000,X,2", "2.000,3,X", "3.000,X,4"], lines.Skip(1));
     }
 
     [Fact]
@@ -104,11 +109,13 @@ public class TelemetryExporterTests
         var writer = new StringWriter();
         int rows = TelemetryExporter.Write(
             writer,
-            [new ExportChannel("force_n", new TimeSeriesBuffer())]
+            [new ExportChannel("force_n", new TimeSeriesBuffer())],
+            "device_ts",
+            _ => "0"
         );
 
         Assert.Equal(0, rows);
-        Assert.Equal("elapsed_s,force_n", writer.ToString().Trim());
+        Assert.Equal("device_ts,force_n", writer.ToString().Trim());
     }
 
     [Fact]
@@ -117,7 +124,9 @@ public class TelemetryExporterTests
         var writer = new StringWriter();
         int rows = TelemetryExporter.Write(
             writer,
-            [new ExportChannel("a", Buffer((0.0, 1f), (1.0, 2f), (2.0, 3f)))]
+            [new ExportChannel("a", Buffer((0.0, 1f), (1.0, 2f), (2.0, 3f)))],
+            "device_ts",
+            _ => "0"
         );
 
         Assert.Equal(3, rows);
@@ -130,9 +139,9 @@ public class TelemetryExporterTests
     {
         var lines = Export(new ExportChannel("force_n", Buffer((0.0, 1f), (0.01, 2f), (40.0, 3f))));
 
-        Assert.Equal("0.000000,1", lines[1]);
-        Assert.Equal("0.010000,2", lines[2]);
-        Assert.Equal("40.000000,3", lines[3]);
+        Assert.Equal("0.000,1", lines[1]);
+        Assert.Equal("0.010,2", lines[2]);
+        Assert.Equal("40.000,3", lines[3]);
     }
 
     /// <summary>Values are round-tripped at full float precision rather than rounded for display —
@@ -142,6 +151,28 @@ public class TelemetryExporterTests
     {
         var lines = Export(new ExportChannel("a", Buffer((0.0, 0.1234567f))));
 
-        Assert.Equal("0.000000,0.1234567", lines[1]);
+        Assert.Equal("0.000,0.1234567", lines[1]);
+    }
+
+    /// <summary>The time column is rendered by the caller, which is how the app puts the device's
+    /// own timestamp there instead of the elapsed seconds the buffers hold.</summary>
+    [Fact]
+    public void TheTimeColumnIsRenderedByTheCaller()
+    {
+        var writer = new StringWriter();
+        TelemetryExporter.Write(
+            writer,
+            [new ExportChannel("force_n", Buffer((0.0, 1f), (0.25, 2f)))],
+            "device_ts",
+            seconds =>
+                (1_000_000 + (ulong)Math.Round(seconds * 1_000_000)).ToString(
+                    CultureInfo.InvariantCulture
+                )
+        );
+
+        var lines = writer.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal("device_ts,force_n", lines[0]);
+        Assert.Equal("1000000,1", lines[1]);
+        Assert.Equal("1250000,2", lines[2]);
     }
 }

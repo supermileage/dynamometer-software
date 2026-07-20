@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.Input;
@@ -35,10 +36,11 @@ public partial class PlotsViewModel
     /// <summary>Folds the device counter's 71.6-minute rollovers into continuous seconds.</summary>
     private readonly TimestampUnwrapper _clock = new();
 
-    /// <summary>Unwrapped seconds of the first sample of the run; every recorded time is measured
-    /// from here, which is what puts the left edge of every graph at 0. Null until the first
-    /// sample arrives.</summary>
-    private double? _originSeconds;
+    /// <summary>Unwrapped device ticks of the first sample of the run. Every recorded time is
+    /// measured from here, which is what puts the left edge of every graph at 0 — and keeping it
+    /// in ticks rather than seconds means a buffer time can be turned back into the exact device
+    /// timestamp it came from. Null until the first sample arrives.</summary>
+    private ulong? _originTicks;
 
     public PlotChannelViewModel AngularVelocity { get; } =
         new("Angular velocity", "rad/s", Color.Parse("#3987E5"));
@@ -151,7 +153,24 @@ public partial class PlotsViewModel
         ];
 
     /// <summary>Writes everything recorded so far as a sparse CSV. Returns the row count.</summary>
-    public int WriteExport(TextWriter writer) => TelemetryExporter.Write(writer, ExportChannels());
+    /// <remarks>
+    /// The time column is the device's own timestamp, exactly as it arrived — the same value the
+    /// raw telemetry log records as <c>device_ts</c>, so the two files can be matched row for row.
+    /// Buffer times are elapsed seconds (what the plots draw), so each is converted back; the
+    /// rounding is exact, since a tick offset is a whole number a double represents precisely at
+    /// these magnitudes. It wraps with the device's 32-bit counter, every ~71.6 minutes.
+    /// </remarks>
+    public int WriteExport(TextWriter writer) =>
+        TelemetryExporter.Write(writer, ExportChannels(), "device_ts", DeviceTimestampOf);
+
+    /// <summary>The raw device timestamp a buffer time came from.</summary>
+    private string DeviceTimestampOf(double elapsedSeconds)
+    {
+        ulong ticks =
+            (_originTicks ?? 0)
+            + (ulong)Math.Round(elapsedSeconds * TimestampUnwrapper.TicksPerSecond);
+        return ((uint)(ticks & 0xFFFF_FFFF)).ToString(CultureInfo.InvariantCulture);
+    }
 
     /// <summary>Discards every recorded sample and restarts the time origin, so the next sample
     /// begins a fresh run at 0.</summary>
@@ -163,7 +182,7 @@ public partial class PlotsViewModel
             channel.Buffer.Clear();
         }
         _clock.Reset();
-        _originSeconds = null;
+        _originTicks = null;
         AdvanceAnchor();
     }
 
@@ -171,11 +190,13 @@ public partial class PlotsViewModel
     /// seen as the origin.</summary>
     private double Elapsed(uint deviceTimestamp)
     {
-        double seconds = _clock.ToSeconds(deviceTimestamp);
-        _originSeconds ??= seconds;
+        ulong ticks = _clock.ToTicks(deviceTimestamp);
+        _originTicks ??= ticks;
+        double seconds = ticks / TimestampUnwrapper.TicksPerSecond;
+        double originSeconds = _originTicks.Value / TimestampUnwrapper.TicksPerSecond;
         // Tasks are read in turn, so a sample can arrive stamped a little before the one that
         // opened the run; clamp rather than plot a negative time.
-        return Math.Max(0, seconds - _originSeconds.Value);
+        return Math.Max(0, seconds - originSeconds);
     }
 
     public void RecordOpticalEncoder(
