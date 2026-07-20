@@ -1219,6 +1219,17 @@ static void MX_GPIO_Init(void)
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
+  /* The optical encoder input (OP_IN, PF9) sits on EXTI line 9, so its interrupt is EXTI9_5 --
+     the same one BTN_SELECT (PF5) needs. CubeMX therefore enables it above for the button, and
+     the encoder only counts as a side effect of that: delete or move BTN_SELECT and the encoder
+     stops counting silently, with the task still running and reporting a plausible zero.
+     Claim the line explicitly so the encoder's own requirement is recorded and enforced.
+     Enabling an already-enabled IRQ is idempotent, and the priority matches what is set above
+     (5 == configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY, so taskENTER_CRITICAL masks it and the
+     pulse count/timestamp pair can be read atomically). */
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
+
   /* USER CODE END MX_GPIO_Init_2 */
 }
 

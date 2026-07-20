@@ -34,10 +34,12 @@ add_executable(fw_tests
   ${FIRMWARE_DIR}/Core/Src/Config/sysconfig.c
   ${FIRMWARE_DIR}/Core/Src/Tasks/USB/usb_rx_ring.c
   ${FIRMWARE_DIR}/Core/Src/Tasks/USB/usb_framer.cpp
+  ${FIRMWARE_DIR}/Core/Src/Tasks/OpticalSensor/encoder_math.c
   usb_rx_ring_tests.cpp
   usb_framer_tests.cpp
   sysconfig_tests.cpp
   circular_buffer_tests.cpp
+  encoder_math_tests.cpp
 )
 
 target_include_directories(fw_tests PRIVATE

@@ -9,6 +9,7 @@
 
 
 #include "TimeKeeping/timestamps.h"
+#include "Tasks/OpticalSensor/encoder_math.h"
 
 #include "MessagePassing/messages_private.h"
 
@@ -23,13 +24,7 @@ public:
     void Run();
     
 private:
-    float CalculateRPM(uint32_t numCounts, uint32_t prevTimestamp, uint32_t currTimestamp);
-    float CalculateAngularVelocity(uint32_t numCounts, uint32_t prevTimestamp, uint32_t currTimestamp);
-    float CalculateAngularAcceleration(float prevAngularVelocity, float currAngularVelocity, uint32_t prevTimestamp, uint32_t currTimestamp);
-
-
-	void ToggleOpticalEncoder(bool enable);
-
+    // The arithmetic lives in encoder_math.h -- pure, HAL-free, and unit tested on the host.
     CircularBufferWriter<optical_encoder_output_data> _data_buffer_writer;
 
     osMessageQueueId_t _sessionControllerToOpticalSensorHandle;
