@@ -152,24 +152,34 @@ public class TimeSeriesPlot : Control
             AxisSeries is { } chosen && series.Contains(chosen) && HasDataInWindow(chosen, t0)
                 ? chosen
                 : series.FirstOrDefault(s => HasDataInWindow(s, t0));
-        if (axisSeries is not null && EffectiveRange(axisSeries, t0, t1) is { } range)
+        // A fixed range is known without looking at the data, so the axis series is copied here
+        // only when it actually has to be measured.
+        if (
+            axisSeries is not null
+            && (FixedRange(axisSeries) ?? RangeFor(axisSeries, CopyWindow(axisSeries, t0)))
+                is { } range
+        )
         {
             DrawGridAndLabels(context, plot, typeface, t0, t1, range.Min, range.Max, range.Tick);
         }
 
+        // One copy per series, reused for both the range fit and the draw. The window is the whole
+        // run (t0 is always 0), so a copy is the entire recording — up to half a million samples —
+        // and doing it twice per series was the bulk of a frame's work at depth.
         bool drewAnything = false;
         foreach (var s in series)
         {
-            if (EffectiveRange(s, t0, t1) is not { } r)
+            if (!HasDataInWindow(s, t0))
+            {
+                continue; // absent channel: no copy, no line, no axis
+            }
+            int count = CopyWindow(s, t0);
+            if (RangeFor(s, count) is not { } r)
             {
                 continue; // autoscale with no data in the window: nothing to fit, nothing to draw
             }
-            int count = CopyWindow(s, t0);
-            if (count > 0)
-            {
-                DrawSeries(context, plot, s.Stroke, t0, t1, r.Min, r.Max, count);
-                drewAnything = true;
-            }
+            DrawSeries(context, plot, s.Stroke, t0, t1, r.Min, r.Max, count);
+            drewAnything = true;
         }
 
         if (!drewAnything)
@@ -192,30 +202,22 @@ public class TimeSeriesPlot : Control
     /// <summary>The y-range this series is drawn against: its fixed Settings range when autoscale
     /// is off (exact — the user asked to look at precisely that window), else a tick-widened fit
     /// of its visible data. Null when the series has nothing in the window.</summary>
-    private (double Min, double Max, double Tick)? EffectiveRange(
-        IPlotSeries s,
-        double t0,
-        double t1
-    )
+    /// <param name="count">Samples already copied into the scratch arrays by
+    /// <see cref="CopyWindow"/> — this reads them rather than copying again.</param>
+    private (double Min, double Max, double Tick)? RangeFor(IPlotSeries s, int count)
     {
         // Checked before the configured range, not after: a channel with no samples is absent,
         // not flat, and must contribute nothing at all — no line and no axis. A fixed range that
         // outlived its data would otherwise draw a fully labeled axis for a channel that never
         // streamed, which reads as data sitting at those values.
-        if (!HasDataInWindow(s, t0))
-        {
-            return null;
-        }
-
-        if (!s.AutoScale && s.AxisMax > s.AxisMin)
-        {
-            return (s.AxisMin, s.AxisMax, NiceStep((s.AxisMax - s.AxisMin) / 4));
-        }
-
-        int count = CopyWindow(s, t0);
         if (count == 0)
         {
             return null;
+        }
+
+        if (FixedRange(s) is { } configured)
+        {
+            return configured;
         }
 
         double min = double.PositiveInfinity;
@@ -243,6 +245,13 @@ public class TimeSeriesPlot : Control
         // Widen to tick multiples so the top and bottom gridlines land on labeled values.
         return (Math.Floor(min / tick) * tick, Math.Ceiling(max / tick) * tick, tick);
     }
+
+    /// <summary>The range the user configured, when autoscale is off — the one case that can be
+    /// answered without reading a single sample. Null means the series has to be measured.</summary>
+    private static (double Min, double Max, double Tick)? FixedRange(IPlotSeries s) =>
+        !s.AutoScale && s.AxisMax > s.AxisMin
+            ? (s.AxisMin, s.AxisMax, NiceStep((s.AxisMax - s.AxisMin) / 4))
+            : null;
 
     private int CopyWindow(IPlotSeries s, double t0)
     {
