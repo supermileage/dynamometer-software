@@ -65,8 +65,9 @@ public partial class PlotsViewModel
 
     public IReadOnlyList<PlotChannelViewModel> Channels { get; }
 
-    /// <summary>The graphs, top to bottom. Starts with a useful default set rather than empty —
-    /// a blank plots page teaches nothing about what the page can do.</summary>
+    /// <summary>The graphs, top to bottom. Starts with one rather than empty — a blank plots page
+    /// teaches nothing about what the page can do — and with one rather than several, so the first
+    /// graph opens at full height and Add builds up from there.</summary>
     public ObservableCollection<PlotGraphViewModel> Graphs { get; } = new();
 
     public PlotsViewModel()
@@ -83,10 +84,9 @@ public partial class PlotsViewModel
             DutyCycle,
         ];
 
-        foreach (var channel in new[] { AngularVelocity, Torque, Power })
-        {
-            Graphs.Add(new PlotGraphViewModel(Channels, channel, RemoveGraph));
-        }
+        // Angular velocity: the one channel measured directly rather than derived, so it is the
+        // one that shows something on a board with nothing calibrated yet.
+        Graphs.Add(new PlotGraphViewModel(Channels, AngularVelocity, RemoveGraph));
 
         // ~30 fps redraw driver. The window's right edge is the newest sample anywhere, not the
         // wall clock: while data streams the plots scroll live, and when the session stops they
