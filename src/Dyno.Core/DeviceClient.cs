@@ -144,19 +144,19 @@ public sealed class DeviceClient : IDisposable
     /// <summary>How long the read loop pauses after each read before issuing the next one.
     /// <see cref="TimeSpan.Zero"/> reads as fast as the port will answer.</summary>
     /// <remarks>
-    /// This exists to stop the loop racing the serial driver's own buffer fill. Captured deliveries
-    /// show every batch arriving as exactly two reads — one of a single byte, then the remainder —
-    /// which is a read left pending being completed the instant the driver copies the packet's first
-    /// byte, with the rest already buffered by the time the next read is issued. Every packet is
-    /// therefore handled mid-copy, and that is the window the 16-byte head losses appear in.
+    /// Without a pause, a read is always left pending, so the driver completes it the instant it
+    /// copies a packet's first byte: captures showed every batch arriving as exactly two reads, one
+    /// of a single byte and then the remainder. Pausing means nothing is pending while a packet
+    /// lands, and the next read takes whole batches — measured at ~132 bytes and one read per two
+    /// batches, against ~28 bytes and two reads per batch before. That is the reason to keep it.
     ///
-    /// Pausing means no read is pending while a packet lands: the driver fills undisturbed and the
-    /// next read takes whole batches. The cost is bounded and small — a few milliseconds added to
-    /// command acks, against a <see cref="CommandTimeout"/> in seconds, and a few KB of buffered
-    /// bytes against the 1 MB the port is opened with.
+    /// It is <em>not</em> a fix for the 16-byte head loss, which is what it was added to test. The
+    /// delivery shape changed exactly as predicted and the losses continued at the same rate, so
+    /// reads racing the driver's buffer fill is ruled out as their cause.
     ///
-    /// Set to zero to restore the old read-as-fast-as-possible behaviour, which is what makes this
-    /// an A/B: run a session each way and compare the short-batch counts.
+    /// The cost is bounded and small — a few milliseconds added to command acks, against a
+    /// <see cref="CommandTimeout"/> in seconds, and a few KB of buffered bytes against the 1 MB the
+    /// port is opened with. Zero restores the old read-as-fast-as-possible behaviour.
     /// </remarks>
     public TimeSpan ReadSettleDelay { get; set; } = TimeSpan.FromMilliseconds(5);
 
