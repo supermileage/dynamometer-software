@@ -904,4 +904,50 @@ public class DeviceClientTests
             "a sample after the stop was delivered with the flag still on"
         );
     }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(50)]
+    public void ReadSettleDelay_DoesNotCostBytesArrivingDuringThePause(int settleMs)
+    {
+        // The whole point of pausing is that bytes pile up in the port while nothing is reading, so
+        // the one thing that must not happen is losing them. Asserted at both ends of the setting:
+        // a pause long enough that everything below arrives inside one, and no pause at all.
+        using var serial = new FakeSerial();
+        using var client = new DeviceClient(serial)
+        {
+            ReadSettleDelay = TimeSpan.FromMilliseconds(settleMs),
+        };
+
+        const int samples = 20;
+        var received = new ConcurrentQueue<DeviceMessage>();
+        using var all = new CountdownEvent(samples);
+        client.MessageReceived += m =>
+        {
+            received.Enqueue(m);
+            all.Signal();
+        };
+
+        client.Start();
+        for (uint i = 0; i < samples; i++)
+        {
+            serial.DeviceSend(
+                Wire.Message(
+                    usb_msg_type_t.USB_MSG_STREAM,
+                    task_offset_t.TASK_OFFSET_OPTICAL_ENCODER,
+                    new optical_encoder_output_data { timestamp = i, angular_velocity = i }
+                )
+            );
+        }
+
+        Assert.True(
+            all.Wait(TimeSpan.FromSeconds(10)),
+            $"only {received.Count} of {samples} arrived"
+        );
+        // In order, and each exactly once: a pause must not reorder or duplicate either.
+        Assert.Equal(
+            Enumerable.Range(0, samples).Select(i => (uint)i),
+            received.Cast<OpticalEncoderSample>().Select(s => s.Data.timestamp)
+        );
+    }
 }
