@@ -163,6 +163,31 @@ public class RawCaptureTests
     }
 
     [Fact]
+    public void Replay_CarriesTheDeliveriesLeadingUpToAFault()
+    {
+        // The context is what turns "16 bytes went missing" into "16 bytes went missing between
+        // these two deliveries". Without the run-up, every fault needs a second capture to place.
+        byte[] healthy = Wire.Batch(1, Encoder(10));
+        byte[] faulty = Wire.Batch(2, Encoder(20), Encoder(30));
+        string path = CaptureToFile(healthy, faulty[16..]);
+
+        try
+        {
+            var report = RawCaptureReplay.Replay(RawCapture.Read(path));
+
+            var fault = report.Faults.Single(f => f.Description.Contains("short by 16 B"));
+            Assert.Equal([0, 1], fault.Context.Select(c => c.Index));
+            // The healthy neighbour is carried whole, so the two can be read against each other.
+            Assert.Equal(healthy, fault.Context[0].Bytes);
+            Assert.Equal(faulty[16..], fault.Context[1].Bytes);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void Replay_OfAnIntactCaptureIsClean()
     {
         // The other half of the verdict, and the one that would indict us: bytes that all arrived,

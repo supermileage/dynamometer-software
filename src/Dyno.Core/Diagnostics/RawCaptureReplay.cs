@@ -7,11 +7,17 @@ namespace Dyno.Core.Diagnostics;
 /// <param name="ChunkIndex">Which delivered chunk the parser was consuming.</param>
 /// <param name="ChunkOffset">Byte offset of that chunk's first byte within the whole capture.</param>
 /// <param name="ChunkLength">How many bytes that chunk carried.</param>
+/// <param name="Context">The last few deliveries up to and including the faulting one, in order.
+/// This is what says <em>where</em> the bytes went missing: if the gap falls exactly between two
+/// chunks, the driver skipped bytes between deliveries, whereas a gap inside a single chunk would
+/// mean one delivered buffer arrived internally discontinuous — a much stranger fault, and a
+/// different bug.</param>
 public sealed record ReplayFault(
     long ChunkIndex,
     long ChunkOffset,
     int ChunkLength,
-    string Description
+    string Description,
+    IReadOnlyList<CapturedChunk> Context
 );
 
 /// <summary>What a replay found. <paramref name="Shortfalls"/> is the number that matters: it is
@@ -44,6 +50,11 @@ public sealed record ReplayReport(
 /// </remarks>
 public static class RawCaptureReplay
 {
+    /// <summary>How many deliveries of run-up to keep with each fault. Enough to cover the faulting
+    /// batch and the healthy one before it, so the gap has a known-good neighbour to be read
+    /// against.</summary>
+    private const int ContextChunks = 6;
+
     public static ReplayReport Replay(IEnumerable<CapturedChunk> chunks)
     {
         var parser = new StreamParser();
@@ -62,8 +73,21 @@ public static class RawCaptureReplay
         long currentOffset = 0;
         int currentLength = 0;
 
+        // The deliveries leading up to whatever fires, kept so a fault can show its own
+        // neighbourhood. Faults are rare enough (single digits across a million bytes) that
+        // carrying this costs nothing, and without it every fault needs a second run to explain.
+        var recent = new Queue<CapturedChunk>();
+
         void Record(string description) =>
-            faults.Add(new ReplayFault(currentIndex, currentOffset, currentLength, description));
+            faults.Add(
+                new ReplayFault(
+                    currentIndex,
+                    currentOffset,
+                    currentLength,
+                    description,
+                    [.. recent]
+                )
+            );
 
         parser.MessageReceived += _ => messages++;
         parser.Resynced += details =>
@@ -99,6 +123,11 @@ public static class RawCaptureReplay
             currentIndex = chunk.Index;
             currentOffset = bytes;
             currentLength = chunk.Bytes.Length;
+            recent.Enqueue(chunk);
+            while (recent.Count > ContextChunks)
+            {
+                recent.Dequeue();
+            }
             parser.Append(chunk.Bytes);
             chunkCount++;
             bytes += chunk.Bytes.Length;
@@ -126,6 +155,17 @@ public static class RawCaptureReplay
                 $"  chunk #{fault.ChunkIndex} @ byte {fault.ChunkOffset} "
                     + $"({fault.ChunkLength} B): {fault.Description}"
             );
+            foreach (var chunk in fault.Context)
+            {
+                // One line per delivery, so a gap that falls on a boundary shows up as one: the
+                // bytes are contiguous within a line by definition, and only the joins are in doubt.
+                string marker = chunk.Index == fault.ChunkIndex ? ">>" : "  ";
+                text.AppendLine(
+                    $"    {marker} #{chunk.Index} ({chunk.Bytes.Length, 4} B) "
+                        + Convert.ToHexString(chunk.Bytes)
+                );
+            }
+            text.AppendLine();
         }
 
         text.AppendLine();
