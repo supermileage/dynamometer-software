@@ -27,13 +27,35 @@ internal static class Program
         try
         {
             var report = RawCaptureReplay.Replay(RawCapture.Read(path));
-            Console.Write(RawCaptureReplay.Format(report));
+            Emit(path, RawCaptureReplay.Format(report));
             return 0;
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException)
         {
-            Console.Error.WriteLine($"cannot replay {path}: {ex.Message}");
+            Emit(path, $"cannot replay {path}: {ex.Message}{Environment.NewLine}");
             return 1;
+        }
+    }
+
+    /// <summary>Writes the report to stdout <em>and</em> to a file beside the capture.
+    /// This project is a <c>WinExe</c>, so on Windows it is a GUI-subsystem process with no console
+    /// attached: launched from a shell, everything written to stdout is discarded and the command
+    /// looks like it silently did nothing. Running it as `dotnet Dyno.App.dll` does get a console
+    /// (the host owns it), but a diagnostic that only works when invoked one particular way is a
+    /// diagnostic that will be reported as broken. The file always survives.</summary>
+    private static void Emit(string capturePath, string report)
+    {
+        Console.Write(report);
+        try
+        {
+            string destination = capturePath + ".report.txt";
+            File.WriteAllText(destination, report);
+            Console.WriteLine($"(also written to {destination})");
+        }
+        catch (IOException)
+        {
+            // stdout may well be all we have; if the sidecar cannot be written, it is not worth
+            // failing a read-only diagnostic over.
         }
     }
 

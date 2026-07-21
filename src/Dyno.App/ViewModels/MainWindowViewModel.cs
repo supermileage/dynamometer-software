@@ -331,7 +331,7 @@ public partial class MainWindowViewModel : ObservableObject
             // TEMP DIAGNOSTIC (16-byte head-loss investigation): set DYNO_RAW_CAPTURE to a path to
             // record the raw serial chunks, then replay them with `Dyno.App --replay <path>`.
             // Unset (the normal case) this is null and nothing is recorded.
-            var rawCapture = RawCapture.FromEnvironment();
+            var rawCapture = RawCapture.FromEnvironment(out string? captureProblem);
             var client = new DeviceClient(
                 connection,
                 _loggerFactory.CreateLogger<DeviceClient>(),
@@ -340,7 +340,14 @@ public partial class MainWindowViewModel : ObservableObject
             if (rawCapture is not null)
             {
                 AddEvent(
-                    "[DIAG] recording raw serial chunks — replay with `Dyno.App --replay <path>`"
+                    "[DIAG] recording raw serial chunks — replay with "
+                        + "`dotnet Dyno.App.dll --replay <path>`"
+                );
+            }
+            else if (captureProblem is not null)
+            {
+                AddEvent(
+                    $"[WARN] raw capture was requested but could not start — {captureProblem}"
                 );
             }
             // TEMP DIAGNOSTIC (slow-ack investigation): 4.7s is deliberately coprime to the

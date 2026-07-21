@@ -48,11 +48,16 @@ public sealed class RawCapture : IDisposable
         _writer = Task.Run(DrainAsync);
     }
 
-    /// <summary>The capture requested by <see cref="EnvironmentVariable"/>, or null when unset.
-    /// A path that cannot be opened returns null rather than throwing: a diagnostic must never be
-    /// the reason the link fails to start.</summary>
-    public static RawCapture? FromEnvironment()
+    /// <summary>The capture requested by <see cref="EnvironmentVariable"/>, or null when unset or
+    /// unopenable — a diagnostic must never be the reason the link fails to start.</summary>
+    /// <param name="problem">Why no capture was opened despite one being asked for; null when the
+    /// variable was unset (nothing was asked for) or when the capture opened fine. A capture that
+    /// silently fails to record is worse than none at all: the run looks like it was captured, and
+    /// the absence of a file is not discovered until the fault has already been reproduced and
+    /// lost. So the reason travels back to the caller to be shown.</param>
+    public static RawCapture? FromEnvironment(out string? problem)
     {
+        problem = null;
         string? path = Environment.GetEnvironmentVariable(EnvironmentVariable);
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -60,10 +65,18 @@ public sealed class RawCapture : IDisposable
         }
         try
         {
+            // Create the directory rather than fail on it. The variable names a file, and a
+            // capture refusing to start because its folder does not exist yet is a pure obstacle.
+            string? directory = Path.GetDirectoryName(Path.GetFullPath(path));
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
             return new RawCapture(File.Create(path));
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            problem = $"{path}: {ex.Message}";
             return null;
         }
     }
