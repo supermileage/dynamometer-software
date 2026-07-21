@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Dyno.Core.Diagnostics;
 using Dyno.Core.Messages;
 using Dyno.Core.Protocol;
 using Dyno.Core.Serial;
@@ -27,6 +28,11 @@ public sealed class DeviceClient : IDisposable
 
     private readonly ISerialConnection _connection;
     private readonly ILogger<DeviceClient> _log;
+
+    /// <summary>TEMP DIAGNOSTIC (16-byte head-loss investigation): records the bytes this loop is
+    /// handed, so a fault can be replayed against them offline. Null unless capture is enabled.</summary>
+    private readonly RawCapture? _rawCapture;
+
     private readonly StreamParser _parser = new();
     private readonly ConcurrentDictionary<ushort, PendingCommand> _pending = new();
 
@@ -138,10 +144,15 @@ public sealed class DeviceClient : IDisposable
     private int _handshakeStarted; // 0 until we first act on a device-ready announcement
     private int _protocolRefused; // 1 once a version mismatch has been reported
 
-    public DeviceClient(ISerialConnection connection, ILogger<DeviceClient>? logger = null)
+    public DeviceClient(
+        ISerialConnection connection,
+        ILogger<DeviceClient>? logger = null,
+        RawCapture? rawCapture = null
+    )
     {
         _connection = connection;
         _log = logger ?? NullLogger<DeviceClient>.Instance;
+        _rawCapture = rawCapture;
         _parser.MessageReceived += OnParsed;
         _parser.Resynced += OnResynced;
         _parser.BatchMisaccounted += OnBatchMisaccounted;
@@ -810,6 +821,9 @@ public sealed class DeviceClient : IDisposable
 
             if (read > 0)
             {
+                // Before the parser, so the capture holds what the driver delivered rather than
+                // what we made of it — that separation is the whole point of the recording.
+                _rawCapture?.Record(buffer.AsSpan(0, read));
                 try
                 {
                     _parser.Append(buffer.AsSpan(0, read));
@@ -842,5 +856,8 @@ public sealed class DeviceClient : IDisposable
         Stop();
         _connection.Dispose();
         _cts?.Dispose();
+        // After Stop(), so every chunk the read loop recorded is queued before the writer is
+        // closed: a capture truncated ahead of the fault it was opened to catch is worthless.
+        _rawCapture?.Dispose();
     }
 }

@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Dyno.Core;
 using Dyno.Core.Derived;
+using Dyno.Core.Diagnostics;
 using Dyno.Core.Messages;
 using Dyno.Core.Protocol;
 using Dyno.Core.Serial;
@@ -327,7 +328,21 @@ public partial class MainWindowViewModel : ObservableObject
                     )
                 );
             var connection = new SerialConnection(SelectedPort!);
-            var client = new DeviceClient(connection, _loggerFactory.CreateLogger<DeviceClient>());
+            // TEMP DIAGNOSTIC (16-byte head-loss investigation): set DYNO_RAW_CAPTURE to a path to
+            // record the raw serial chunks, then replay them with `Dyno.App --replay <path>`.
+            // Unset (the normal case) this is null and nothing is recorded.
+            var rawCapture = RawCapture.FromEnvironment();
+            var client = new DeviceClient(
+                connection,
+                _loggerFactory.CreateLogger<DeviceClient>(),
+                rawCapture
+            );
+            if (rawCapture is not null)
+            {
+                AddEvent(
+                    "[DIAG] recording raw serial chunks — replay with `Dyno.App --replay <path>`"
+                );
+            }
             // TEMP DIAGNOSTIC (slow-ack investigation): 4.7s is deliberately coprime to the
             // device's 1s task-monitor cycle. The 5.000s default phase-locks to that cycle, which
             // is why idle ping round-trips came out constant (~976ms one boot, ~2ms another).
