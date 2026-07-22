@@ -120,7 +120,8 @@ DYNO_STATIC_ASSERT(sizeof(pid_controller_task_error_ids) == 4, "Size of pid_cont
 // event log instead of masquerading as a quiet stream.
 typedef enum : uint32_t
 {
-    WARNING_USB_TX_BATCH_DROPPED = WARNING_FLAG
+    WARNING_USB_TX_BATCH_DROPPED = WARNING_FLAG,
+    WARNING_USB_OTG_TX_FIFO_UNDERRUN = WARNING_FLAG | 1u
 } usb_controller_task_error_ids;
 
 DYNO_STATIC_ASSERT(sizeof(usb_controller_task_error_ids) == 4, "Size of usb_controller_task_error_ids must be 4 bytes");

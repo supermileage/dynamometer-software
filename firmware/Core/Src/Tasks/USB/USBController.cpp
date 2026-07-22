@@ -1,6 +1,7 @@
 #include <Tasks/USB/usbcontroller_main.h>
 #include <Tasks/USB/USBController.hpp>
 #include <Tasks/USB/usb_framer.h>
+#include <Tasks/USB/usb_otg_stats.h>
 #include <Config/sysconfig.h>
 
 // The ADC and ADS1115 force sensors share one data buffer; report whichever
@@ -461,6 +462,7 @@ void USBController::Run()
 
             ProcessErrorsAndWarnings();
             ReportTxDropsIfDue();
+            ReportOtgUnderrunsIfDue();
         }
 
         // 9. Flush whatever accumulated this iteration: command responses, session events and/or
@@ -717,6 +719,49 @@ void USBController::ReportTxDropsIfDue()
 
     _lastDropReportTick = now;
     _txDropsPending = 0;
+}
+
+void USBController::ReportOtgUnderrunsIfDue()
+{
+    // TEMP DIAGNOSTIC (16-byte head-loss investigation). See usb_otg_stats.h for the reasoning;
+    // in short, this is the OTG core's own answer to "did I transmit that batch short?", and it
+    // is the one piece of evidence in this investigation that does not come from the host.
+    usb_otg_in_stats_t stats;
+    usb_otg_stats_get(&stats);
+
+    if (stats.tx_fifo_underrun == _lastOtgUnderrunCount)
+    {
+        return;
+    }
+
+    // Rate-limited exactly like the drop report, and for the same reason: if the core is
+    // underrunning it is doing so on a link that is already struggling, and a warning per event
+    // would be adding to the load it is trying to describe. The count carries the real number.
+    uint32_t now = osKernelGetTickCount();
+    if (_lastUnderrunReportTick != 0 && (now - _lastUnderrunReportTick) < 1000)
+    {
+        return;
+    }
+    if (IsBufferFull(sizeof(task_error_data)))
+    {
+        return;
+    }
+
+    task_error_data warning = PopulateTaskErrorDataStruct(
+        get_timestamp(),
+        TASK_OFFSET_USB_CONTROLLER,
+        static_cast<uint32_t>(WARNING_USB_OTG_TX_FIFO_UNDERRUN)
+    );
+    usb_msg_header_t header =
+    {
+        .msg_type = USB_MSG_WARNING,
+        .task_offset = TASK_OFFSET_USB_CONTROLLER,
+        .payload_len = sizeof(task_error_data)
+    };
+    AppendFrame(header, &warning, sizeof(warning));
+
+    _lastOtgUnderrunCount = stats.tx_fifo_underrun;
+    _lastUnderrunReportTick = now;
 }
 
 bool USBController::IsBufferFull(std::size_t msgSize)

@@ -142,6 +142,14 @@ sections:
       event log instead of masquerading as a quiet stream.
     values:
       - { name: WARNING_USB_TX_BATCH_DROPPED, value: "WARNING_FLAG" }
+      # TEMP DIAGNOSTIC (16-byte head-loss investigation). The OTG core reports its own TX FIFO
+      # underrun (DIEPINT.TXFIFOUDRN) -- an IN token answered without the whole packet to hand,
+      # which would transmit a batch short and split it in two. ST's HAL masks that flag off and
+      # so never reads or clears it; usb_otg_stats.c samples it directly. This warning fires when
+      # the count moves, so an underrun lands in the host event log next to the "dropped 16 bytes
+      # to resync" line it would explain. Silence across a fault is the equally useful answer: the
+      # core transmitted everything it was given and the loss is not on the device.
+      - { name: WARNING_USB_OTG_TX_FIFO_UNDERRUN, value: "WARNING_FLAG | 1u" }
 
   - { kind: static_assert, expr: "sizeof(usb_controller_task_error_ids) == 4", message: "Size of usb_controller_task_error_ids must be 4 bytes" }
 
