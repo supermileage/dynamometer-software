@@ -56,9 +56,14 @@ inline void CircularBufferReader<T>::SetIndex(size_t index)
 template <typename T>
 inline T CircularBufferReader<T>::GetElement(size_t index) const
 {
-    taskENTER_CRITICAL(); 
-    return _buffer[index % _size];
+    // The exit must precede the return. Written the other way round it is unreachable, and a
+    // single call would then leak a level of uxCriticalNesting -- BASEPRI stays raised for the
+    // rest of the run and every maskable interrupt in the system is dead. Nothing calls this
+    // overload today, which is the only reason that has never happened.
+    taskENTER_CRITICAL();
+    T element = _buffer[index % _size];
     taskEXIT_CRITICAL();
+    return element;
 }
 
 template <typename T>

@@ -168,6 +168,19 @@ standard names. */
 
 /* USER CODE BEGIN Defines */
 /* Section where parameter definitions can be added (for instance, to override default ones in FreeRTOS.h) */
+
+/* vApplicationStackOverflowHook is already implemented (TaskMonitor.cpp), but it was compiled
+   out: the hook is guarded on this symbol and nothing defined it, so a task overrunning its
+   stack corrupted whatever sat below it and the halt never fired. 2 = the pattern check, which
+   also catches an overrun that happened between context switches rather than across one.
+
+   CubeMX owns this setting (FREERTOS.configCHECK_FOR_STACK_OVERFLOW in the .ioc, also set to
+   2), and once it is non-zero a regen emits its own #define in the generated section above.
+   Hence the guard: this block is only the fallback that keeps the current tree correct without
+   a regen, and it must not collide with the generated one when that arrives. */
+#ifndef configCHECK_FOR_STACK_OVERFLOW
+#define configCHECK_FOR_STACK_OVERFLOW 2
+#endif
 /* USER CODE END Defines */
 
 #endif /* FREERTOS_CONFIG_H */

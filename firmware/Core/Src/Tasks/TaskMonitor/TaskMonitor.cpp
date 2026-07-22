@@ -106,8 +106,16 @@ void TaskMonitor::Run()
 }
 
 #if defined(configCHECK_FOR_STACK_OVERFLOW) && (configCHECK_FOR_STACK_OVERFLOW > 0)
-void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName) {
-    // Optional: halt the system
+// extern "C" is load-bearing: FreeRTOS calls this from tasks.c, which declares it with the
+// signature below (char*, not the signed char* cmsis_os2.c uses -- C ignores the difference,
+// C++ does not). Without it this compiles to a mangled symbol nothing can reach, the linker
+// quietly settles for the __WEAK dummy in cmsis_os2.c, and this function is dead code that
+// reads as live.
+extern "C" void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName) {
+    // Halt. There is no safe way to carry on: the overrunning task has already written past
+    // the end of its stack into whatever the heap put below it.
+    (void)xTask;
+    (void)pcTaskName;
     taskDISABLE_INTERRUPTS();
     for(;;);
 }

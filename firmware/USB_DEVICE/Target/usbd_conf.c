@@ -95,7 +95,22 @@ void HAL_PCD_MspInit(PCD_HandleTypeDef* pcdHandle)
     HAL_NVIC_SetPriority(OTG_FS_IRQn, 5, 0);
     HAL_NVIC_EnableIRQ(OTG_FS_IRQn);
   /* USER CODE BEGIN USB_OTG_FS_MspInit 1 */
+    /* Override the generated priority of 5. Everything else in this firmware also sits at 5,
+       which is configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY, so BASEPRI masks it and every
+       taskENTER_CRITICAL() anywhere in the system stops this interrupt from running.
 
+       That is not survivable here. With dma_enable = DISABLE the core arms the IN endpoint
+       (EPENA|CNAK, stm32h7xx_ll_usb.c:818) *before* any data is in the TX FIFO, and the packet
+       is only written afterwards, from this interrupt, in PCD_WriteEmptyTxFifo. Between those
+       two moments the host is free to send an IN token, and the core answers it with whatever
+       the FIFO happens to hold. Delaying this ISR widens that window, and a token landing in it
+       splits one batch into a short packet plus the remainder -- the 16 + 36 byte split the
+       USBPcap capture caught.
+
+       4 is safe: nothing on this interrupt's path calls a FreeRTOS API. CDC_Receive_FS pushes
+       into the lock-free SPSC ring in usb_rx_ring.c, which was written for exactly this and
+       never relied on interrupt masking for its mutual exclusion. */
+    HAL_NVIC_SetPriority(OTG_FS_IRQn, 4, 0);
   /* USER CODE END USB_OTG_FS_MspInit 1 */
   }
 }
@@ -365,9 +380,20 @@ USBD_StatusTypeDef USBD_LL_Init(USBD_HandleTypeDef *pdev)
   HAL_PCD_RegisterIsoInIncpltCallback(&hpcd_USB_OTG_FS, PCD_ISOINIncompleteCallback);
 #endif /* USE_HAL_PCD_REGISTER_CALLBACKS */
   /* USER CODE BEGIN TxRx_Configuration */
+  /* OTG_FS has 320 words of FIFO RAM and every word of it is spoken for below.
+     RX 128 + EP0 IN 48 + EP1 IN 128 + EP2 IN 16 = 320.
+
+     EP2 IN (CDC_CMD_EP, the 8-byte notification endpoint) used to be left out entirely, which
+     is not the same as giving it nothing: HAL_PCDEx_SetTxFiFo only writes DIEPTXFn when it is
+     called for n, so DIEPTXF2 kept its reset value, which addresses a window past the end of
+     this RAM. It is dormant only because ST's CDC class never actually transmits on the
+     command endpoint. The 16 words here are the minimum depth
+     the reference manual allows, taken from EP0 rather than from EP1: EP0 needs 64 bytes per
+     packet and keeps 192, while EP1 is the sensor stream and is left untouched at 512 bytes. */
   HAL_PCDEx_SetRxFiFo(&hpcd_USB_OTG_FS, 0x80);
-  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_FS, 0, 0x40);
+  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_FS, 0, 0x30);
   HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_FS, 1, 0x80);
+  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_FS, 2, 0x10);
   /* USER CODE END TxRx_Configuration */
   }
   return USBD_OK;
