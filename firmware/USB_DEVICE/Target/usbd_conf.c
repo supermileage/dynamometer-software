@@ -95,22 +95,16 @@ void HAL_PCD_MspInit(PCD_HandleTypeDef* pcdHandle)
     HAL_NVIC_SetPriority(OTG_FS_IRQn, 5, 0);
     HAL_NVIC_EnableIRQ(OTG_FS_IRQn);
   /* USER CODE BEGIN USB_OTG_FS_MspInit 1 */
-    /* Override the generated priority of 5. Everything else in this firmware also sits at 5,
-       which is configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY, so BASEPRI masks it and every
-       taskENTER_CRITICAL() anywhere in the system stops this interrupt from running.
+    /* This interrupt was briefly moved to priority 4, above configMAX_SYSCALL_INTERRUPT_PRIORITY,
+       on the theory that taskENTER_CRITICAL() masking it delayed PCD_WriteEmptyTxFifo long enough
+       for an IN token to catch a half-filled TX FIFO and split a batch. Tested on hardware and
+       disproven: the 16-byte head loss reproduced 2.3 s into the first session. Reverted, because
+       priority 4 quietly requires that nothing on this ISR's path ever call a FreeRTOS API -- true
+       today, but it is vendor code, and a future violation would hang in configASSERT with no
+       obvious cause. Not a constraint worth carrying for a theory that did not pay.
 
-       That is not survivable here. With dma_enable = DISABLE the core arms the IN endpoint
-       (EPENA|CNAK, stm32h7xx_ll_usb.c:818) *before* any data is in the TX FIFO, and the packet
-       is only written afterwards, from this interrupt, in PCD_WriteEmptyTxFifo. Between those
-       two moments the host is free to send an IN token, and the core answers it with whatever
-       the FIFO happens to hold. Delaying this ISR widens that window, and a token landing in it
-       splits one batch into a short packet plus the remainder -- the 16 + 36 byte split the
-       USBPcap capture caught.
-
-       4 is safe: nothing on this interrupt's path calls a FreeRTOS API. CDC_Receive_FS pushes
-       into the lock-free SPSC ring in usb_rx_ring.c, which was written for exactly this and
-       never relied on interrupt masking for its mutual exclusion. */
-    HAL_NVIC_SetPriority(OTG_FS_IRQn, 4, 0);
+       If the device is ever shown to actually underrun this FIFO, re-apply it with that evidence
+       attached. See the note on the always-exactly-16-bytes constant: this is not a race. */
   /* USER CODE END USB_OTG_FS_MspInit 1 */
   }
 }
