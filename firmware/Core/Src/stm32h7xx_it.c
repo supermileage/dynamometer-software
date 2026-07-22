@@ -22,7 +22,6 @@
 #include "stm32h7xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "Tasks/USB/usb_otg_stats.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -257,9 +256,7 @@ void TIM8_UP_TIM13_IRQHandler(void)
 void OTG_FS_IRQHandler(void)
 {
   /* USER CODE BEGIN OTG_FS_IRQn 0 */
-  /* Before the HAL, not after: it clears ITTXFE as part of servicing the endpoint, so a sample
-   * taken afterwards would never see one. See usb_otg_stats.h for what this is measuring. */
-  usb_otg_stats_sample_isr();
+
   /* USER CODE END OTG_FS_IRQn 0 */
   HAL_PCD_IRQHandler(&hpcd_USB_OTG_FS);
   /* USER CODE BEGIN OTG_FS_IRQn 1 */

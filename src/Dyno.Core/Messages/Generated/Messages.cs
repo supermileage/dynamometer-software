@@ -96,7 +96,6 @@ public enum pid_controller_task_error_ids : uint
 public enum usb_controller_task_error_ids : uint
 {
     WARNING_USB_TX_BATCH_DROPPED = 0x8000,
-    WARNING_USB_OTG_TX_FIFO_UNDERRUN = 0x8001,
 }
 
 public enum force_sensor_adc_task_error_ids : uint

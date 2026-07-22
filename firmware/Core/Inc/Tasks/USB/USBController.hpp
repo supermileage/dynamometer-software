@@ -58,8 +58,6 @@ class USBController
         // Frame a rate-limited WARNING_USB_TX_BATCH_DROPPED whenever give-up drops have happened,
         // so link saturation shows in the host's event log instead of being silent sample loss.
         void ReportTxDropsIfDue();
-        // TEMP DIAGNOSTIC (16-byte head-loss investigation): see usb_otg_stats.h.
-        void ReportOtgUnderrunsIfDue();
 
         // Pulls one complete, CRC-validated inbound frame out of the USB RX ring.
         // Returns true and fills header/payload/payloadLen when a frame is ready;
@@ -203,12 +201,6 @@ class USBController
         // transfer that vanished in flight. A sequence number the host never receives is
         // indistinguishable, from its side, from one that was sent and lost.
         uint32_t _batchSeq = 0;
-
-        // TEMP DIAGNOSTIC (16-byte head-loss investigation): the OTG TX FIFO underrun count as of
-        // the last report, so ReportOtgUnderrunsIfDue only speaks when the hardware counter has
-        // actually moved. See usb_otg_stats.h.
-        uint32_t _lastOtgUnderrunCount = 0;
-        uint32_t _lastUnderrunReportTick = 0;
 };
 
 #endif // INC_TASKS_USB_USBCONTROLLER_HPP_

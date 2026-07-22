@@ -620,25 +620,6 @@ public partial class MainWindowViewModel : ObservableObject
                         + "its USB TX path is saturated; samples are missing"
                 );
                 break;
-            case DeviceFault f
-                when f.Error
-                    is {
-                        Task: task_offset_t.TASK_OFFSET_USB_CONTROLLER,
-                        IsWarning: true,
-                        Number: 1,
-                    }:
-                // TEMP DIAGNOSTIC (16-byte head-loss investigation).
-                // WARNING_USB_OTG_TX_FIFO_UNDERRUN: the OTG core's own TX FIFO underrun flag moved,
-                // meaning it answered an IN token without the whole packet to give and transmitted
-                // one short. That is the device splitting a batch, and it is the first evidence in
-                // this investigation that does not come from the host's side of the wire. Expect it
-                // paired with a "dropped 16 bytes to resync" line; the absence of it across a fault
-                // is the equally decisive answer the other way.
-                AddEvent(
-                    $"[DIAG] device OTG TX FIFO underran @ {f.Timestamp} — "
-                        + "the core transmitted a packet short; the batch was split on the device"
-                );
-                break;
             case DeviceFault f:
                 AddEvent(
                     $"[{(f.Error.IsWarning ? "WARN" : "ERR ")}] {Friendly(f.Error.Task)} #{f.Error.Number} @ {f.Timestamp}"
