@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.Globalization;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -350,30 +349,6 @@ public partial class MainWindowViewModel : ObservableObject
                     $"[WARN] raw capture was requested but could not start — {captureProblem}"
                 );
             }
-            // DYNO_READ_SETTLE_MS overrides the read loop's pause between reads, so the head-loss
-            // mitigation can be A/B'd on one board without a rebuild: 0 restores the old
-            // read-as-fast-as-possible behaviour. Ignored unless it parses to a sane number.
-            if (
-                int.TryParse(
-                    Environment.GetEnvironmentVariable("DYNO_READ_SETTLE_MS"),
-                    NumberStyles.Integer,
-                    CultureInfo.InvariantCulture,
-                    out int settleMs
-                )
-                && settleMs >= 0
-                && settleMs <= 1000
-            )
-            {
-                client.ReadSettleDelay = TimeSpan.FromMilliseconds(settleMs);
-                AddEvent($"[DIAG] read-loop settle delay overridden to {settleMs} ms");
-            }
-            // TEMP DIAGNOSTIC (slow-ack investigation): 4.7s is deliberately coprime to the
-            // device's 1s task-monitor cycle. The 5.000s default phase-locks to that cycle, which
-            // is why idle ping round-trips came out constant (~976ms one boot, ~2ms another).
-            // If delivery is quantized to the device's next transmit, these RTTs will now sweep a
-            // sawtooth instead of holding constant — that shape is the diagnosis. Revert to the
-            // default 5s once measured.
-            client.HeartbeatInterval = TimeSpan.FromSeconds(4.7);
             client.MessageReceived += OnMessage;
             client.Handshaked += OnHandshaked;
             client.ProtocolMismatch += OnProtocolMismatch;

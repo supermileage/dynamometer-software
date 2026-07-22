@@ -905,19 +905,14 @@ public class DeviceClientTests
         );
     }
 
-    [Theory]
-    [InlineData(0)]
-    [InlineData(50)]
-    public void ReadSettleDelay_DoesNotCostBytesArrivingDuringThePause(int settleMs)
+    [Fact]
+    public void ReadLoop_LosesNothingFromABurstOfSends()
     {
-        // The whole point of pausing is that bytes pile up in the port while nothing is reading, so
-        // the one thing that must not happen is losing them. Asserted at both ends of the setting:
-        // a pause long enough that everything below arrives inside one, and no pause at all.
+        // Bytes pile up in the port faster than the loop can take them out, and the one thing that
+        // must not happen is losing any. This began as a test of the read-settle delay, at both
+        // ends of that setting; the delay is gone but the invariant it was protecting is not.
         using var serial = new FakeSerial();
-        using var client = new DeviceClient(serial)
-        {
-            ReadSettleDelay = TimeSpan.FromMilliseconds(settleMs),
-        };
+        using var client = new DeviceClient(serial);
 
         const int samples = 20;
         var received = new ConcurrentQueue<DeviceMessage>();
@@ -944,7 +939,7 @@ public class DeviceClientTests
             all.Wait(TimeSpan.FromSeconds(10)),
             $"only {received.Count} of {samples} arrived"
         );
-        // In order, and each exactly once: a pause must not reorder or duplicate either.
+        // In order, and each exactly once: the loop must not reorder or duplicate either.
         Assert.Equal(
             Enumerable.Range(0, samples).Select(i => (uint)i),
             received.Cast<OpticalEncoderSample>().Select(s => s.Data.timestamp)

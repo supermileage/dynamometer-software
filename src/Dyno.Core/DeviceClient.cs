@@ -141,25 +141,6 @@ public sealed class DeviceClient : IDisposable
     /// single dropped ack (a momentarily full completion queue) isn't read as a disconnect.</summary>
     public int HeartbeatMissesBeforeLost { get; set; } = 2;
 
-    /// <summary>How long the read loop pauses after each read before issuing the next one.
-    /// <see cref="TimeSpan.Zero"/> reads as fast as the port will answer.</summary>
-    /// <remarks>
-    /// Without a pause, a read is always left pending, so the driver completes it the instant it
-    /// copies a packet's first byte: captures showed every batch arriving as exactly two reads, one
-    /// of a single byte and then the remainder. Pausing means nothing is pending while a packet
-    /// lands, and the next read takes whole batches — measured at ~132 bytes and one read per two
-    /// batches, against ~28 bytes and two reads per batch before. That is the reason to keep it.
-    ///
-    /// It is <em>not</em> a fix for the 16-byte head loss, which is what it was added to test. The
-    /// delivery shape changed exactly as predicted and the losses continued at the same rate, so
-    /// reads racing the driver's buffer fill is ruled out as their cause.
-    ///
-    /// The cost is bounded and small — a few milliseconds added to command acks, against a
-    /// <see cref="CommandTimeout"/> in seconds, and a few KB of buffered bytes against the 1 MB the
-    /// port is opened with. Zero restores the old read-as-fast-as-possible behaviour.
-    /// </remarks>
-    public TimeSpan ReadSettleDelay { get; set; } = TimeSpan.FromMilliseconds(5);
-
     private int _handshakeStarted; // 0 until we first act on a device-ready announcement
     private int _protocolRefused; // 1 once a version mismatch has been reported
 
@@ -853,20 +834,6 @@ public sealed class DeviceClient : IDisposable
                     // the parser itself faulted (a decode bug). Surface it and stop, rather than
                     // hot-looping on the same unconsumed bytes or faulting the task silently.
                     _log.LogError(ex, "stream parser faulted; stopping read loop");
-                    break;
-                }
-            }
-
-            // After the append, not before: bytes already in hand are decoded immediately, and the
-            // pause only ever delays going back for more. See ReadSettleDelay for why it is here.
-            if (ReadSettleDelay > TimeSpan.Zero)
-            {
-                try
-                {
-                    await Task.Delay(ReadSettleDelay, cancellationToken).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
                     break;
                 }
             }
