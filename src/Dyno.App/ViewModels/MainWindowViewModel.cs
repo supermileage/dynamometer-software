@@ -921,9 +921,21 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
                         + "its USB TX path is saturated; samples are missing"
                 );
                 break;
+            case DeviceFault f when OverflowedBuffer(f.Error) is { } stream:
+                // One of the circular buffers the USB task reads was lapped by its producer, so
+                // samples it had not read yet were written over. Spelled out rather than left as a
+                // code, because the interesting part is not that a fault happened but which stream:
+                // one of them means that producer outran the drain, all of them means the USB task
+                // itself stalled.
+                AddEvent(
+                    $"[WARN] the device's {stream} buffer overflowed @ {f.Timestamp} — samples were "
+                        + "overwritten before the USB task could send them, so this run has a gap"
+                );
+                break;
             case DeviceFault f:
                 AddEvent(
-                    $"[{(f.Error.IsWarning ? "WARN" : "ERR ")}] {Friendly(f.Error.Task)} #{f.Error.Number} @ {f.Timestamp}"
+                    $"[{(f.Error.IsWarning ? "WARN" : "ERR ")}] {Friendly(f.Error.Task)} "
+                        + $"{ErrorDecoder.Name(f.Error) ?? $"#{f.Error.Number}"} @ {f.Timestamp}"
                 );
                 break;
             case CommandResponse r when IsLinkAck(r):
@@ -1120,4 +1132,22 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
 
     private static string Friendly(task_offset_t offset) =>
         offset.ToString().Replace("TASK_OFFSET_", string.Empty);
+
+    /// <summary>The stream a device buffer-overflow warning is about, or null if the fault is
+    /// something else. Named here rather than in the generic fault line because a buffer overflow
+    /// is about the data the user is looking at, not about a task's internal state.</summary>
+    private static string? OverflowedBuffer(DecodedError error) =>
+        error is { Task: task_offset_t.TASK_OFFSET_USB_CONTROLLER, IsWarning: true }
+            ? (usb_controller_task_error_ids)(error.Number | MessageConstants.WARNING_FLAG) switch
+            {
+                usb_controller_task_error_ids.WARNING_USB_OPTICAL_ENCODER_BUFFER_OVERFLOW =>
+                    "optical encoder",
+                usb_controller_task_error_ids.WARNING_USB_FORCE_SENSOR_BUFFER_OVERFLOW =>
+                    "force sensor",
+                usb_controller_task_error_ids.WARNING_USB_BPM_BUFFER_OVERFLOW => "BPM",
+                usb_controller_task_error_ids.WARNING_USB_TASK_ERROR_BUFFER_OVERFLOW =>
+                    "error/warning",
+                _ => null,
+            }
+            : null;
 }

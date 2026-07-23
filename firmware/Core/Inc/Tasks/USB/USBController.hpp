@@ -69,6 +69,29 @@ class USBController
         // so link saturation shows in the host's event log instead of being silent sample loss.
         void ReportTxDropsIfDue();
 
+        // The circular buffers this task reads, in the order their tallies are kept.
+        enum OverflowStream : uint8_t
+        {
+            OVERFLOW_OPTICAL_ENCODER = 0,
+            OVERFLOW_FORCE_SENSOR,
+            OVERFLOW_BPM,
+            OVERFLOW_TASK_ERROR,
+            OVERFLOW_STREAM_COUNT
+        };
+
+        // Collect each reader's overwritten-element count and frame a rate-limited warning naming
+        // the buffer it happened on. An overflow here is a full lap: the producer got so far ahead
+        // that elements this task had not read were written over, so the samples are gone. Which
+        // buffer it is carries the diagnosis -- one stream means that producer outran the drain,
+        // all four at once means this task stalled -- which is why they are counted and reported
+        // separately rather than as one "something overflowed".
+        void ReportBufferOverflowsIfDue();
+
+        // How often a buffer may report an overflow. A reader that has fallen a lap behind
+        // usually stays behind, and a warning per pass would then be the loudest thing on a link
+        // whose problem is that it is already too busy.
+        static constexpr uint32_t BUFFER_OVERFLOW_REPORT_INTERVAL_MS = 1000;
+
         // Pulls one complete, CRC-validated inbound frame out of the USB RX ring.
         // Returns true and fills header/payload/payloadLen when a frame is ready;
         // returns false when no complete frame is available yet (non-blocking).
@@ -206,6 +229,11 @@ class USBController
         // "emit on the next pass", so a host that has just connected sees one straight away rather
         // than waiting out an interval it did not start.
         uint32_t _lastMockFaultTick = 0;
+
+        // Per-buffer overflow accounting (ReportBufferOverflowsIfDue). Elements overwritten before
+        // this task read them, awaiting a report, and when that buffer last reported one.
+        uint32_t _overflowPending[OVERFLOW_STREAM_COUNT] = {};
+        uint32_t _lastOverflowReportTick[OVERFLOW_STREAM_COUNT] = {};
 
         // Transfers the CDC driver has accepted, stamped into each usb_tx_batch_trailer. Advanced
         // on USBD_OK alone -- not on BUSY, and not on FAIL, which the same iteration of Run counts

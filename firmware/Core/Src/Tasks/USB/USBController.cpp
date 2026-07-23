@@ -337,6 +337,13 @@ void USBController::HandleHostDetach()
     // Same reasoning for the mock stream's canned faults: the next host gets one on its first
     // pass, rather than up to a second of silence left over from the session that just ended.
     _lastMockFaultTick = 0;
+    // And the same for buffer overflows: samples lost while the last host was connected were that
+    // session's, and the readers are caught up to their writers on the next session entry anyway.
+    for (uint8_t stream = 0; stream < OVERFLOW_STREAM_COUNT; ++stream)
+    {
+        _overflowPending[stream] = 0;
+        _lastOverflowReportTick[stream] = 0;
+    }
 }
 
 bool USBController::TryReadFrame(usb_msg_header_t& header, uint8_t* payload, size_t payloadCapacity, size_t& payloadLen)
@@ -466,6 +473,9 @@ void USBController::Run()
 
             ProcessErrorsAndWarnings();
             ReportTxDropsIfDue();
+            // After the drains above, so a lap detected on this pass -- including one on the error
+            // buffer ProcessErrorsAndWarnings just read -- is counted before the tallies are checked.
+            ReportBufferOverflowsIfDue();
         }
 
         // 9. Flush whatever accumulated this iteration: command responses, session events and/or
@@ -718,6 +728,65 @@ void USBController::ReportTxDropsIfDue()
 
     _lastDropReportTick = now;
     _txDropsPending = 0;
+    return;
+}
+
+void USBController::ReportBufferOverflowsIfDue()
+{
+    // Collected every pass, reported at most once a second: TakeDroppedCount clears as it reads,
+    // so a lap that happened while a report was not yet due would otherwise be forgotten.
+    _overflowPending[OVERFLOW_OPTICAL_ENCODER] +=
+        static_cast<uint32_t>(_buffer_reader_optical_encoder.TakeDroppedCount());
+    _overflowPending[OVERFLOW_FORCE_SENSOR] +=
+        static_cast<uint32_t>(_buffer_reader_forcesensor.TakeDroppedCount());
+    _overflowPending[OVERFLOW_BPM] +=
+        static_cast<uint32_t>(_buffer_reader_bpm.TakeDroppedCount());
+    _overflowPending[OVERFLOW_TASK_ERROR] +=
+        static_cast<uint32_t>(_task_errors_buffer_reader.TakeDroppedCount());
+
+    // All four carry TASK_OFFSET_USB_CONTROLLER, not the producing task's: the number in a packed
+    // error code is only meaningful within the enum of the task the code is attributed to, and
+    // these live in usb_controller_task_error_ids. The buffer is named by the code itself.
+    static constexpr uint32_t codes[OVERFLOW_STREAM_COUNT] = {
+        WARNING_USB_OPTICAL_ENCODER_BUFFER_OVERFLOW,
+        WARNING_USB_FORCE_SENSOR_BUFFER_OVERFLOW,
+        WARNING_USB_BPM_BUFFER_OVERFLOW,
+        WARNING_USB_TASK_ERROR_BUFFER_OVERFLOW
+    };
+
+    const uint32_t now = osKernelGetTickCount();
+    for (uint8_t stream = 0; stream < OVERFLOW_STREAM_COUNT; ++stream)
+    {
+        if (_overflowPending[stream] == 0)
+        {
+            continue;
+        }
+        if (_lastOverflowReportTick[stream] != 0 &&
+            (now - _lastOverflowReportTick[stream]) < BUFFER_OVERFLOW_REPORT_INTERVAL_MS)
+        {
+            continue;
+        }
+        if (IsBufferFull(sizeof(task_error_data)))
+        {
+            return; // no room this pass; the tally is kept and goes out on a later one
+        }
+
+        task_error_data warning = PopulateTaskErrorDataStruct(
+            get_timestamp(),
+            TASK_OFFSET_USB_CONTROLLER,
+            codes[stream]
+        );
+        usb_msg_header_t header =
+        {
+            .msg_type = USB_MSG_WARNING,
+            .task_offset = TASK_OFFSET_USB_CONTROLLER,
+            .payload_len = sizeof(task_error_data)
+        };
+        AppendFrame(header, &warning, sizeof(warning));
+
+        _lastOverflowReportTick[stream] = now;
+        _overflowPending[stream] = 0;
+    }
 }
 
 bool USBController::IsBufferFull(std::size_t msgSize)

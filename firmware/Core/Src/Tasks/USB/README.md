@@ -36,8 +36,9 @@ Each iteration:
    - `optical_encoder_output_data` (`USB_MSG_STREAM`, `TASK_OFFSET_OPTICAL_ENCODER`)
    - `forcesensor_output_data` (`USB_MSG_STREAM`, active force-sensor offset)
    - `bpm_output_data`
-7. **Health + faults** — whenever `_appReady`, session or not: `task_monitor_output_data` and
-   errors via `ProcessErrorsAndWarnings()`.
+7. **Health + faults** — whenever `_appReady`, session or not: `task_monitor_output_data`, errors via
+   `ProcessErrorsAndWarnings()`, then `ReportTxDropsIfDue()` and `ReportBufferOverflowsIfDue()`
+   (*Buffer overflows* below). Both report after the drains, so a loss detected on this pass counts.
 8. `TransmitBatch()` — stamp the batch trailer onto the pending records and hand the buffer to
    `CDC_Transmit_FS`; delay `USB_TASK_OSDELAY`.
 
@@ -142,6 +143,28 @@ Three details carry the weight:
 
 The host's parser consumes the trailer as framing and never publishes it as a message — see
 `StreamParser` / `BatchAccounting` in `src/Dyno.Core/README.md`.
+
+## Buffer overflows (`ReportBufferOverflowsIfDue`)
+Each circular buffer this task reads can be lapped by its producer — a *full* lap, meaning elements
+that were never read have been overwritten. [[CircularBuffer]]'s reader detects that (the writer
+being more than `size` ahead), rejoins at the oldest element still present, and counts what it
+skipped; this step collects those counts and frames a warning naming the buffer:
+`WARNING_USB_{OPTICAL_ENCODER,FORCE_SENSOR,BPM,TASK_ERROR}_BUFFER_OVERFLOW`.
+
+Per buffer, not one "something overflowed", because which one it is *is* the diagnosis: one stream
+means that producer outran the drain, all four at once means this task stalled. All four carry
+`TASK_OFFSET_USB_CONTROLLER` — a packed error number only has meaning inside the enum of the task
+the code is attributed to, and these live in `usb_controller_task_error_ids` — so the buffer is
+named by the code, not by the offset.
+
+Warnings rather than errors, matching `WARNING_USB_TX_BATCH_DROPPED`: data is lost, the link and the
+session carry on. Rate-limited to one per buffer per second for the same reason, since a reader a lap
+behind usually stays behind and the report would otherwise add to the load that caused it. Tallies
+are dropped on host detach — loss that happened under the previous host is not the next one's news,
+and the sensor readers are caught up to their writers at the next session entry regardless.
+
+Only buffers *read here* are covered. An `osMessageQueue` that fills is rejected at the **writer**
+(e.g. `WARNING_PID_CONTROLLER_MESSAGE_QUEUE_FULL`), which is the pushing task's report to make.
 
 ## Error/warning framing
 `ProcessErrorsAndWarnings()` reads `task_error_data` from `task_error_circular_buffer` and sets

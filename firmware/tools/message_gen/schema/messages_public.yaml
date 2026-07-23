@@ -140,8 +140,23 @@ sections:
       (bounded retries, then give up). That loss used to be silent; this warning is emitted at
       most once per second while it is happening, so a saturated link shows up in the host's
       event log instead of masquerading as a quiet stream.
+
+      The _BUFFER_OVERFLOW warnings below are the same idea one stage earlier, on the read side.
+      Each names a circular buffer whose producer lapped this task's reader -- a full lap, so
+      samples that were never read have been overwritten. Reported per buffer, because which one
+      it is says what went wrong: one stream means that producer outran the drain, all of them at
+      once means the USB task itself stalled. They are warnings, matching TX_BATCH_DROPPED: data
+      is lost but the link and the session carry on. Rate-limited the same way, since a reader
+      that has fallen a lap behind usually stays behind for a while.
+
+      Only buffers this task reads are covered. An osMessageQueue that fills is rejected at the
+      *writer*, which is a different report belonging to the task that was pushing.
     values:
       - { name: WARNING_USB_TX_BATCH_DROPPED, value: "WARNING_FLAG" }
+      - { name: WARNING_USB_OPTICAL_ENCODER_BUFFER_OVERFLOW }
+      - { name: WARNING_USB_FORCE_SENSOR_BUFFER_OVERFLOW }
+      - { name: WARNING_USB_BPM_BUFFER_OVERFLOW }
+      - { name: WARNING_USB_TASK_ERROR_BUFFER_OVERFLOW }
 
   - { kind: static_assert, expr: "sizeof(usb_controller_task_error_ids) == 4", message: "Size of usb_controller_task_error_ids must be 4 bytes" }
 
