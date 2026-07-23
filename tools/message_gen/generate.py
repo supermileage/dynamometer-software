@@ -253,11 +253,18 @@ def render(schema_path: Path, template_name: str) -> str:
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--target", choices=sorted(TARGETS),
-                    help="only this target (default: all)")
+    ap.add_argument("--target", help="only this target (default: all of this script's)")
     ap.add_argument("--stdout", action="store_true", help="print instead of writing")
     ap.add_argument("--out", type=Path, help="override output path (single target only)")
     args = ap.parse_args(argv)
+
+    if args.target and args.target not in TARGETS:
+        # Not a hard error, because the wrapper scripts hand the same arguments to every
+        # generator in this directory: being asked for a sibling's target is how one of
+        # them is told "not you". A name no generator claims prints this from each of
+        # them, which is its own answer.
+        print(f"{Path(__file__).name}: no target named {args.target!r} here; skipping")
+        return 0
 
     targets = [args.target] if args.target else sorted(TARGETS)
     if (args.stdout or args.out) and len(targets) != 1:

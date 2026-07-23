@@ -65,13 +65,15 @@ dotnet publish src/Dyno.App/Dyno.App.csproj -c Release -r win-x64   --self-conta
 ```
 
 ## Regenerating message types
-The committed `src/Dyno.Core/Messages/Generated/Messages.cs` is generated from the firmware's
-`messages_public.yaml`. After changing the schema:
+The committed `Messages.cs`, `SysConfigCatalog.cs` and `ErrorCatalog.cs` under `src/Dyno.Core/`
+are all generated from the firmware's `messages_public.yaml` — the wire contract, every runtime
+parameter, and every fault the board can report with the sentence the app shows for it. After
+changing the schema:
 ```bash
-./scripts/generate.sh            # Linux/macOS
+./scripts/generate.sh            # Linux/macOS — runs every generator
 scripts\generate.ps1             # Windows (PowerShell)
 ```
-CI fails if the committed file is out of sync (`python tools/message_gen/check.py`). Details:
+CI fails if any committed file is out of sync (`python tools/message_gen/check.py`). Details:
 [tools/message_gen/README.md](tools/message_gen/README.md).
 
 ## Continuous integration

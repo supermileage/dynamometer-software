@@ -44,6 +44,13 @@ python3 -m venv .venv && .venv/bin/pip install jinja2 pyyaml
 - struct field: `{ type, name, comment?, array? }` (`array: N` -> `type name[N];`)
 - include entry: `"stdint.h"` -> `<stdint.h>`; `{ local: "x.h" }` -> `"x.h"`
 
+The fault enums (the `*_error_ids`) carry two keys this generator ignores and the host's
+`error_msg_generate.py` requires: `task:` on the section, naming the `task_offset_t` its
+numbers belong to, and `description:` on every value — the sentence the PC app prints
+beside that fault in its event log. They live here, in the schema, rather than in the app
+because they describe what the firmware did; adding a fault without them fails the host
+build, which is the point. Nothing changes in the header.
+
 `static_assert` is its own ordered section so the size checks land where the original
 header puts them, and so the assert spelling exists in exactly one place (the
 template) instead of being copied per type.
