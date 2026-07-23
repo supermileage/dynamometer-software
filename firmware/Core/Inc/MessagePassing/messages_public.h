@@ -405,9 +405,10 @@ typedef enum : uint16_t
     SYSCFG_ADS1115_COMP_POL = 30,   // enum
     SYSCFG_ADS1115_COMP_LAT = 31,   // enum
     SYSCFG_ADS1115_COMP_QUE = 32,   // enum
+    SYSCFG_USB_MOCK_MESSAGES = 33,   // enum
 } sysconfig_param_t;
 
-#define SYSCFG_PARAM_COUNT 33u              // one past the highest sysconfig_param_t id; sizes the firmware store
+#define SYSCFG_PARAM_COUNT 34u              // one past the highest sysconfig_param_t id; sizes the firmware store
 
 DYNO_STATIC_ASSERT(sizeof(sysconfig_param_t) == 2, "Size of sysconfig_param_t must be 2 bytes");
 

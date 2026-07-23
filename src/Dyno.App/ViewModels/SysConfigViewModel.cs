@@ -265,6 +265,9 @@ public partial class SysConfigViewModel : ObservableObject
         if (savedRuntime > 0)
         {
             RuntimeStatusText = $"Saved {Wording.Count(savedRuntime, "change")} on this PC";
+            // Announced before the push rather than after it: the sync can take a moment or fail
+            // outright, and a mirror of a saved value should track what was saved.
+            RuntimeSettingsChanged?.Invoke();
             await SyncDeviceAsync(ConnectedClient(), announce: true);
         }
     }
@@ -425,6 +428,19 @@ public partial class SysConfigViewModel : ObservableObject
     /// exists and the firmware default otherwise — never an edit still being typed.</summary>
     private Dictionary<sysconfig_param_t, double> SavedValues() =>
         _runtimeParameters.ToDictionary(p => p.Def.Id, p => p.SavedValue);
+
+    /// <summary>
+    /// The value this PC holds for one runtime parameter — which is also the value any connected
+    /// device is running, since it is pushed after every handshake and re-pushed whenever it
+    /// changes. Falls back to the firmware default for a parameter this build does not know.
+    /// </summary>
+    public double RuntimeValue(sysconfig_param_t id) =>
+        _runtimeParameters.FirstOrDefault(p => p.Def.Id == id)?.SavedValue
+        ?? SysConfigCatalog.Get(id).Default;
+
+    /// <summary>Raised after Apply has persisted new runtime values, for anything that mirrors one
+    /// outside this page. Fires once per Apply, not once per parameter.</summary>
+    public event Action? RuntimeSettingsChanged;
 
     /// <summary>Status lines can come off the handshake thread, so they are marshalled.</summary>
     private void Report(string status) =>

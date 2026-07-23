@@ -80,8 +80,10 @@ host raises a change event only when the value actually moves, so it is silent.
 An edge that falls while no host is acked is not lost either: the ack that follows sets
 `_sessionStateDue`, and the current state goes out then.
 
-`MockMessages()` has no SessionController, so it announces `in_session = 1` once after the
-handshake — otherwise the host would gate away the entire mock stream.
+The mock stream (below) forces `inSession` true for the same reason it replaces the sensors: the
+host displays sensor data only during a session, and there may be no SessionController state — no
+brake, no board wired up — behind a link being exercised. Forcing the flag rather than the
+streaming step means the announcement goes out too, so the host is told what it is being shown.
 
 ## Handshake (device-announced)
 The firmware streams nothing until the host acknowledges it. While `_appReady` is false the
@@ -89,8 +91,7 @@ device repeatedly announces `usb_device_ready_event{ USB_PROTOCOL_VERSION }`; th
 with a framed `USB_CMD_ACK` whose body is its own `USB_PROTOCOL_VERSION`. `HandleUsbLocalCommand`
 sets `_appReady` and replies `USB_RSP_OK` when the versions match, or `USB_RSP_VERSION_MISMATCH`
 (and keeps announcing) when they differ — so a host built against a stale schema is rejected at
-the link instead of silently mis-decoding the stream. `MockMessages()` gates on the same
-handshake via `WaitForHandshake()`.
+the link instead of silently mis-decoding the stream.
 
 `USB_CMD_ACK` is answered **in any state**, and applying it twice is a no-op. That is deliberate:
 it lets the host re-send it as a keep-alive (below) and as a probe, without a dedicated opcode.
@@ -150,7 +151,16 @@ the header from the packed code: `msg_type = (error_code & WARNING_FLAG) ? USB_M
 ## Helpers / config
 - `ProcessTaskData<T>(reader|queue, task_offset)`, `AddToBuffer<T>`, `IsBufferFull` / `StallIfIsBufferFull`.
 - `ACTIVE_FORCE_SENSOR_TASK_OFFSET` selects ADS1115 vs ADC offset for the shared force stream.
-- `MockMessages()` emits synthetic data when `DEBUG_USB_CONTROLLER_MOCK_MESSAGES` is set.
+- `AppendMockFrames(timestamp)` replaces step 7's sensor reads with synthetic counters while the
+  runtime parameter `SYSCFG_USB_MOCK_MESSAGES` is non-zero, plus a canned error/warning pair at most
+  once a second (`MOCK_FAULT_INTERVAL_MS`) — the streams stand in for sensors and are meant to run
+  flat out, but the faults land in the host's *event log*, where one per loop buried every real line
+  under hundreds of fabricated ones a second.
+  Every other step of the loop is untouched, so only the numbers are invented. It was the
+  compile-time `DEBUG_USB_CONTROLLER_MOCK_MESSAGES`; as a runtime parameter it needs no rebuild,
+  and — unlike a build you had to make deliberately — a board can be put into it while someone is
+  watching the plots, so the host labels them as fabricated. Defaults off, from the schema rather
+  than config.h: it is device state only, with no compile-time setting to agree with.
 - `USB_TX_BUFFER_SIZE`, `USB_TASK_OSDELAY` (config.h).
 
 ## Related

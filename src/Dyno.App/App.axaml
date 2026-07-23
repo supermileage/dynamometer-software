@@ -13,6 +13,9 @@
     <Color x:Key="TextPrimaryColor">#E7EAF0</Color>
     <Color x:Key="TextMutedColor">#8892A2</Color>
     <Color x:Key="AccentColor">#4C8DFF</Color>
+    <!-- The same amber the event log gives a [WARN] line, promoted to a resource now that a
+         second place needs it: the banner marking plotted data as fabricated. -->
+    <Color x:Key="WarningColor">#F5A623</Color>
 
     <SolidColorBrush x:Key="AppBackgroundBrush" Color="{StaticResource AppBackgroundColor}" />
     <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource SurfaceColor}" />
@@ -21,6 +24,12 @@
     <SolidColorBrush x:Key="TextPrimaryBrush" Color="{StaticResource TextPrimaryColor}" />
     <SolidColorBrush x:Key="TextMutedBrush" Color="{StaticResource TextMutedColor}" />
     <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="WarningBrush" Color="{StaticResource WarningColor}" />
+    <SolidColorBrush
+      x:Key="WarningFillBrush"
+      Color="{StaticResource WarningColor}"
+      Opacity="0.14"
+    />
 
     <!-- Steer Fluent's built-in accent (focus rings, selection, ComboBox highlight). -->
     <Color x:Key="SystemAccentColor">#4C8DFF</Color>

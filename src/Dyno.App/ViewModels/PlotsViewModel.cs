@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using Avalonia.Media;
 using Avalonia.Threading;
+using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Dyno.Core.Export;
 using Dyno.Core.Plotting;
@@ -29,8 +30,17 @@ namespace Dyno.App.ViewModels;
 /// validated (CVD separation, normal-vision floor, ≥3:1 contrast) against this app's #171A20
 /// card surface. Identity never rides on color alone: every strip is titled.
 /// </remarks>
-public partial class PlotsViewModel
+public partial class PlotsViewModel : ObservableObject
 {
+    /// <summary>
+    /// True while the device is set to stream its synthetic diagnostic data (the runtime parameter
+    /// <c>USB_MOCK_MESSAGES</c>) instead of reading its sensors. The plots then show counters, not
+    /// measurements, and there is nothing about the traces themselves that would give that away —
+    /// which is the whole reason the page says so, in the one place the numbers are being read.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isShowingMockData;
+
     private readonly DispatcherTimer _frameTimer;
 
     /// <summary>Folds the device counter's 71.6-minute rollovers into continuous seconds.</summary>

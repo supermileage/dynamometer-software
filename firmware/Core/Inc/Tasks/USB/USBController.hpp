@@ -32,8 +32,18 @@ class USBController
 
         bool Init();
         void Run();
-        void MockMessages(const bool forever = true);
     private:
+        // Synthetic stand-in for one pass of the sensor streaming step, used when
+        // SYSCFG_USB_MOCK_MESSAGES is on. Appends one record per stream, plus a canned error and
+        // warning, to the same TX buffer the real path fills -- so everything downstream of the
+        // frame builder is exercised identically and only the numbers are invented.
+        void AppendMockFrames(uint32_t &timestamp);
+
+        // How often the mock stream's canned error/warning pair goes out. The sensor records it
+        // fabricates are streamed every pass, as real ones would be; the faults are not, because
+        // they land in the host's event log rather than on a plot, and one per pass makes that log
+        // useless for anything else.
+        static constexpr uint32_t MOCK_FAULT_INTERVAL_MS = 1000;
         void StallIfIsBufferFull(bool bufferFull);
         bool IsBufferFull(std::size_t msgSize);
         void ProcessErrorsAndWarnings();
@@ -103,9 +113,6 @@ class USBController
         // sampling) sensor tasks buffered while no session was running. Called on session entry so
         // a session opens with live data rather than a backlog from before it started.
         void SkipBufferedSensorData();
-
-        // Block until the host completes the USB_CMD_ACK handshake (mock/debug path).
-        void WaitForHandshake();
 
         // Frames one record into the TX buffer with the shared SOF/CRC envelope (v5):
         // [SOF][header][payload][crc16 over header+payload]. The caller has already reserved
@@ -194,6 +201,11 @@ class USBController
         // last WARNING_USB_TX_BATCH_DROPPED went out, and when that was (ReportTxDropsIfDue).
         uint32_t _txDropsPending = 0;
         uint32_t _lastDropReportTick = 0;
+
+        // When the mock stream last emitted its canned fault pair (MOCK_FAULT_INTERVAL_MS). 0 means
+        // "emit on the next pass", so a host that has just connected sees one straight away rather
+        // than waiting out an interval it did not start.
+        uint32_t _lastMockFaultTick = 0;
 
         // Transfers the CDC driver has accepted, stamped into each usb_tx_batch_trailer. Advanced
         // on USBD_OK alone -- not on BUSY, and not on FAIL, which the same iteration of Run counts

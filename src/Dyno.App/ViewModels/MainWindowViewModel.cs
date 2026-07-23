@@ -239,6 +239,16 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
         _derived.ForceLeverArmM = SysConfig.PcConstant(SysConfigViewModel.ForceLeverArmName);
     }
 
+    /// <summary>
+    /// Puts the fabricated-data warning on the Plots page in step with the mock-stream setting.
+    /// Driven from the saved value rather than from anything the device reports, because that is
+    /// what the host pushes after every handshake — so it is also what any connected board is
+    /// running, and it is right before a board is even connected.
+    /// </summary>
+    private void RefreshMockDataWarning() =>
+        Plots.IsShowingMockData =
+            SysConfig.RuntimeValue(sysconfig_param_t.SYSCFG_USB_MOCK_MESSAGES) != 0;
+
     /// <summary>Torque with the gear ratio applied. Derived alongside the sensed torque rather than
     /// multiplied here, so the readout and the plotted channel are the same number.</summary>
     [ObservableProperty]
@@ -262,6 +272,11 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
         // read once now, then follow reloads and applied edits.
         SysConfig.PcConstantsChanged += () => Dispatcher.UIThread.Post(RefreshPcConstants);
         RefreshPcConstants();
+        // Same shape, for the one runtime parameter that changes what the plotted numbers *are*
+        // rather than how they are produced. Read once now (the value is restored from the
+        // database in SysConfig's constructor), then follow every Apply.
+        SysConfig.RuntimeSettingsChanged += () => Dispatcher.UIThread.Post(RefreshMockDataWarning);
+        RefreshMockDataWarning();
         Firmware = new FirmwareViewModel(
             SysConfig.CompileTimeOverrides,
             () => SysConfig.PendingCount,

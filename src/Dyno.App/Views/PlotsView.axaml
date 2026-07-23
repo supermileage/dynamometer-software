@@ -167,7 +167,42 @@
     </DataTemplate>
   </UserControl.Resources>
 
-  <Grid RowDefinitions="Auto,*" Margin="16" RowSpacing="10">
+  <Grid RowDefinitions="Auto,Auto,*" Margin="16" RowSpacing="10">
+    <!-- Shown only while the device is streaming its synthetic diagnostic data. Nothing about the
+         traces themselves says they are invented, so this is the one thing standing between a
+         screenshot of counters and someone reading it as a run. -->
+    <Border
+      Grid.Row="1"
+      Background="{StaticResource WarningFillBrush}"
+      BorderBrush="{StaticResource WarningBrush}"
+      BorderThickness="1"
+      CornerRadius="6"
+      Padding="12,9"
+      IsVisible="{Binding Plots.IsShowingMockData}"
+    >
+      <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+        <TextBlock
+          Text="⚠"
+          FontSize="17"
+          Foreground="{StaticResource WarningBrush}"
+          VerticalAlignment="Center"
+        />
+        <StackPanel Spacing="2" VerticalAlignment="Center">
+          <TextBlock
+            Text="FAKE DATA — these plots are not measurements"
+            FontWeight="SemiBold"
+            Foreground="{StaticResource WarningBrush}"
+          />
+          <TextBlock
+            Classes="label"
+            FontSize="12"
+            TextWrapping="Wrap"
+            Text="The board is running with USB_MOCK_MESSAGES enabled, so it is streaming synthetic counters in place of its sensors — and reporting a session that is not happening. Set it back to Disabled on the Config page for a real run. Anything exported while this is on is fabricated too."
+          />
+        </StackPanel>
+      </StackPanel>
+    </Border>
+
     <Border Grid.Row="0" Classes="card" Padding="12">
       <Grid ColumnDefinitions="*,Auto">
         <StackPanel Grid.Column="0" Spacing="3" VerticalAlignment="Center">
@@ -197,6 +232,6 @@
 
     <!-- Filled by code-behind: graphs in a near-square grid (1, 2 stacked, 2x2, 3x2, 3x3 …)
          with splitters between rows and columns. -->
-    <Grid Grid.Row="1" x:Name="GraphsHost" />
+    <Grid Grid.Row="2" x:Name="GraphsHost" />
   </Grid>
 </UserControl>

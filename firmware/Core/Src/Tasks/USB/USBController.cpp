@@ -334,24 +334,9 @@ void USBController::HandleHostDetach()
     // would be telling it about data it never asked for.
     _txDropsPending = 0;
     _lastDropReportTick = 0;
-}
-
-void USBController::WaitForHandshake()
-{
-    // Block until the host completes the USB_CMD_ACK handshake, announcing device-ready
-    // and flushing the TX buffer as it goes. Used by the mock/debug path.
-    while (!_appReady)
-    {
-        ProcessIncomingFrames();
-        AnnounceReadyIfDue();
-
-        if (_txBufferIndex > 0 && TransmitBatch() != USBD_BUSY)
-        {
-            _txBufferIndex = 0;
-        }
-
-        osDelay(10);
-    }
+    // Same reasoning for the mock stream's canned faults: the next host gets one on its first
+    // pass, rather than up to a second of silence left over from the session that just ended.
+    _lastMockFaultTick = 0;
 }
 
 bool USBController::TryReadFrame(usb_msg_header_t& header, uint8_t* payload, size_t payloadCapacity, size_t& payloadLen)
@@ -365,6 +350,7 @@ void USBController::Run()
 {
     bool inSession = false;
     bool prevInSession = false;
+    uint32_t mockTimestamp = 0;
 
     while (1)
     {
@@ -394,6 +380,18 @@ void USBController::Run()
         //    always sees the data a running session produces.
         GetLatestFromQueue(_sessionControllerToUsbController, &inSession, sizeof(inSession), 0);
 
+        // 4b. The mock stream stands in for the sensors, so it also stands in for the session that
+        //     gates them: the host displays sensor data only while it believes one is running, and
+        //     the whole point of the mock path is to exercise the link with no sensors -- and
+        //     usually no brake, no SessionController state, nothing -- involved. Forcing the flag
+        //     here rather than at the streaming step means the announcement in step 6 goes out too,
+        //     so the host is told what it is being shown instead of quietly receiving it.
+        const bool mockEnabled = sysconfig_get_u32(SYSCFG_USB_MOCK_MESSAGES) != 0u;
+        if (mockEnabled)
+        {
+            inSession = true;
+        }
+
         // 5. Entering a session: skip the readers past everything the sensor tasks buffered while
         //    we were idle. They sample continuously (SessionController enables them once, at
         //    startup) and their circular buffers keep filling whether or not we drain them, so
@@ -419,7 +417,14 @@ void USBController::Run()
         prevInSession = inSession;
 
         // 7. Stream sensor data once the host has handshaked *and* a session is running.
-        if (_appReady && inSession)
+        if (_appReady && inSession && mockEnabled)
+        {
+            // Diagnostic stand-in: synthetic records in place of the sensor reads below, leaving
+            // every other step of the loop -- commands, health, faults, framing, flush -- exactly
+            // as it is. Nothing here is a measurement; the host warns about that on its plots.
+            AppendMockFrames(mockTimestamp);
+        }
+        else if (_appReady && inSession)
         {
             #if !defined(OPTICAL_ENCODER_TASK_ENABLE)
             #error "OPTICAL_ENCODER_TASK_ENABLE must be defined"
@@ -509,20 +514,10 @@ void USBController::Run()
 
 // }
 
-void USBController::MockMessages(const bool forever)
+void USBController::AppendMockFrames(uint32_t &timestamp)
 {
-
-    uint32_t timestamp = 0;
     usb_msg_header_t usb_header{};
 
-    // Wait for the host handshake before starting data transmission
-    WaitForHandshake();
-
-    // There is no SessionController in the mock path, but the host only displays sensor data for a
-    // running session -- so say one is running, or the mock stream below arrives and is discarded.
-    SendSessionState(true);
-
-    while(forever)
     {
         #if !defined(OPTICAL_ENCODER_TASK_ENABLE)
         #error "OPTICAL_ENCODER_TASK_ENABLE must be defined"
@@ -592,38 +587,44 @@ void USBController::MockMessages(const bool forever)
         AppendFrame(usb_header, &mock_tm_data, sizeof(task_monitor_output_data));
         #endif
 
-        task_error_data mock_error_data = 
-        PopulateTaskErrorDataStruct(
-            timestamp++,
-            TASK_OFFSET_SESSION_CONTROLLER,
-            ERROR_SESSION_CONTROLLER_TIMESTAMP_TIMER_START_FAILURE
-        );
+        // The canned fault pair, at most once a second -- unlike the streams above, which are
+        // meant to run flat out. These exist to exercise the error/warning framing and the host's
+        // decoding of it, and one of each per second shows that just as well as one per loop. Per
+        // loop is what they used to be, and at this task's rate it buried every real line in the
+        // host's event log under hundreds of fabricated ones a second: a diagnostic mode whose
+        // diagnostics cannot be read.
+        uint32_t now = osKernelGetTickCount();
+        if (_lastMockFaultTick == 0 || (now - _lastMockFaultTick) >= MOCK_FAULT_INTERVAL_MS)
+        {
+            _lastMockFaultTick = now;
 
-        usb_header.msg_type = USB_MSG_ERROR;
-        usb_header.task_offset = TASK_OFFSET_SESSION_CONTROLLER;
-        usb_header.payload_len = sizeof(task_error_data);
-        AppendFrame(usb_header, &mock_error_data, sizeof(mock_error_data));
+            task_error_data mock_error_data =
+            PopulateTaskErrorDataStruct(
+                timestamp++,
+                TASK_OFFSET_SESSION_CONTROLLER,
+                ERROR_SESSION_CONTROLLER_TIMESTAMP_TIMER_START_FAILURE
+            );
 
-        task_error_data mock_warning_data = PopulateTaskErrorDataStruct(
-            timestamp++,
-            TASK_OFFSET_FORCE_SENSOR_ADS1115,
-            WARNING_FORCE_SENSOR_ADS1115_TRIGGER_CONVERSION_FAILURE
-        );
+            usb_header.msg_type = USB_MSG_ERROR;
+            usb_header.task_offset = TASK_OFFSET_SESSION_CONTROLLER;
+            usb_header.payload_len = sizeof(task_error_data);
+            AppendFrame(usb_header, &mock_error_data, sizeof(mock_error_data));
 
-        usb_header.msg_type = USB_MSG_WARNING;
-        usb_header.task_offset = TASK_OFFSET_FORCE_SENSOR_ADS1115;
-        usb_header.payload_len = sizeof(task_error_data);
-        AppendFrame(usb_header, &mock_warning_data, sizeof(mock_warning_data));
+            task_error_data mock_warning_data = PopulateTaskErrorDataStruct(
+                timestamp++,
+                TASK_OFFSET_FORCE_SENSOR_ADS1115,
+                WARNING_FORCE_SENSOR_ADS1115_TRIGGER_CONVERSION_FAILURE
+            );
 
-
-        if (TransmitBatch() == USBD_BUSY) {
-            continue;
+            usb_header.msg_type = USB_MSG_WARNING;
+            usb_header.task_offset = TASK_OFFSET_FORCE_SENSOR_ADS1115;
+            usb_header.payload_len = sizeof(task_error_data);
+            AppendFrame(usb_header, &mock_warning_data, sizeof(mock_warning_data));
         }
-        _txBufferIndex = 0;
-
-       
-        osDelay(sysconfig_get_u32(SYSCFG_USB_TASK_OSDELAY));
     }
+    // No transmit here: Run's flush step sends what this appended, in the same batch as the
+    // command responses and session events of the same pass. The mock stream stands in for the
+    // sensors, not for the link.
 }
 
 void USBController::ProcessErrorsAndWarnings()
@@ -747,11 +748,5 @@ extern "C" void usbcontroller_main(osMessageQueueId_t sessionControllerToUsbCont
 		 osThreadSuspend(osThreadGetId());;
 	}
 
-    #if !defined(DEBUG_USB_CONTROLLER_MOCK_MESSAGES)
-    #error "DEBUG_USB_CONTROLLER_MOCK_MESSAGES must be defined"
-    #elif (DEBUG_USB_CONTROLLER_MOCK_MESSAGES == 1)
-    usb.MockMessages();
-    #else
 	usb.Run();
-    #endif
 }

@@ -494,6 +494,18 @@ sections:
       - { name: ADS1115_COMP_POL, type: enum, category: "Force Sensor", subsection: "I2C", unit: "", description: "ADS1115 ALERT/RDY pin active polarity.", options: [ {value: 0, label: "Active low"}, {value: 1, label: "Active high"} ] }
       - { name: ADS1115_COMP_LAT, type: enum, category: "Force Sensor", subsection: "I2C", unit: "", description: "ADS1115 comparator latching of the ALERT/RDY pin.", options: [ {value: 0, label: "Non-latching"}, {value: 1, label: "Latching"} ] }
       - { name: ADS1115_COMP_QUE, type: enum, category: "Force Sensor", subsection: "I2C", unit: "", description: "ADS1115 comparator queue: conversions before ALERT asserts (or disable the comparator).", options: [ {value: 0, label: "Assert after 1"}, {value: 1, label: "Assert after 2"}, {value: 2, label: "Assert after 4"}, {value: 3, label: "Disabled"} ] }
+      # Diagnostic, and the only parameter here that changes what the data *means* rather than how
+      # it is produced. It was a compile-time define (DEBUG_USB_CONTROLLER_MOCK_MESSAGES), which
+      # meant testing the link end-to-end cost a rebuild and a flash, and a board flashed with it
+      # on gave no sign of it. As a runtime parameter it can be turned on against a board already
+      # in the field -- so the app labels every plot as fabricated while it is enabled, because
+      # that is now a state a running dyno can be put into rather than a build you had to make.
+      #
+      # The first parameter to carry its own `default:` rather than naming a config.h macro: it is
+      # device state and nothing else, so there is no compile-time setting for it to agree with,
+      # and a macro would only suggest that rebuilding with it changed something. Default 0 --
+      # off is the only safe way for a board to come up, since anything it streams is invented.
+      - { name: USB_MOCK_MESSAGES, type: enum, default: 0, category: "USB", unit: "", description: "Replace the sensor stream with synthetic counter data (and report a session as running, since the host shows sensor data only during one). For exercising the link with no sensors attached. Leave disabled for any real run: nothing it streams is a measurement.", options: [ {value: 0, label: "Disabled"}, {value: 1, label: "Enabled (fake data)"} ] }
       # GEAR_RATIO is deliberately NOT here: it is a compile-time config.h setting (editable via
       # the app's compile-time overrides, applied on the next build/flash), and it is not streamed
       # either -- the host reads it from its own copy of the firmware config for the geared readouts.

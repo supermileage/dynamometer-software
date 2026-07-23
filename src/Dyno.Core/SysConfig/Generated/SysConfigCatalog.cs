@@ -395,6 +395,18 @@ public static class SysConfigCatalog
                 Subsection: "I2C",
                 Options: new SysConfigEnumOption[] { new(0u, "Assert after 1"), new(1u, "Assert after 2"), new(2u, "Assert after 4"), new(3u, "Disabled") }
             ),
+            new(
+                sysconfig_param_t.SYSCFG_USB_MOCK_MESSAGES,
+                "USB_MOCK_MESSAGES",
+                "USB",
+                "",
+                "Replace the sensor stream with synthetic counter data (and report a session as running, since the host shows sensor data only during one). For exercising the link with no sensors attached. Leave disabled for any real run: nothing it streams is a measurement.",
+                IsFloat: false,
+                Default: 0.0,
+                Min: 0.0,
+                Max: 1.0,
+                Options: new SysConfigEnumOption[] { new(0u, "Disabled"), new(1u, "Enabled (fake data)") }
+            ),
         };
 
     /// <summary>Looks up a parameter's definition by wire id.</summary>
