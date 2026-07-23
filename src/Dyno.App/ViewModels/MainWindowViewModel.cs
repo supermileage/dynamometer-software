@@ -263,6 +263,14 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
     {
         _loggerFactory = loggerFactory;
         Settings = new SettingsViewModel(Plots);
+        // Losing a run is worth a line. It happens without the link dropping, so nothing else in
+        // the log would account for the traces having emptied themselves.
+        Plots.TimeBaseRestarted += () =>
+            AddEvent(
+                "[WARN] the device's timestamp counter restarted — the board most likely reset. "
+                    + "The run on the Plots page could not be continued across that, so a new one "
+                    + "started; the telemetry CSV is unaffected"
+            );
         SysConfig = new SysConfigViewModel(() => _client);
         // The connect-time restore is the one device write the user never asked for, and the only
         // one they cannot see happen on the page they're not looking at.
@@ -649,10 +657,19 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
     /// that is far cheaper than the alternative, which is a window stuck on "Disconnecting…" with
     /// Connect disabled and no way back short of restarting the app. Returns false if abandoned.
     /// </summary>
+    /// <remarks>
+    /// Nothing here touches the UI, and the continuation deliberately does not go back to the
+    /// dispatcher: <see cref="Shutdown"/> blocks on this from the UI thread, and a captured context
+    /// would post the continuation to the very dispatcher that is waiting for it — closing the
+    /// window would deadlock instead of exiting.
+    /// </remarks>
     private static async Task<bool> TearDownAsync(DeviceClient client)
     {
         var teardown = Task.Run(client.Dispose);
-        if (await Task.WhenAny(teardown, Task.Delay(TeardownBudget)) != teardown)
+        if (
+            await Task.WhenAny(teardown, Task.Delay(TeardownBudget)).ConfigureAwait(false)
+            != teardown
+        )
         {
             return false;
         }
@@ -812,6 +829,9 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
         if (client is not null)
         {
             Detach(client);
+            // Blocking the UI thread is fine here and only here: the window is going away, and
+            // TearDownAsync is bounded and context-free (see its remarks), so this returns within
+            // the teardown budget whether or not the port ever closes.
             TearDownAsync(client).Wait();
         }
         _telemetry?.Dispose();

@@ -94,6 +94,13 @@ public partial class SysConfigViewModel : ObservableObject
     [ObservableProperty]
     private string _statusText = string.Empty;
 
+    /// <summary>PC-constants section: where they are kept, and what the last Apply did with them.
+    /// Its own line rather than sharing the runtime one, because the two sections answer different
+    /// questions — nothing here is ever sent to a device, so "applied to the device" would be the
+    /// wrong reassurance and its absence would read as a failure.</summary>
+    [ObservableProperty]
+    private string _pcStatusText = string.Empty;
+
     [ObservableProperty]
     private bool _loadFailed;
 
@@ -176,6 +183,10 @@ public partial class SysConfigViewModel : ObservableObject
             saved = new Dictionary<string, double>();
         }
 
+        PcStatusText = _store is null
+            ? "Settings database unavailable — edits won't outlast this session"
+            : $"Values persist in {_store.DatabasePath}; press Apply to save an edit";
+
         void Add(
             string name,
             string label,
@@ -243,6 +254,9 @@ public partial class SysConfigViewModel : ObservableObject
         }
         if (saved > 0)
         {
+            PcStatusText =
+                $"Saved {Wording.Count(saved, "constant")} on this PC — the readouts and plots "
+                + "derive from the new value starting with the next sample";
             PcConstantsChanged?.Invoke();
         }
         return saved;

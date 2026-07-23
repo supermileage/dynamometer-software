@@ -125,6 +125,7 @@
           Margin="4,-6,4,0"
           TextWrapping="Wrap"
         />
+        <TextBlock Text="{Binding SysConfig.PcStatusText}" Classes="paramdesc" Margin="4,-8,4,0" />
 
         <Border Classes="card">
           <ItemsControl ItemsSource="{Binding SysConfig.PcConstants}">
@@ -135,8 +136,19 @@
             </ItemsControl.ItemsPanel>
             <ItemsControl.ItemTemplate>
               <DataTemplate x:DataType="vm:PcConstantViewModel">
-                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
-                  <StackPanel Grid.Column="0" Spacing="2">
+                <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="10">
+                  <!-- Pending-change marker, as on a runtime parameter: these are staged for Apply
+                       too, and without it the box looks like it took effect as it was typed. -->
+                  <Ellipse
+                    Grid.Column="0"
+                    Width="7"
+                    Height="7"
+                    VerticalAlignment="Center"
+                    Fill="{StaticResource AccentBrush}"
+                    IsVisible="{Binding IsDirty}"
+                    ToolTip.Tip="Changed — not yet applied"
+                  />
+                  <StackPanel Grid.Column="1" Spacing="2">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                       <TextBlock Text="{Binding Label}" VerticalAlignment="Center" />
                       <TextBlock
@@ -151,6 +163,7 @@
                       Classes="paramdesc"
                       TextWrapping="Wrap"
                     />
+                    <TextBlock Classes="paramdesc" Text="{Binding RangeText}" FontSize="10.5" />
                     <TextBlock
                       Text="{Binding Error}"
                       Foreground="#E5484D"
@@ -158,17 +171,23 @@
                       IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}"
                     />
                   </StackPanel>
-                  <TextBlock
-                    Grid.Column="1"
-                    Text="{Binding RangeText}"
-                    Classes="paramdesc"
-                    VerticalAlignment="Center"
-                  />
                   <TextBox
                     Grid.Column="2"
+                    Classes="definevalue"
+                    Classes.invalid="{Binding IsInvalid}"
                     Text="{Binding EditedText}"
                     MinWidth="120"
                     VerticalAlignment="Center"
+                  />
+                  <Button
+                    Grid.Column="3"
+                    Content="Reset"
+                    FontSize="11"
+                    Padding="9,4"
+                    VerticalAlignment="Center"
+                    IsVisible="{Binding CanReset}"
+                    Command="{Binding ResetCommand}"
+                    ToolTip.Tip="Put the default back in the box — press Apply to save it"
                   />
                 </Grid>
               </DataTemplate>

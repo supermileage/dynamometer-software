@@ -1,5 +1,6 @@
 using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 
 namespace Dyno.App.ViewModels;
 
@@ -23,17 +24,36 @@ public partial class PcConstantViewModel : ObservableObject
 
     public bool HasUnit => Unit.Length > 0;
 
+    /// <summary>The edit hint, worded exactly like a runtime parameter's: what this constant falls
+    /// back to and what it will accept. The default is part of it because it is otherwise nowhere
+    /// on the page — these have no header and no firmware to read one from, so if this line does
+    /// not say what the value started as, nothing does.</summary>
     public string RangeText =>
-        $"{Minimum.ToString("0.######", CultureInfo.InvariantCulture)} … "
-        + $"{Maximum.ToString("0.######", CultureInfo.InvariantCulture)}";
+        $"default {Format(Default)} · {Format(Minimum)} to {Format(Maximum)}";
 
     /// <summary>The value in force right now — what the derivation actually uses.</summary>
     public double Value { get; private set; }
+
+    /// <summary>Puts the default back in the editor. Staged like any typed value: Apply is what
+    /// saves it, so a reset can be walked back the same way an edit can.</summary>
+    public IRelayCommand ResetCommand { get; }
+
+    /// <summary>Whether Reset has anything to undo — the value in force is not the default, or the
+    /// text staged over it is not. The second half is what makes it useful in the case it is most
+    /// wanted: a value the box will not accept, where there is no parsed number to compare and the
+    /// only way back would otherwise be to remember what the default was.</summary>
+    public bool CanReset => Value != Default || EditedText != Format(Default);
+
+    /// <summary>True while the box holds something Apply will not take. Mirrored onto the box
+    /// itself, not just the message beside it: a greyed-out Apply with no visible cause reads as a
+    /// broken button rather than as a rejected value.</summary>
+    public bool IsInvalid => Error is not null;
 
     [ObservableProperty]
     private string _editedText = string.Empty;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsInvalid))]
     private string? _error;
 
     public PcConstantViewModel(
@@ -58,6 +78,7 @@ public partial class PcConstantViewModel : ObservableObject
         _edited = edited;
         Value = savedValue ?? defaultValue;
         _editedText = Format(Value);
+        ResetCommand = new RelayCommand(() => EditedText = Format(Default));
     }
 
     /// <summary>True when the box holds a valid number that differs from the value in force.</summary>
@@ -91,6 +112,7 @@ public partial class PcConstantViewModel : ObservableObject
                 : null
             : "not a number";
         OnPropertyChanged(nameof(IsDirty));
+        OnPropertyChanged(nameof(CanReset));
         _edited();
     }
 
@@ -103,7 +125,14 @@ public partial class PcConstantViewModel : ObservableObject
             EditedText = Format(Value);
             OnPropertyChanged(nameof(Value));
             OnPropertyChanged(nameof(IsDirty));
+            OnPropertyChanged(nameof(CanReset));
         }
+        // Unconditionally, and this is the whole point of it: the row is no longer pending, and the
+        // page's pending count is what enables Apply and reports what is outstanding. Setting
+        // EditedText above usually re-formats to the same string, which raises nothing, so leaving
+        // the recount to that left the count stuck at its pre-Apply value — a page that went on
+        // claiming an unsaved change forever, and an Apply button that had already saved.
+        _edited();
     }
 
     public bool Matches(IReadOnlyList<string> lowerCaseTerms) =>

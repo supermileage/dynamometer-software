@@ -47,8 +47,12 @@ sits idle.
 ## Pages
 - **Home** — connect, live telemetry, task monitor.
 - **Config** (`SysConfigViewModel`) — the device's runtime parameters (saved on this PC, pushed over
-  USB) and the firmware's compile-time `#define`s (saved on this PC, built in by the Firmware page).
-  One Apply button commits both; see [[Dyno.Core]] for why saving and applying are separate.
+  USB), the firmware's compile-time `#define`s (saved on this PC, built in by the Firmware page), and
+  the **PC constants** the app derives torque, power and the geared readouts from — host-only values
+  no firmware reads. One Apply button commits all three; see [[Dyno.Core]] for why saving and
+  applying are separate. Every row behaves the same way whichever section it is in: an edit is staged
+  (blue dot), its default and accepted range are stated under it, Reset stages that default, and
+  nothing is written until Apply.
 - **Firmware** (`FirmwareViewModel`) — build the firmware in the Docker toolchain, then flash it over
   SWD, USB DFU or UART. It runs `firmware/Scripts/` and shows their output verbatim.
 

@@ -122,14 +122,7 @@ public partial class PlotsViewModel : ObservableObject
 
     private void AdvanceAnchor()
     {
-        double latest = 0;
-        foreach (var channel in Channels)
-        {
-            if (channel.Buffer.Count > 0)
-            {
-                latest = Math.Max(latest, channel.Buffer.LatestTime);
-            }
-        }
+        double latest = LatestRecordedTime();
         foreach (var channel in Channels)
         {
             channel.AnchorTime = latest; // no-op notification when unchanged
@@ -212,9 +205,69 @@ public partial class PlotsViewModel : ObservableObject
         AdvanceAnchor();
     }
 
+    /// <summary>
+    /// How far behind the newest recorded sample a new one may be stamped before it is read as a
+    /// different time base rather than as ordinary lag.
+    /// </summary>
+    /// <remarks>
+    /// The two things being told apart are orders of magnitude apart, so the threshold only has to
+    /// sit between them. Lag is bounded by how often the slowest sensor task produces a sample —
+    /// the BPM channel's newest point is legitimately older than the encoder's, and that is normal,
+    /// not a fault. A counter that restarted, meanwhile, throws time back by the whole run so far.
+    /// A second is comfortably above the first and far below the second.
+    /// </remarks>
+    private const double TimeBaseRestartToleranceSeconds = 1.0;
+
+    /// <summary>Raised when a sample's timestamp showed the device's counter had restarted and the
+    /// run on screen was therefore dropped. Carries nothing: the page has already started over, and
+    /// this exists so the app can say so in the event log rather than silently losing a trace.</summary>
+    public event Action? TimeBaseRestarted;
+
+    /// <summary>The newest time recorded on any channel; 0 while nothing has been recorded.</summary>
+    private double LatestRecordedTime()
+    {
+        double latest = 0;
+        foreach (var channel in Channels)
+        {
+            if (channel.Buffer.Count > 0)
+            {
+                latest = Math.Max(latest, channel.Buffer.LatestTime);
+            }
+        }
+        return latest;
+    }
+
     /// <summary>Seconds since the run began for a raw device timestamp, adopting the first sample
     /// seen as the origin.</summary>
+    /// <remarks>
+    /// A sample stamped before the newest one already recorded is either ordinary lag between the
+    /// sensor tasks, or a device whose counter went back to the start — a board that reset, was
+    /// re-flashed, or began stamping from something other than the timer the run was measured
+    /// against. The first is fine and is plotted where it falls. The second is a new time base, and
+    /// there is no origin that reconciles it with the run already on screen (the same reason
+    /// <see cref="OnLinkStarted"/> discards one), so the run ends here and a fresh one begins at 0.
+    ///
+    /// Handling it is not cosmetic. Left alone, the old code floored the difference at 0 and handed
+    /// that to the buffers, which require non-decreasing times — <c>CopyWindow</c> binary-searches
+    /// on it, the envelope decimator's output bound depends on it, and the CSV export merges on it.
+    /// A debug build asserts and takes the process down with it; a release build just quietly draws
+    /// and exports a run that doubles back on itself.
+    /// </remarks>
     private double Elapsed(uint deviceTimestamp)
+    {
+        double seconds = Measure(deviceTimestamp);
+        if (seconds + TimeBaseRestartToleranceSeconds < LatestRecordedTime())
+        {
+            Clear();
+            seconds = Measure(deviceTimestamp);
+            TimeBaseRestarted?.Invoke();
+        }
+        return seconds;
+    }
+
+    /// <summary>Places one raw timestamp against the current origin, adopting it as the origin if
+    /// the run has none yet.</summary>
+    private double Measure(uint deviceTimestamp)
     {
         ulong ticks = _clock.ToTicks(deviceTimestamp);
         _originTicks ??= ticks;
