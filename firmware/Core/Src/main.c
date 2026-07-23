@@ -306,7 +306,12 @@ int main(void)
   MX_ADC3_Init();
   MX_I2C4_Init();
   /* USER CODE BEGIN 2 */
-  HAL_GPIO_WritePin(LED_BRAKE_GPIO_Port, LED_BRAKE_Pin, (GPIO_PinState)!HAL_GPIO_ReadPin(BTN_BRAKE_GPIO_Port, BTN_BRAKE_Pin));
+  /* Brake indicator off, whatever the button is doing right now. It used to be seeded from the
+     pin, which lit it whenever the board was reset with the brake held -- showing an engaged brake
+     while the FSM comes up idle (and, by design, stays idle until the button is released and
+     pressed again). MX_GPIO_Init has already driven it high; this restates it so the reason is
+     recorded next to the line that used to do the opposite. Active low: SET is off. */
+  HAL_GPIO_WritePin(LED_BRAKE_GPIO_Port, LED_BRAKE_Pin, GPIO_PIN_SET);
   /* Seed the runtime sysconfig store from the config.h defaults before any task runs. */
   sysconfig_init();
   /* USER CODE END 2 */

@@ -133,6 +133,22 @@ public partial class PlotsViewModel
     /// <see cref="Clear"/> to start over.</summary>
     public void OnSessionStarted() { }
 
+    /// <summary>
+    /// A new device link began — which, unlike a new session, does discard everything.
+    /// </summary>
+    /// <remarks>
+    /// Appending across a session works because both runs are stamped from one counter, so the gap
+    /// between them is real elapsed time. A reconnect breaks that: the board reboots when the link
+    /// drops (a reflash, a re-plug, a reset), TIM2 restarts from 0, and the new samples are
+    /// measured from an origin that belongs to the previous boot. What they plot at is meaningless
+    /// either way — and concretely they arrive *behind* everything already recorded, which
+    /// <see cref="Elapsed"/> floors at 0, so they would replay on top of the old run instead of
+    /// following it. That breaks the non-decreasing order the buffers, the CSV export and the
+    /// window search all depend on. There is no origin that reconciles two boots, so the run on
+    /// screen ends with the link that produced it.
+    /// </remarks>
+    public void OnLinkStarted() => Clear();
+
     /// <summary>Whether there is anything to export yet — nothing has been recorded until at least
     /// one channel holds a sample.</summary>
     public bool HasRecordedData => Channels.Any(c => c.Buffer.Count > 0);

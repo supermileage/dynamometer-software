@@ -12,10 +12,19 @@ FSM::FSM(osMessageQueueId_t sessionControllerToLumexLcdHandle) :
         _pidEnabled(false),
         _throttleControlModeEnabled(false),
         _inSession(false),
+        // A brake already held as we come up is not a request to start a session -- it is just how
+        // the board was left, or a finger on the button during a reset. Start disarmed in that case
+        // so nothing can run until the button has been released and pressed deliberately.
+        _brakeArmed(HAL_GPIO_ReadPin(BTN_BRAKE_GPIO_Port, BTN_BRAKE_Pin) == GPIO_PIN_RESET),
         _desiredManualBpmDutyCycle(0),
         _desiredManualThrottleDutyCycle(0),
         _desiredRpm(5000),
-        _fsmInputDataIndex(0)
+        // Start where the ISRs have already got to, rather than at 0. The button interrupts are
+        // live from MX_GPIO_Init, which is well before the kernel starts and this FSM exists, so
+        // anything already in the buffer happened during boot -- including, on a board reset with
+        // the brake held, an edge latched before the NVIC was even enabled. None of it is input to
+        // a UI that was not yet on screen, and replaying it would act on it.
+        _fsmInputDataIndex(interrupt_input_data_index)
         {
             ClearDisplay();
             IdleState();
@@ -256,15 +265,26 @@ void FSM::HandleButtonBrakeInput(bool isEnabled)
 {
      if (isEnabled)
      {
+         // Disarmed means this press is the one that was already being made when the board came
+         // up, so it is not a decision to start a session -- and starting one here would drive the
+         // BPM the moment power returned, with nobody having asked for it since the reset. The
+         // release below is what turns the button back into a control.
+         if (!_brakeArmed)
+         {
+             return;
+         }
          _inSession = true;
          InSessionState();
      }
      else
      {
+         // Released: whatever was held through the reset has been let go, so the next press is a
+         // deliberate one and is allowed to start a session.
+         _brakeArmed = true;
          _inSession = false;
          IdleState();
      }
-    
+
     // switch(_state.mainState)
     // {
     //     case State::MainDynoState::IDLE:

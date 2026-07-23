@@ -18,12 +18,26 @@ namespace Dyno.App.ViewModels;
 /// telemetry / task-monitor / event views. Owns a <see cref="DeviceClient"/> from Dyno.Core
 /// and applies its messages on the UI thread.
 /// </summary>
-public partial class MainWindowViewModel : ObservableObject
+public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
 {
     private readonly ILoggerFactory _loggerFactory;
     private readonly Dictionary<task_offset_t, TaskMonitorRow> _taskRows = new();
     private DeviceClient? _client;
     private TelemetryLogWorker? _telemetry;
+
+    /// <summary>The stable name of the board the current link is on, captured when it connected.
+    /// This is what lets a reconnect follow it to whatever node it comes back as; null when the
+    /// platform offers no such name, and the watcher then waits for the old node instead.</summary>
+    private PortAlias? _alias;
+
+    /// <summary>Cancels a reconnect that is still waiting for a board. Anything the user does to
+    /// the link by hand supersedes the watcher, so both connect and disconnect cancel it.</summary>
+    private CancellationTokenSource? _relink;
+
+    /// <summary>Whether this link has heard the device state its session yet, so the first report
+    /// can be worded as the answer it is rather than as a change. Per link, hence cleared on
+    /// teardown rather than once at startup.</summary>
+    private bool _sessionStateReported;
 
     public ObservableCollection<string> Ports { get; } = new();
     public ObservableCollection<TaskMonitorRow> Tasks { get; } = new();
@@ -250,7 +264,8 @@ public partial class MainWindowViewModel : ObservableObject
         RefreshPcConstants();
         Firmware = new FirmwareViewModel(
             SysConfig.CompileTimeOverrides,
-            () => SysConfig.PendingCount
+            () => SysConfig.PendingCount,
+            this
         );
 
         var eventsTab = new LogTabViewModel(
@@ -312,20 +327,18 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(CanConnect))]
     private async Task Connect()
     {
+        // A connect the user drove supersedes whatever the reconnect watcher was waiting for —
+        // including the case where they got bored and picked the port themselves.
+        CancelRelink();
+        await ConnectCoreAsync();
+    }
+
+    /// <summary>Connect proper, without disturbing a reconnect in progress — which is what lets the
+    /// watcher call it as its own last step rather than cancelling itself.</summary>
+    private async Task ConnectCoreAsync()
+    {
         try
         {
-            _telemetry = new TelemetryLogWorker(
-                TelemetryLogger.CreateFile(
-                    Path.Combine("logs", $"telemetry-{DateTime.Now:yyyyMMdd-HHmmss}.csv")
-                )
-            );
-            _telemetry.RowsDropped += n =>
-                Dispatcher.UIThread.Post(() =>
-                    AddEvent(
-                        $"[WARN] telemetry CSV fell behind — {n} row{(n == 1 ? "" : "s")} not "
-                            + "written (the stream, plots and readouts are unaffected)"
-                    )
-                );
             var connection = new SerialConnection(SelectedPort!);
             // TEMP DIAGNOSTIC (16-byte head-loss investigation): set DYNO_RAW_CAPTURE to a path to
             // record the raw serial chunks, then replay them with `Dyno.App --replay <path>`.
@@ -362,11 +375,23 @@ public partial class MainWindowViewModel : ObservableObject
             client.BatchMisaccounted += OnBatchMisaccounted;
             _client = client;
             ConnectionStatus = $"Connecting to {SelectedPort}…";
+            // Before Start, not after: Start launches the read loop, and the await below yields the
+            // UI thread, so the first samples of the new link can be applied while we are still
+            // inside it. Dropping the previous run afterwards would mean they had already been
+            // appended to it, against a time origin from the board's previous boot.
+            Plots.OnLinkStarted();
             // Opening the serial port starts blocking I/O that, on a Linux USB-CDC device, can
             // stall for a noticeable time — so it must not run on the UI thread or the whole app
             // appears to hang. Off-load it and only mark connected once the port is actually open.
             await Task.Run(client.Start);
             IsConnected = true;
+            // Only now the port is known to have opened: CreateFile creates the file, so doing this
+            // first would leave a stray empty CSV behind every failed attempt — and the reconnect
+            // watcher retries often enough to bury logs/ in them.
+            StartTelemetryLog();
+            // Captured now, while the board is demonstrably on this node: it is the only thing that
+            // will still identify it once the node is gone.
+            _alias = PortAlias.For(SelectedPort!);
             ConnectionStatus = $"Connected to {SelectedPort} — handshaking…";
             AddEvent(ConnectionStatus);
         }
@@ -379,11 +404,29 @@ public partial class MainWindowViewModel : ObservableObject
             if (client is not null)
             {
                 Detach(client);
-                await Task.Run(client.Dispose);
+                await TearDownAsync(client);
             }
             _telemetry?.Dispose();
             _telemetry = null;
         }
+    }
+
+    /// <summary>Opens this link's telemetry CSV. Separate from the connect path only so it can run
+    /// after the port has opened rather than before — see the call site.</summary>
+    private void StartTelemetryLog()
+    {
+        _telemetry = new TelemetryLogWorker(
+            TelemetryLogger.CreateFile(
+                Path.Combine("logs", $"telemetry-{DateTime.Now:yyyyMMdd-HHmmss}.csv")
+            )
+        );
+        _telemetry.RowsDropped += n =>
+            Dispatcher.UIThread.Post(() =>
+                AddEvent(
+                    $"[WARN] telemetry CSV fell behind — {n} row{(n == 1 ? "" : "s")} not "
+                        + "written (the stream, plots and readouts are unaffected)"
+                )
+            );
     }
 
     private bool CanDisconnect => IsConnected;
@@ -391,23 +434,216 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(CanDisconnect))]
     private async Task Disconnect()
     {
+        // Disconnecting by hand is an answer to "should this link exist", so it also calls off a
+        // watcher that was busy trying to bring one back.
+        CancelRelink();
+        ConnectionStatus = "Disconnecting…";
+        await ReleaseLinkAsync();
+        ConnectionStatus = "Disconnected";
+    }
+
+    /// <summary>Tears the link down and returns the window to its disconnected state, without
+    /// saying why — the caller sets the status, because "you pressed Disconnect", "the board is
+    /// being flashed" and "the board vanished" want to read differently.</summary>
+    private async Task ReleaseLinkAsync()
+    {
         var client = _client;
         _client = null;
-        ConnectionStatus = "Disconnecting…";
         if (client is not null)
         {
             Detach(client); // no OnMessage runs after this, so the read loop can't touch the VM/log
-            // Dispose closes the serial port and joins the read loop. On Linux USB-CDC that close
-            // is a known blocker, so run it off the UI thread to keep the app responsive.
-            await Task.Run(client.Dispose);
+            if (!await TearDownAsync(client))
+            {
+                AddEvent(
+                    "[WARN] the serial port would not close — the device was most likely unplugged "
+                        + "or re-flashed while connected. Abandoned it; reconnecting is safe."
+                );
+            }
         }
         // Disposed after the client so the read loop can't write a row into a closed file.
         _telemetry?.Dispose();
         _telemetry = null;
         IsConnected = false;
         IsSessionActive = false;
+        _sessionStateReported = false;
         ClearTelemetry();
-        ConnectionStatus = "Disconnected";
+    }
+
+    // ---- Reconnecting to a board that left the bus ----------------------------------------------
+
+    /// <summary>How long to keep looking for a board before giving up on it. Generous, because the
+    /// wait it has to cover is a flash — programming plus verify plus reset — not just a re-plug.</summary>
+    private static readonly TimeSpan RelinkWindow = TimeSpan.FromMinutes(2);
+
+    /// <summary>How often to look for the board. Fast enough to feel immediate; the check is a
+    /// couple of readlinks, so the cost of asking is nil.</summary>
+    private static readonly TimeSpan RelinkPollInterval = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>Waited out after the node appears, before opening it. udev creates the node as soon
+    /// as the interface enumerates, which is before the firmware is ready to talk — and on a box
+    /// without this project's udev rule, ModemManager grabs the fresh port and probes it with AT
+    /// commands for tens of seconds. A failed open is retried on the next tick regardless; this
+    /// just stops the first attempt landing in the worst of it.</summary>
+    private static readonly TimeSpan RelinkSettleDelay = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// Waits for the board to come back and links to it again, following it to whatever device node
+    /// it re-enumerates as. Runs on the UI thread throughout (every await resumes on it), so it
+    /// touches VM state directly; the returned task completes when the link is back or the window
+    /// has expired, which is what makes it awaitable by the flash gate.
+    /// </summary>
+    private async Task RelinkAsync(string waiting, CancellationToken external = default)
+    {
+        var alias = _alias;
+        var previous = SelectedPort;
+        CancelRelink();
+        // Linked, so the watcher answers both to the link's own controls and to whoever asked for
+        // it — the Firmware page cancels the reconnect it started through its own Cancel button.
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(external);
+        _relink = cts;
+        var token = cts.Token;
+
+        try
+        {
+            await ReleaseLinkAsync();
+            ConnectionStatus = waiting;
+            AddEvent(
+                alias is null
+                    ? $"[INFO] waiting for a board on {previous}. This machine exposes no stable "
+                        + "name for it, so a board that comes back on a different port will have to "
+                        + "be reconnected by hand — install scripts/udev/99-dyno-cdc.rules to fix that."
+                    : $"[INFO] waiting for the board to come back (following {alias.Path})"
+            );
+
+            var deadline = DateTime.UtcNow + RelinkWindow;
+            while (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(RelinkPollInterval, token);
+
+                // An alias names the board, so it is the whole answer when there is one — including
+                // its silence, which means the board is still off the bus. Falling back to the old
+                // node then would be strictly worse than waiting: /dev/ttyACM0 is just the lowest
+                // free number, so whatever turns up under it next need not be this board at all.
+                // Only with no alias is that guess the best available.
+                var node = alias is not null ? alias.CurrentNode() : Reappeared(previous);
+                if (node is null)
+                {
+                    continue;
+                }
+
+                await Task.Delay(RelinkSettleDelay, token);
+                RefreshPorts();
+                SelectedPort = node;
+                await ConnectCoreAsync();
+                if (IsConnected)
+                {
+                    AddEvent(
+                        node == previous
+                            ? $"[OK  ] board is back on {node}; link re-established"
+                            : $"[OK  ] board came back as {node} (was {previous}); link re-established"
+                    );
+                    return;
+                }
+                // ConnectCoreAsync has already logged why. Most often the port exists but is not
+                // ready yet, so the next tick is a real retry rather than a repeat of a lost cause —
+                // which is also why its "Connect failed" status must not be left standing as if this
+                // had stopped trying.
+                ConnectionStatus = waiting;
+            }
+
+            ConnectionStatus = "Board did not come back";
+            AddEvent(
+                $"[ERR ] gave up after {RelinkWindow.TotalSeconds:F0} s waiting for the board — "
+                    + "reconnect by hand once it is back"
+            );
+        }
+        catch (OperationCanceledException)
+        {
+            // Whoever cancelled has usually already said what happens instead — a connect, a
+            // disconnect — and owns the status. Testing for our own line rather than overwriting
+            // unconditionally is what keeps this from clobbering theirs; if it is still standing,
+            // nobody did, and it would sit there describing a wait that has stopped.
+            if (ConnectionStatus == waiting)
+            {
+                ConnectionStatus = "Disconnected";
+            }
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = "Reconnect failed";
+            AddEvent($"[ERR ] reconnect gave up: {ex.Message}");
+        }
+        finally
+        {
+            if (ReferenceEquals(_relink, cts))
+            {
+                _relink = null;
+            }
+            cts.Dispose();
+        }
+    }
+
+    /// <summary>The port name back if the OS is listing it again, else null.</summary>
+    private static string? Reappeared(string? port) =>
+        port is not null
+        && SerialConnection.AvailablePorts().Contains(port, StringComparer.OrdinalIgnoreCase)
+            ? port
+            : null;
+
+    /// <summary>Whether the node the link is bound to has left the OS's list — the difference
+    /// between a board that is merely not answering and one that is no longer there.</summary>
+    private bool PortHasVanished() => SelectedPort is not null && Reappeared(SelectedPort) is null;
+
+    private void CancelRelink()
+    {
+        var cts = _relink;
+        _relink = null;
+        cts?.Cancel();
+    }
+
+    // ---- IDeviceLinkGate: handing the board to a programming tool and taking it back ------------
+
+    /// <inheritdoc/>
+    public async Task<bool> SuspendAsync()
+    {
+        if (!IsConnected)
+        {
+            return false;
+        }
+        CancelRelink();
+        ConnectionStatus = "Releasing the link…";
+        await ReleaseLinkAsync();
+        ConnectionStatus = "Link released for flashing";
+        AddEvent("[INFO] link released so the board can be programmed");
+        return true;
+    }
+
+    /// <inheritdoc/>
+    public Task ResumeAsync(CancellationToken cancellationToken = default) =>
+        RelinkAsync("Waiting for the board to restart…", cancellationToken);
+
+    /// <summary>How long a teardown gets to close the port before it is abandoned.</summary>
+    private static readonly TimeSpan TeardownBudget = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// Closes a client's port and read loop off the UI thread, without letting a close that never
+    /// returns hang the caller. A port whose device has gone — unplugged, or re-enumerated by a
+    /// flash — can block in the kernel's tty close indefinitely, so the wait is bounded and an
+    /// overrunning close is abandoned. Dispose cancels the read and heartbeat loops before it
+    /// touches the port, so what leaks is one thread blocked on a device that no longer exists;
+    /// that is far cheaper than the alternative, which is a window stuck on "Disconnecting…" with
+    /// Connect disabled and no way back short of restarting the app. Returns false if abandoned.
+    /// </summary>
+    private static async Task<bool> TearDownAsync(DeviceClient client)
+    {
+        var teardown = Task.Run(client.Dispose);
+        if (await Task.WhenAny(teardown, Task.Delay(TeardownBudget)) != teardown)
+        {
+            return false;
+        }
+        // Observe the outcome so a throwing Dispose surfaces here rather than as an unobserved
+        // task exception — and, either way, cannot leave the caller's state half torn down.
+        return teardown.IsCompletedSuccessfully;
     }
 
     /// <summary>Unsubscribes the VM from a client's events so no callback fires after teardown.</summary>
@@ -453,6 +689,12 @@ public partial class MainWindowViewModel : ObservableObject
     private void OnSessionStateChanged(bool active) =>
         Dispatcher.UIThread.Post(() =>
         {
+            // The device states the session state after every ack, so the first one to arrive on a
+            // link is an answer to "what is this board doing", not a report that anything changed —
+            // and it is the only thing that turns an assumed-idle board into a checked one. Saying
+            // "session stopped" for it would describe a stop that never happened.
+            bool firstReport = !_sessionStateReported;
+            _sessionStateReported = true;
             IsSessionActive = active;
             if (active)
             {
@@ -465,7 +707,16 @@ public partial class MainWindowViewModel : ObservableObject
             {
                 ClearTelemetry();
             }
-            AddEvent(active ? "[SESS] session started" : "[SESS] session stopped");
+            AddEvent(
+                (firstReport, active) switch
+                {
+                    (true, true) =>
+                        "[SESS] board is already running a session — streaming live data",
+                    (true, false) => "[SESS] board is idle — no session running",
+                    (false, true) => "[SESS] session started",
+                    (false, false) => "[SESS] session stopped",
+                }
+            );
         });
 
     /// <summary>Resets the live readouts to their empty state, so nothing from a finished session
@@ -498,6 +749,19 @@ public partial class MainWindowViewModel : ObservableObject
     private void OnConnectionLost() =>
         Dispatcher.UIThread.Post(() =>
         {
+            // A board that is merely unresponsive still owns its device node, and the client keeps
+            // pinging it, so a link that recovers on its own needs nothing from us. A node that has
+            // gone means the board re-enumerated: the handle we hold refers to nothing, no amount of
+            // pinging can revive it, and the board is very likely already back under another name.
+            if (PortHasVanished())
+            {
+                AddEvent(
+                    $"[ERR ] {SelectedPort} is gone from the bus — the board reset, was re-flashed "
+                        + "or was unplugged"
+                );
+                _ = RelinkAsync("Board disappeared — waiting for it to come back…");
+                return;
+            }
             ConnectionStatus = $"{SelectedPort} not responding — retrying…";
             AddEvent("[ERR ] device stopped answering the heartbeat; connection lost");
         });
@@ -526,12 +790,14 @@ public partial class MainWindowViewModel : ObservableObject
     /// application exit.</summary>
     public void Shutdown()
     {
+        // Before anything else, or a watcher mid-tick opens a fresh port on the way out.
+        CancelRelink();
         var client = _client;
         _client = null;
         if (client is not null)
         {
             Detach(client);
-            Task.Run(client.Dispose).Wait(TimeSpan.FromSeconds(2));
+            TearDownAsync(client).Wait();
         }
         _telemetry?.Dispose();
         _telemetry = null;

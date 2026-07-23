@@ -24,10 +24,25 @@ schema and the C# message types are generated from that same schema (see
 | .NET SDK 10 | Build / run / test | `sudo dnf install dotnet-sdk-10.0` | [packages.microsoft.com](https://learn.microsoft.com/dotnet/core/install/linux) | `winget install Microsoft.DotNet.SDK.10` |
 | Python 3 + venv | Only to **regenerate** message types | `sudo dnf install python3` | `sudo apt install python3 python3-venv` | `winget install Python.Python.3.13` |
 
-On **Linux**, opening a serial port needs the user in the `dialout` group:
-`sudo usermod -aG dialout "$USER"` (re-login afterwards).
+On **Linux**, opening a serial port needs the user in the `dialout` group, and ModemManager has to
+be told to leave the board alone:
+```bash
+sudo usermod -aG dialout "$USER"                              # re-login afterwards
+sudo install -m 0644 scripts/udev/99-dyno-cdc.rules /etc/udev/rules.d/
+sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=tty
+```
+Skip the rule and connects are intermittent rather than broken: ModemManager probes each
+newly-appeared `ttyACM` with AT commands for ~20-30 s, holding the port open, so whether a connect
+succeeds depends on how long after plugging in you click. The board appears flaky, not busy.
+The rule also adds a stable `/dev/dyno` symlink, so the port keeps its name across replugs.
+
 On **Windows** no setup is needed: the board's USB-CDC interface enumerates as a
 `COMx` port with the inbox `usbser.sys` driver.
+
+> The board's USB-CDC link comes from the STM32's own USB connector, **not** from an attached
+> ST-Link. An ST-Link/V2 (`0483:3748`) carries no virtual COM port at all, so a board wired up for
+> debugging only will flash fine and never appear in the app's port list. Confirm with
+> `lsusb | grep 0483` — the data link is the device that reports `0483:5740`.
 
 ## Building the project
 The same commands work on Linux, macOS and Windows:
@@ -39,8 +54,8 @@ dotnet build Dyno.slnx -c Release # release build
 
 ## Running the app
 ```bash
-./Scripts/run.sh                 # Linux/macOS
-Scripts\run.ps1                  # Windows (PowerShell)
+./scripts/run.sh                 # Linux/macOS
+scripts\run.ps1                  # Windows (PowerShell)
 ```
 The GUI needs a display (X11/Wayland on Linux) and a connected board to show live data.
 End users get native, per-RID self-contained builds:
@@ -53,8 +68,8 @@ dotnet publish src/Dyno.App/Dyno.App.csproj -c Release -r win-x64   --self-conta
 The committed `src/Dyno.Core/Messages/Generated/Messages.cs` is generated from the firmware's
 `messages_public.yaml`. After changing the schema:
 ```bash
-./Scripts/generate.sh            # Linux/macOS
-Scripts\generate.ps1             # Windows (PowerShell)
+./scripts/generate.sh            # Linux/macOS
+scripts\generate.ps1             # Windows (PowerShell)
 ```
 CI fails if the committed file is out of sync (`python tools/message_gen/check.py`). Details:
 [tools/message_gen/README.md](tools/message_gen/README.md).

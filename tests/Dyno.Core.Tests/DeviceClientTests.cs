@@ -799,6 +799,90 @@ public class DeviceClientTests
         Assert.False(client.IsSessionActive);
     }
 
+    /// <summary>
+    /// A board that is idle when the host connects has to say so, and the host has to hear it. The
+    /// firmware states the session state after every ack precisely so a host arriving at a steady
+    /// board learns it without waiting for an edge — but the client starts out believing there is no
+    /// session, so treating "no session" as the value it already held would swallow that first
+    /// statement and leave the host merely *assuming* idle, indistinguishable from having checked.
+    /// </summary>
+    [Fact]
+    public void FirstSessionAnnouncement_IsRaisedEvenWhenIdle()
+    {
+        using var serial = new FakeSerial();
+        using var client = new DeviceClient(serial);
+
+        var states = new BlockingCollection<bool>();
+        client.SessionStateChanged += states.Add;
+
+        client.Start();
+        Assert.False(client.IsSessionStateKnown);
+
+        AnnounceSession(serial, false);
+
+        Assert.True(states.TryTake(out bool idle, TimeSpan.FromSeconds(5)));
+        Assert.False(idle);
+        Assert.True(client.IsSessionStateKnown);
+        Assert.False(client.IsSessionActive);
+    }
+
+    /// <summary>
+    /// Losing the link is not evidence that the session ended — the board may well still be running
+    /// one, unobserved. Recording it as a known idle would make the restatement that arrives with
+    /// the next good ack look like a repeat, so a session that had been running all along would
+    /// never be announced again and would read as idle for the life of the link.
+    /// </summary>
+    [Fact]
+    public void LosingTheLink_ForgetsTheSessionStateRatherThanCallingItIdle()
+    {
+        using var serial = new FakeSerial();
+        using var client = FastHeartbeatClient(serial);
+
+        // Answer the handshake, then go silent — the device is still there and still mid-session,
+        // we have simply stopped being able to ask.
+        int acks = 0;
+        serial.OnWrite = frame =>
+        {
+            var cmd = ReadCommandHeader(frame);
+            if (Interlocked.Increment(ref acks) > 1)
+            {
+                return;
+            }
+            serial.DeviceSend(
+                Wire.Message(
+                    usb_msg_type_t.USB_MSG_RESPONSE,
+                    task_offset_t.TASK_OFFSET_USB_CONTROLLER,
+                    new usb_response_data_t
+                    {
+                        opcode = cmd.opcode,
+                        msg_id = cmd.msg_id,
+                        status = (uint)usb_response_status_t.USB_RSP_OK,
+                    }
+                )
+            );
+        };
+
+        var states = new BlockingCollection<bool>();
+        client.SessionStateChanged += states.Add;
+
+        client.Start();
+        AnnounceReady(serial);
+        AnnounceSession(serial, true);
+        Assert.True(states.TryTake(out bool started, TimeSpan.FromSeconds(5)));
+        Assert.True(started);
+
+        // Nothing answers the keep-alive from here, so the client declares the link lost.
+        Assert.True(states.TryTake(out bool dropped, TimeSpan.FromSeconds(5)));
+        Assert.False(dropped); // consumers stop showing a session they can no longer observe
+        Assert.False(client.IsSessionStateKnown); // but we do not claim to know it stopped
+
+        // The board comes back still mid-session and restates it. That has to register as news.
+        AnnounceSession(serial, true);
+        Assert.True(states.TryTake(out bool resumed, TimeSpan.FromSeconds(5)));
+        Assert.True(resumed);
+        Assert.True(client.IsSessionActive);
+    }
+
     [Fact]
     public void RepeatedSessionAnnouncement_RaisesNoChangeEvent()
     {

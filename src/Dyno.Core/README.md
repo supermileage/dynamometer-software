@@ -232,11 +232,20 @@ nothing on its own — an idle board and a dead one look the same. The device th
 the value actually moves**, since the firmware re-states it on every 5 s heartbeat and the repeats
 are not news.
 
+The state is held as a *tri-state* (`IsSessionStateKnown` reports which): null until the device has
+said, and only then false or true. "Not told" and "told there is no session" are different facts,
+and collapsing them is what would make an idle board's first announcement look like a repeat of
+what the client already assumed — swallowed, leaving the host merely *presuming* idle with no way
+to tell that apart from having checked. The first statement on a link therefore always raises,
+including an idle one; the repeats behind it do not.
+
 That per-ack repeat is what makes the state recoverable rather than merely observable: a host
 connecting to a steady board (idle, or already mid-session) learns the state without waiting for an
-edge, and a host that declared the link lost — which clears `IsSessionActive`, since a device we
-cannot reach is not one we can claim is running a session — has it restored by the ack that answers
-the next heartbeat, with no reconnect.
+edge, and a host that declared the link lost has it restored by the ack that answers the next
+heartbeat, with no reconnect. Losing the link returns the state to *unknown* rather than idle — the
+board may still be running a session we can no longer see, and recording a known-idle would make
+that restatement look like a repeat and never reach the host. Consumers are still told to stop
+showing a session, because one we cannot observe is one whose readings have stopped being current.
 
 Because `StreamParser` decodes in wire order and `DeviceClient` applies the session state *before*
 re-publishing each message, `IsSessionActive` is already correct when the samples framed behind an

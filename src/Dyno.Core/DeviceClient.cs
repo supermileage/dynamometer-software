@@ -110,11 +110,22 @@ public sealed class DeviceClient : IDisposable
     /// completed, and while the device keeps answering the heartbeat.</summary>
     public bool IsHandshaked { get; private set; }
 
+    /// <summary>Null until the device has stated its session state on this link. Distinct from
+    /// false: "we have not been told" and "we have been told there is no session" are different
+    /// facts, and conflating them is what would let the first announcement of an idle board be
+    /// de-duplicated away as though it were a repeat of something we already knew.</summary>
+    private bool? _sessionActive;
+
     /// <summary>Whether the dyno is currently running a session, per the device's last
     /// <see cref="SessionState"/> announcement. Sensor samples only stream during a session, so
     /// this is what separates "idle" from "dead". False until the device says otherwise — including
     /// after the link is lost, when the last-known state is no longer worth trusting.</summary>
-    public bool IsSessionActive { get; private set; }
+    public bool IsSessionActive => _sessionActive ?? false;
+
+    /// <summary>Whether the device has actually told us, as opposed to us assuming idle because it
+    /// has not. The firmware states the session state after every <c>USB_CMD_ACK</c>, so this turns
+    /// true a beat after the handshake and stays true for the life of the link.</summary>
+    public bool IsSessionStateKnown => _sessionActive is not null;
 
     /// <summary>How long one attempt at any command waits for its RESPONSE before it is a
     /// <see cref="TimeoutException"/>. Every host→device command is acked by the firmware, so this
@@ -201,7 +212,7 @@ public sealed class DeviceClient : IDisposable
         }
 
         IsHandshaked = false;
-        IsSessionActive = false; // nothing is known about the new device until it announces
+        _sessionActive = null; // nothing is known about the new device until it announces
         Interlocked.Exchange(ref _handshakeStarted, 0);
         Interlocked.Exchange(ref _protocolRefused, 0);
         _heartbeatLoop = null;
@@ -488,17 +499,44 @@ public sealed class DeviceClient : IDisposable
     /// actually moves. The firmware re-states the state on every heartbeat ack (so a host that lost
     /// and regained the link recovers it), which means most calls here are a repeat of what we
     /// already believe — de-duplicating is what keeps that refresh silent.
+    ///
+    /// The first statement on a link always counts, including an idle one. Until it arrives we have
+    /// only assumed a board is idle; being told so is what makes it checked, and a consumer that
+    /// wants to say which of the two it is showing has no other moment to hang that on.
     /// </summary>
     private void SetSessionActive(bool active)
     {
-        if (IsSessionActive == active)
+        if (_sessionActive == active)
         {
             return;
         }
 
-        IsSessionActive = active;
-        _log.LogInformation("device session {State}", active ? "started" : "stopped");
+        bool firstReport = _sessionActive is null;
+        _sessionActive = active;
+        _log.LogInformation(
+            firstReport ? "device reports it is {State}" : "device session {State}",
+            firstReport ? (active ? "mid-session" : "idle") : (active ? "started" : "stopped")
+        );
         SessionStateChanged?.Invoke(active);
+    }
+
+    /// <summary>
+    /// Goes back to knowing nothing about the session, for when the link drops. Deliberately not
+    /// <c>SetSessionActive(false)</c>: the board may well still be running a session — we simply
+    /// cannot see it — and recording that as a *known* idle state would mean the restatement that
+    /// arrives with the next successful ack looked like a repeat and raised nothing. Consumers are
+    /// still told to stop showing a session, because one we cannot observe is one whose readings
+    /// have stopped being current.
+    /// </summary>
+    private void ForgetSessionState()
+    {
+        bool wasActive = _sessionActive == true;
+        _sessionActive = null;
+        if (wasActive)
+        {
+            _log.LogInformation("session state unknown; the link is no longer answering");
+            SessionStateChanged?.Invoke(false);
+        }
     }
 
     /// <summary>
@@ -743,7 +781,7 @@ public sealed class DeviceClient : IDisposable
                     // drop the belief so a consumer stops showing that session's (now frozen) data.
                     // Recovering it needs no edge from the device — the ack that answers the next
                     // heartbeat re-states the session state, so a link that comes back restores it.
-                    SetSessionActive(false);
+                    ForgetSessionState();
                     _log.LogError(
                         "device missed {Misses} consecutive heartbeats; link presumed lost",
                         misses
