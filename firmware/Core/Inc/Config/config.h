@@ -104,7 +104,11 @@
 #define LED_TASK_OSDELAY 500
 
 // Error and Warning settings
-#define TASK_ERROR_CIRCULAR_BUFFER_SIZE 50
+// 100, matching the sensor buffers. This one has the least margin of any of them despite being the
+// smallest: every sensor buffer is drained each pass of the USB task, whereas errors are held back
+// until a host has handshaked (deliberately -- it is what lets a boot-time fault reach whoever
+// connects later), so this is the one buffer expected to hold a backlog rather than run near empty.
+#define TASK_ERROR_CIRCULAR_BUFFER_SIZE 100
 #define TASK_WARNING_RETRY_OSDELAY 100
 
 // Task Monitor config

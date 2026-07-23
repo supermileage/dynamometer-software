@@ -104,11 +104,13 @@ TEST(CircularBufferTest, IndicesWrapAndDataSurvivesManyLaps)
     EXPECT_FALSE(reader.HasData());
 }
 
-// Documents a real limit of this design rather than asserting a fix: with only two indices and no
-// count, a buffer filled to exactly its capacity is indistinguishable from an empty one, and
-// writing further silently overwrites unread samples. Producers therefore depend on the consumer
-// draining faster than they fill -- the buffers are sized (100+ entries) for that margin.
-TEST(CircularBufferTest, FillingToExactlyCapacityIsIndistinguishableFromEmpty)
+// The case this design used to lose outright. With indices that wrapped, writing exactly `size`
+// elements put the writer back on an untouched reader; "has data" is that comparison, so a full
+// buffer reported empty and every element in it was dropped without a trace. It is the error
+// buffer's realistic shape -- a board logging faults while no host is attached to drain them --
+// which is why it is worth a test rather than a note. Counting writes instead makes full and empty
+// `size` apart, so the whole capacity is usable.
+TEST(CircularBufferTest, ABufferFilledToExactlyCapacityIsNotMistakenForEmpty)
 {
     Shared shared;
     CircularBufferWriter<Sample> writer(shared.buffer, &shared.writerIndex, kSize);
@@ -118,22 +120,47 @@ TEST(CircularBufferTest, FillingToExactlyCapacityIsIndistinguishableFromEmpty)
     {
         writer.WriteElementAndIncrementIndex({i, i * 10});
     }
-    EXPECT_EQ(shared.writerIndex, 0u) << "writer index should wrap back to the start";
-    EXPECT_FALSE(reader.HasData()) << "known ambiguity: a wrapped-onto-reader writer reads empty";
+    EXPECT_EQ(shared.writerIndex, kSize) << "the index counts writes; it does not wrap";
+    ASSERT_TRUE(reader.HasData()) << "a full buffer read as an empty one";
 
-    // Usable depth without a drain is therefore capacity - 1.
-    reader.SetIndex(shared.writerIndex);
-    for (uint32_t i = 0; i < kSize - 1; ++i)
-    {
-        writer.WriteElementAndIncrementIndex({i, i * 10});
-    }
-    for (uint32_t i = 0; i < kSize - 1; ++i)
+    for (uint32_t i = 0; i < kSize; ++i)
     {
         Sample out{};
-        ASSERT_TRUE(reader.GetElementAndIncrementIndex(out));
+        ASSERT_TRUE(reader.GetElementAndIncrementIndex(out)) << "lost sample " << i;
         EXPECT_EQ(out, (Sample{i, i * 10}));
     }
     EXPECT_FALSE(reader.HasData());
+    EXPECT_EQ(reader.TakeDroppedCount(), 0u) << "nothing was overwritten";
+}
+
+// Past capacity the oldest samples are overwritten -- that is what a ring buffer is for. What is
+// asserted here is that the loss is orderly: the reader rejoins at the oldest sample that still
+// exists, hands back each of them once, and can say how many went by. Before, its position stayed
+// where those samples used to be, so a `while (HasData())` drain walked the ring handing out the
+// same slots for as many times as the writer had got ahead.
+TEST(CircularBufferTest, LappingTheReaderSkipsToTheOldestSurvivorAndCountsTheLoss)
+{
+    Shared shared;
+    CircularBufferWriter<Sample> writer(shared.buffer, &shared.writerIndex, kSize);
+    CircularBufferReader<Sample> reader(shared.buffer, &shared.writerIndex, kSize);
+
+    // Half a lap more than the buffer holds, with nobody draining.
+    constexpr uint32_t kWritten = kSize + kSize / 2;
+    for (uint32_t i = 0; i < kWritten; ++i)
+    {
+        writer.WriteElementAndIncrementIndex({i, i * 10});
+    }
+
+    // The survivors are the last kSize written, oldest first.
+    for (uint32_t i = kWritten - kSize; i < kWritten; ++i)
+    {
+        Sample out{};
+        ASSERT_TRUE(reader.GetElementAndIncrementIndex(out)) << "lost sample " << i;
+        EXPECT_EQ(out, (Sample{i, i * 10}));
+    }
+    EXPECT_FALSE(reader.HasData()) << "the drain did not terminate at the writer";
+    EXPECT_EQ(reader.TakeDroppedCount(), kWritten - kSize);
+    EXPECT_EQ(reader.TakeDroppedCount(), 0u) << "reading the count should clear it";
 }
 
 // SkipBufferedSensorData()'s move: catch the reader up to the writer so a session starts on live
