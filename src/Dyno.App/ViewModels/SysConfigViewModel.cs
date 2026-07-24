@@ -308,8 +308,8 @@ public partial class SysConfigViewModel : ObservableObject
                 // un-appliable until the user found and fixed the row by hand.
                 report.Add(
                     $"[WARN] config import: {parameter.Name} = {parameter.Def.Format(value)} is "
-                        + $"outside the accepted {parameter.Def.Format(parameter.Def.Min)} to "
-                        + $"{parameter.Def.Format(parameter.Def.Max)} — left at the firmware default"
+                        + $"outside {parameter.Def.Format(parameter.Def.Min)} to "
+                        + $"{parameter.Def.Format(parameter.Def.Max)}"
                 );
                 StageRuntimeDefault(parameter);
             }
@@ -373,11 +373,9 @@ public partial class SysConfigViewModel : ObservableObject
             )
         );
 
-        report.AddRange(Missing(missingRuntime, "runtime parameter", "the firmware default"));
-        report.AddRange(Missing(missingPc, "PC constant", "its default"));
-        report.AddRange(
-            Missing(missingCompileTime, "compile-time setting", "what the header says")
-        );
+        report.AddRange(Missing(missingRuntime, "runtime parameter"));
+        report.AddRange(Missing(missingPc, "PC constant"));
+        report.AddRange(Missing(missingCompileTime, "compile-time setting"));
 
         Recount();
         ApplyFilter();
@@ -401,17 +399,13 @@ public partial class SysConfigViewModel : ObservableObject
     /// would be eighty of them, burying both the real warnings here and whatever the log already
     /// held. Long lists are cut short, because a line nobody can read to the end is no better.
     /// </summary>
-    private static IEnumerable<string> Missing(
-        IReadOnlyList<string> names,
-        string kind,
-        string fallback
-    ) =>
+    private static IEnumerable<string> Missing(IReadOnlyList<string> names, string kind) =>
         names.Count == 0
             ? []
             :
             [
-                $"[WARN] config import: {Wording.Count(names.Count, kind)} not in the file — "
-                    + $"left at {fallback}: {NameList(names)}",
+                $"[WARN] config import: {Wording.Count(names.Count, kind)} not in the file: "
+                    + NameList(names),
             ];
 
     private static IEnumerable<string> Unknown(
@@ -425,8 +419,8 @@ public partial class SysConfigViewModel : ObservableObject
             ? []
             :
             [
-                $"[WARN] config import: {Wording.Count(unknown.Count, kind)} in the file that this "
-                    + $"build does not have — ignored: {NameList(unknown)}",
+                $"[WARN] config import: {Wording.Count(unknown.Count, kind)} not in this build: "
+                    + NameList(unknown),
             ];
     }
 

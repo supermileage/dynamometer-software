@@ -53,10 +53,7 @@ public partial class SysConfigView : UserControl
             {
                 await writer.WriteAsync(ConfigBundleJson.Write(bundle));
             }
-            main.AddEvent(
-                $"[INFO] exported {bundle.Count} settings to {file.Name} — this file is a record "
-                    + "of the configuration, not something the board reads"
-            );
+            main.AddEvent($"[INFO] exported {bundle.Count} settings to {file.Name}");
         }
         catch (Exception ex)
         {
@@ -114,9 +111,9 @@ public partial class SysConfigView : UserControl
             }
 
             var bundle = read.Bundle;
+            // "staged, not saved" stays: it is the state the page is now in, not advice about it.
             main.AddEvent(
-                $"[INFO] loaded {bundle.Count} settings from {files[0].Name} — staged, not saved; "
-                    + "press Apply to keep them"
+                $"[INFO] loaded {bundle.Count} settings from {files[0].Name} — staged, not saved"
             );
             foreach (var problem in read.Problems)
             {
@@ -140,7 +137,7 @@ public partial class SysConfigView : UserControl
     };
 
     private const string StorageUnavailable =
-        "[ERR ] this window cannot open a file dialog — no storage provider";
+        "[ERR ] no file dialog available — this window has no storage provider";
 
     /// <summary>
     /// Describes a file-dialog failure for the event log.
@@ -156,7 +153,6 @@ public partial class SysConfigView : UserControl
     /// </remarks>
     private static string StorageFailure(Exception ex) =>
         ex is TimeoutException or OperationCanceledException
-            ? "the system file dialog did not respond. On Linux this is xdg-desktop-portal; check "
-                + "that a portal backend for your desktop is installed and running"
+            ? "the system file dialog did not respond"
             : $"{ex.GetType().Name}: {ex.Message}";
 }

@@ -78,7 +78,7 @@ public partial class PlotsView : UserControl
             if (storage is null)
             {
                 main!.AddEvent(
-                    "[ERR ] this window cannot open a file dialog — no storage provider"
+                    "[ERR ] no file dialog available — this window has no storage provider"
                 );
                 return;
             }
@@ -109,9 +109,7 @@ public partial class PlotsView : UserControl
         {
             main!.AddEvent(
                 ex is TimeoutException or OperationCanceledException
-                    ? "[ERR ] export failed — the system file dialog did not respond. On Linux this "
-                        + "is xdg-desktop-portal; check that a portal backend for your desktop is "
-                        + "installed and running"
+                    ? "[ERR ] export failed — the system file dialog did not respond"
                     : $"[ERR ] export failed — {ex.GetType().Name}: {ex.Message}"
             );
         }
