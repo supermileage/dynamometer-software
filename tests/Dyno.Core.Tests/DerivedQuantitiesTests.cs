@@ -109,6 +109,37 @@ public class DerivedQuantitiesTests
         Assert.Equal(20f, d.Value.Power, 4); // from the sensed torque
     }
 
+    [Fact]
+    public void GearingTradesSpeedForTorqueRatherThanCreatingBoth()
+    {
+        // The invariant that says the pair is reciprocal, and the one that was violated when both
+        // torque and velocity were multiplied: an ideal gearbox moves power across, it does not
+        // manufacture it. Multiplying both reported ratio² times the power actually measured.
+        const double ratio = 4.0;
+        const double sensedTorque = 10.0;
+        const double sensedVelocity = 2.0;
+
+        double gearedTorque = DerivedQuantities.GearTorque(sensedTorque, ratio);
+        double gearedVelocity = DerivedQuantities.GearVelocity(sensedVelocity, ratio);
+
+        Assert.Equal(40.0, gearedTorque, 6);
+        Assert.Equal(0.5, gearedVelocity, 6);
+        Assert.Equal(sensedTorque * sensedVelocity, gearedTorque * gearedVelocity, 6);
+    }
+
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(-2.0)]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public void AnUnusableGearRatioLeavesTheVelocityAloneRatherThanReportingInfinity(double ratio)
+    {
+        // PC constants are range-checked as they are typed but not as they are loaded, so a bad
+        // row in the database reaches the derivation. Direct drive is the honest fallback; an
+        // infinity on the readout is not.
+        Assert.Equal(3.0, DerivedQuantities.GearVelocity(3.0, ratio), 6);
+    }
+
     /// <summary>Each reading is stamped with the force sample that triggered it — the only value
     /// known to be current, and the one clock the whole series is on.</summary>
     [Fact]

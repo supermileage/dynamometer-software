@@ -22,8 +22,12 @@ public readonly record struct DerivedSample(
 /// <code>
 ///   torque = I·α + F·r
 ///   torque_geared = torque × gear_ratio
+///   omega_geared  = ω ÷ gear_ratio
 ///   power = torque × ω
 /// </code>
+///
+/// The gearing multiplies torque and divides speed — see <see cref="GearTorque"/> and
+/// <see cref="GearVelocity"/>, which are a pair and are kept next to each other for that reason.
 ///
 /// Force and encoder samples arrive from independent device tasks at different rates and never
 /// share a timestamp. Readings are clocked off <em>force alone</em>, against the held ω and α of
@@ -52,6 +56,23 @@ public sealed class DerivedQuantities
 
     /// <summary>Sensed shaft to output ratio; 1.0 is direct drive.</summary>
     public double GearRatio { get; set; } = 1.0;
+
+    /// <summary>Torque at the output shaft: a reduction multiplies it.</summary>
+    public static double GearTorque(double torque, double gearRatio) => torque * gearRatio;
+
+    /// <summary>Angular velocity at the output shaft: a reduction divides it. This is the exact
+    /// reciprocal of what the gearing does to torque, which is what makes the geared pair carry the
+    /// same power as the sensed pair — an ideal gearbox trades speed for torque, it does not create
+    /// either. Multiplying both (as this used to) reported ratio² times the power actually measured.
+    /// </summary>
+    /// <remarks>A ratio that is not finite and positive is treated as direct drive rather than
+    /// dividing by it: the value comes from a saved PC constant, which is range-checked as it is
+    /// typed but not as it is loaded, so a 0 in the database would otherwise reach here and put an
+    /// infinity on screen.</remarks>
+    public static double GearVelocity(double angularVelocity, double gearRatio) =>
+        gearRatio is > 0 and < double.PositiveInfinity
+            ? angularVelocity / gearRatio
+            : angularVelocity;
 
     private float _force;
     private float _angularVelocity;
@@ -102,7 +123,7 @@ public sealed class DerivedQuantities
         return new DerivedSample(
             timestamp,
             (float)torque,
-            (float)(torque * GearRatio),
+            (float)GearTorque(torque, GearRatio),
             (float)(torque * _angularVelocity)
         );
     }

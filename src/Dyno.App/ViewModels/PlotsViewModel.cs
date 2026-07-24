@@ -4,6 +4,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Dyno.Core.Derived;
 using Dyno.Core.Export;
 using Dyno.Core.Plotting;
 
@@ -152,6 +153,12 @@ public partial class PlotsViewModel : ObservableObject
     /// </remarks>
     public void OnLinkStarted() => Clear();
 
+    /// <summary>Drops the run because what follows is not the same kind of data as what came
+    /// before — the board switched between real measurements and the fabricated mock stream. The
+    /// two must never share a trace: they are not comparable, and the mock stream restarts its
+    /// timestamps from zero, so continuing the run would also throw the time base backwards.</summary>
+    public void OnDataSourceChanged() => Clear();
+
     /// <summary>Whether there is anything to export yet — nothing has been recorded until at least
     /// one channel holds a sample.</summary>
     public bool HasRecordedData => Channels.Any(c => c.Buffer.Count > 0);
@@ -287,7 +294,10 @@ public partial class PlotsViewModel : ObservableObject
     {
         double now = Elapsed(timestamp);
         AngularVelocity.Buffer.Add(now, angularVelocity);
-        AngularVelocityGeared.Buffer.Add(now, (float)(angularVelocity * gearRatio));
+        AngularVelocityGeared.Buffer.Add(
+            now,
+            (float)DerivedQuantities.GearVelocity(angularVelocity, gearRatio)
+        );
         AngularAcceleration.Buffer.Add(now, angularAcceleration);
     }
 

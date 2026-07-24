@@ -202,7 +202,7 @@
                 Grid.Column="0"
                 Classes="label"
                 Text="Gear ratio"
-                ToolTip.Tip="Compile-time GEAR_RATIO from this PC's firmware config (override if saved, else config.h); geared readouts above are multiplied by this"
+                ToolTip.Tip="Sensed shaft to output ratio, from PC Constants on the SysConfig page. The geared readouts above trade one for the other: torque is multiplied by this, angular velocity divided by it"
               />
               <TextBlock
                 Grid.Row="7"

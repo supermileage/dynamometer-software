@@ -239,22 +239,65 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
         _derived.ForceLeverArmM = SysConfig.PcConstant(SysConfigViewModel.ForceLeverArmName);
     }
 
+    /// <summary>What the mock-stream setting was last seen at, so a change can be told from an
+    /// Apply that left it alone. Null until the first read, which is not a change.</summary>
+    private bool? _mockDataInUse;
+
     /// <summary>
-    /// Puts the fabricated-data warning on the Plots page in step with the mock-stream setting.
+    /// Puts the fabricated-data warning on the Plots page in step with the mock-stream setting, and
+    /// throws away everything derived from the old setting when it flips.
     /// Driven from the saved value rather than from anything the device reports, because that is
     /// what the host pushes after every handshake — so it is also what any connected board is
     /// running, and it is right before a board is even connected.
     /// </summary>
-    private void RefreshMockDataWarning() =>
-        Plots.IsShowingMockData =
-            SysConfig.RuntimeValue(sysconfig_param_t.SYSCFG_USB_MOCK_MESSAGES) != 0;
+    /// <remarks>
+    /// Real and fabricated samples are not the same measurement of anything, so nothing derived
+    /// from one may survive into the other: the run on the Plots page, the held force/ω the
+    /// derivation pairs across streams, the live readouts, and the telemetry CSV all start over.
+    /// The CSV is rolled rather than cleared — it is a record, and the honest form of "these rows
+    /// are not comparable" is two files rather than one file with a seam in it.
+    /// </remarks>
+    private void RefreshMockDataWarning()
+    {
+        bool mock = SysConfig.RuntimeValue(sysconfig_param_t.SYSCFG_USB_MOCK_MESSAGES) != 0;
+        Plots.IsShowingMockData = mock;
+
+        bool changed = _mockDataInUse is { } previous && previous != mock;
+        _mockDataInUse = mock;
+        if (!changed)
+        {
+            return;
+        }
+
+        Plots.OnDataSourceChanged();
+        _derived.Reset();
+        ClearTelemetry();
+
+        // New worker before the old one is disposed: the read loop may be mid-Enqueue on the
+        // reference it already has, and a disposed worker would count that row as dropped and
+        // report the CSV as falling behind — which it is not.
+        if (_telemetry is { } previousLog)
+        {
+            StartTelemetryLog();
+            previousLog.Dispose();
+        }
+
+        AddEvent(
+            mock
+                ? "[WARN] mock data enabled — cleared the run, the readouts and the telemetry CSV. "
+                    + "Nothing from here on is a measurement"
+                : "[SESS] mock data disabled — cleared the fabricated run, the readouts and the "
+                    + "telemetry CSV; what follows is measured"
+        );
+    }
 
     /// <summary>Torque with the gear ratio applied. Derived alongside the sensed torque rather than
     /// multiplied here, so the readout and the plotted channel are the same number.</summary>
     [ObservableProperty]
     private double _torqueGeared;
 
-    public double AngularVelocityGeared => AngularVelocity * GearRatio;
+    public double AngularVelocityGeared =>
+        DerivedQuantities.GearVelocity(AngularVelocity, GearRatio);
 
     [ObservableProperty]
     private uint _lastTimestamp;
@@ -752,13 +795,20 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
         });
 
     /// <summary>Resets the live readouts to their empty state, so nothing from a finished session
-    /// (or a dropped link) is left on screen looking current.</summary>
+    /// (or a dropped link, or a switch to or from mock data) is left on screen looking current.
+    /// </summary>
     private void ClearTelemetry()
     {
         AngularVelocity = 0;
         AngularAcceleration = 0;
         Force = 0;
         DutyCycle = 0;
+        // The derived three as well as the measured ones. They were missed here, so a disconnect
+        // blanked the sensor readouts while leaving torque and power lit at their last values —
+        // the half of the panel most likely to be read as still current.
+        Torque = 0;
+        TorqueGeared = 0;
+        Power = 0;
         LastTimestamp = 0;
     }
 
