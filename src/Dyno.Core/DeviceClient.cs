@@ -9,6 +9,22 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Dyno.Core;
 
+/// <summary>Why a link was declared lost — which is really the question of whether waiting can undo
+/// it, and so what the consumer should do next.</summary>
+public enum LinkLoss
+{
+    /// <summary>The device stopped answering the heartbeat. Inferred, not proven: the board may be
+    /// wedged, or merely slow. The link itself is intact and still polling, so a device that comes
+    /// back re-handshakes on its own and needs nothing from the consumer.</summary>
+    Unresponsive,
+
+    /// <summary>The port failed or ended: reads on it cannot succeed again. Nothing re-enters the
+    /// read loop, and the heartbeat cannot recover it either — a ping waits for a RESPONSE, and
+    /// responses only arrive through that loop. This link is over, and getting the device back
+    /// takes a new one.</summary>
+    PortFailed,
+}
+
 /// <summary>
 /// Orchestrates a live device link: owns a serial connection, pumps its bytes through a
 /// <see cref="StreamParser"/> on a background loop, re-publishes decoded
@@ -61,10 +77,17 @@ public sealed class DeviceClient : IDisposable
     /// from the absence of errors. Fires on the heartbeat thread.</summary>
     public event Action<TimeSpan>? HeartbeatAcked;
 
-    /// <summary>Raised when the heartbeat stops getting answers: the device is no longer known to
-    /// be there. The link is left running and keeps polling, so a device that comes back re-raises
-    /// <see cref="Handshaked"/>. Fires on the heartbeat thread.</summary>
-    public event Action? ConnectionLost;
+    /// <summary>Raised when the device is no longer known to be there, carrying which of the two
+    /// things established it — see <see cref="LinkLoss"/>, because they call for different answers.
+    /// Raised once per link: whichever source gets there first clears <see cref="IsHandshaked"/>,
+    /// and the other then finds the loss already reported. Fires on the heartbeat or read-loop
+    /// thread.</summary>
+    /// <remarks>The two differ in how much they know. A silent heartbeat is inference — the board may
+    /// be wedged, or merely slow — which is why it takes <see cref="HeartbeatMissesBeforeLost"/> of
+    /// them to count, at five seconds a beat. A failed read is proof, and arrives the instant the
+    /// port does. Reporting from the read loop is what stops a certainty from waiting out the
+    /// evidence for a maybe.</remarks>
+    public event Action<LinkLoss>? ConnectionLost;
 
     /// <summary>Raised when <see cref="HandshakeTimeout"/> elapses after <see cref="Start"/> with no
     /// completed handshake — an open port with nothing (or nothing that speaks this protocol) on the
@@ -774,19 +797,14 @@ public sealed class DeviceClient : IDisposable
                 cancellationToken.ThrowIfCancellationRequested();
 
                 misses++;
-                if (IsHandshaked && misses >= HeartbeatMissesBeforeLost)
+                if (misses >= HeartbeatMissesBeforeLost)
                 {
-                    IsHandshaked = false;
-                    // A device we cannot reach is not a device we can claim is running a session:
-                    // drop the belief so a consumer stops showing that session's (now frozen) data.
-                    // Recovering it needs no edge from the device — the ack that answers the next
-                    // heartbeat re-states the session state, so a link that comes back restores it.
-                    ForgetSessionState();
-                    _log.LogError(
-                        "device missed {Misses} consecutive heartbeats; link presumed lost",
-                        misses
+                    // Recovering the session state needs no edge from the device — the ack that
+                    // answers the next heartbeat re-states it, so a link that comes back restores it.
+                    ReportLinkDropped(
+                        LinkLoss.Unresponsive,
+                        $"the device missed {misses} consecutive heartbeats"
                     );
-                    ConnectionLost?.Invoke();
                 }
             }
         }
@@ -854,28 +872,73 @@ public sealed class DeviceClient : IDisposable
             catch (Exception ex)
             {
                 _log.LogError(ex, "serial read failed; stopping read loop");
+                // Stop() cancels before it closes, and closing is what unblocks this read — so a
+                // failure with cancellation already requested is this link being torn down on
+                // purpose, and reporting the device lost would describe the user's own Disconnect
+                // as the board vanishing.
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    ReportLinkDropped(LinkLoss.PortFailed, "the serial port failed");
+                }
                 break;
             }
 
-            if (read > 0)
+            if (read == 0)
             {
-                // Before the parser, so the capture holds what the driver delivered rather than
-                // what we made of it — that separation is the whole point of the recording.
-                _rawCapture?.Record(buffer.AsSpan(0, read));
-                try
+                // End of stream, per the Stream contract. A healthy port cannot reach here: it is
+                // opened with an infinite ReadTimeout, so a port with nothing to say blocks rather
+                // than returning empty. Treating it as terminal is also what keeps this loop from
+                // spinning on a stream that will never yield another byte, which is what looping
+                // for more would do at the cost of a core.
+                _log.LogError("the serial port reported end of stream; stopping read loop");
+                if (!cancellationToken.IsCancellationRequested)
                 {
-                    _parser.Append(buffer.AsSpan(0, read));
+                    ReportLinkDropped(LinkLoss.PortFailed, "the serial port reached end of stream");
                 }
-                catch (Exception ex)
-                {
-                    // Consumer callbacks are already contained in OnParsed, so reaching here means
-                    // the parser itself faulted (a decode bug). Surface it and stop, rather than
-                    // hot-looping on the same unconsumed bytes or faulting the task silently.
-                    _log.LogError(ex, "stream parser faulted; stopping read loop");
-                    break;
-                }
+                break;
+            }
+
+            // Before the parser, so the capture holds what the driver delivered rather than
+            // what we made of it — that separation is the whole point of the recording.
+            _rawCapture?.Record(buffer.AsSpan(0, read));
+            try
+            {
+                _parser.Append(buffer.AsSpan(0, read));
+            }
+            catch (Exception ex)
+            {
+                // Consumer callbacks are already contained in OnParsed, so reaching here means
+                // the parser itself faulted (a decode bug). Surface it and stop, rather than
+                // hot-looping on the same unconsumed bytes or faulting the task silently.
+                _log.LogError(ex, "stream parser faulted; stopping read loop");
+                break;
             }
         }
+    }
+
+    /// <summary>Declares the link lost, once. Both sources come through here and guard on the same
+    /// flag: whichever gets there first clears <see cref="IsHandshaked"/>, so the other finds the
+    /// loss already reported rather than announcing it twice.</summary>
+    /// <remarks>That dedupe is why <paramref name="how"/> has to travel with the event rather than
+    /// being re-derived by the consumer. A <see cref="LinkLoss.PortFailed"/> report arrives within
+    /// microseconds of the unplug — early enough that the device node may still be listed, since
+    /// udev has not caught up — and it is the only report that will come, because the heartbeat that
+    /// would have said the same thing ten seconds later now finds the loss already reported. A
+    /// consumer left to ask "has the port gone?" at that moment can get "no" and wait forever.
+    /// </remarks>
+    private void ReportLinkDropped(LinkLoss how, string reason)
+    {
+        if (!IsHandshaked)
+        {
+            return;
+        }
+
+        IsHandshaked = false;
+        // A device we cannot hear is not one we can claim is running a session: drop the belief, so
+        // a consumer stops presenting that session's (now frozen) data as live.
+        ForgetSessionState();
+        _log.LogError("link presumed lost: {Reason}", reason);
+        ConnectionLost?.Invoke(how);
     }
 
     private void FailPending(Exception ex)

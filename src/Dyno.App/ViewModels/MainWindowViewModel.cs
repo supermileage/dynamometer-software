@@ -291,10 +291,8 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
 
         AddEvent(
             mock
-                ? "[WARN] mock data enabled — cleared the run, the readouts and the telemetry CSV. "
-                    + "Nothing from here on is a measurement"
-                : "[SESS] mock data disabled — cleared the fabricated run, the readouts and the "
-                    + "telemetry CSV; what follows is measured"
+                ? "[WARN] mock data enabled — nothing from here on is a measurement"
+                : "[SESS] mock data disabled — what follows is measured"
         );
     }
 
@@ -317,9 +315,8 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
         // the log would account for the traces having emptied themselves.
         Plots.TimeBaseRestarted += () =>
             AddEvent(
-                "[WARN] the device's timestamp counter restarted — the board most likely reset. "
-                    + "The run on the Plots page could not be continued across that, so a new one "
-                    + "started; the telemetry CSV is unaffected"
+                "[WARN] the device's timestamp counter restarted — the board most likely reset; "
+                    + "started a new run"
             );
         SysConfig = new SysConfigViewModel(() => _client);
         // The connect-time restore is the one device write the user never asked for, and the only
@@ -496,8 +493,7 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
         _telemetry.RowsDropped += n =>
             Dispatcher.UIThread.Post(() =>
                 AddEvent(
-                    $"[WARN] telemetry CSV fell behind — {n} row{(n == 1 ? "" : "s")} not "
-                        + "written (the stream, plots and readouts are unaffected)"
+                    $"[WARN] telemetry CSV fell behind — {n} row{(n == 1 ? "" : "s")} not written"
                 )
             );
     }
@@ -527,10 +523,7 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
             Detach(client); // no OnMessage runs after this, so the read loop can't touch the VM/log
             if (!await TearDownAsync(client))
             {
-                AddEvent(
-                    "[WARN] the serial port would not close — the device was most likely unplugged "
-                        + "or re-flashed while connected. Abandoned it; reconnecting is safe."
-                );
+                AddEvent("[WARN] the serial port would not close — abandoned it");
             }
         }
         // Disposed after the client so the read loop can't write a row into a closed file.
@@ -626,8 +619,7 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
 
             ConnectionStatus = "Board did not come back";
             AddEvent(
-                $"[ERR ] gave up after {RelinkWindow.TotalSeconds:F0} s waiting for the board — "
-                    + "reconnect by hand once it is back"
+                $"[ERR ] gave up after {RelinkWindow.TotalSeconds:F0} s waiting for the board"
             );
         }
         catch (OperationCanceledException)
@@ -826,33 +818,30 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
         Dispatcher.UIThread.Post(() =>
         {
             ConnectionStatus = $"No response from {SelectedPort} — still listening…";
-            AddEvent(
-                "[ERR ] no device-ready announcement; check the board is running the dyno firmware "
-                    + "and that this is the right port"
-            );
+            AddEvent("[ERR ] no device-ready announcement from the board");
         });
 
-    /// <summary>The device stopped answering the keep-alive. The link object is deliberately left
-    /// alive: it keeps polling, so a device that comes back re-handshakes on its own, and the user
-    /// still has an enabled Disconnect if it doesn't.</summary>
-    private void OnConnectionLost() =>
+    /// <summary>The link was lost, and <paramref name="how"/> says whether waiting can undo it. A
+    /// board that is merely unresponsive still owns its device node and is still being polled, so a
+    /// link that recovers on its own needs nothing from us and the client is deliberately left
+    /// alive — the user still has an enabled Disconnect if it doesn't. A port that failed cannot
+    /// recover, so that one goes looking for the board instead.</summary>
+    /// <remarks>The port's own disappearance is a second way to reach the same conclusion, and still
+    /// worth checking: it is what catches a board that re-enumerated while merely looking silent.
+    /// But it cannot be the only check. A failed read beats udev to the news often enough that the
+    /// node is frequently still listed at the moment this runs, and asking then would answer "still
+    /// there" about a board that is already gone.</remarks>
+    private void OnConnectionLost(LinkLoss how) =>
         Dispatcher.UIThread.Post(() =>
         {
-            // A board that is merely unresponsive still owns its device node, and the client keeps
-            // pinging it, so a link that recovers on its own needs nothing from us. A node that has
-            // gone means the board re-enumerated: the handle we hold refers to nothing, no amount of
-            // pinging can revive it, and the board is very likely already back under another name.
-            if (PortHasVanished())
+            if (how == LinkLoss.PortFailed || PortHasVanished())
             {
-                AddEvent(
-                    $"[ERR ] {SelectedPort} is gone from the bus — the board reset, was re-flashed "
-                        + "or was unplugged"
-                );
+                AddEvent($"[ERR ] {SelectedPort} is gone from the bus");
                 _ = RelinkAsync("Board disappeared — waiting for it to come back…");
                 return;
             }
             ConnectionStatus = $"{SelectedPort} not responding — retrying…";
-            AddEvent("[ERR ] device stopped answering the heartbeat; connection lost");
+            AddEvent("[ERR ] device stopped answering the heartbeat");
         });
 
     private void OnProtocolMismatch(uint? deviceVersion) =>
@@ -862,8 +851,8 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
             AddEvent(
                 deviceVersion is { } v
                     ? $"[ERR ] device protocol v{v} != host v{MessageConstants.USB_PROTOCOL_VERSION}; no data will stream"
-                    : $"[ERR ] device rejected host protocol v{MessageConstants.USB_PROTOCOL_VERSION}; "
-                        + "its firmware speaks a different schema, so no data will stream"
+                    : $"[ERR ] device rejected host protocol "
+                        + $"v{MessageConstants.USB_PROTOCOL_VERSION}; no data will stream"
             );
         });
 
@@ -1098,11 +1087,10 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
             AddEvent(
                 b.MissingTransfers > 0
                     ? $"[WARN] {b.MissingTransfers} USB transfer{(b.MissingTransfers == 1 ? "" : "s")} "
-                        + $"never arrived before batch #{b.Sequence} — the device sent them, the host "
-                        + "never saw them"
+                        + $"never arrived before batch #{b.Sequence}"
                     : $"[WARN] USB batch #{b.Sequence} arrived {b.Shortfall} byte"
                         + $"{(b.Shortfall == 1 ? "" : "s")} short ({b.ObservedBytes} of "
-                        + $"{b.DeclaredBytes} B) — the bytes left the firmware and were lost below it"
+                        + $"{b.DeclaredBytes} B)"
             )
         );
 
@@ -1149,7 +1137,7 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
 
         return status == usb_response_status_t.USB_RSP_OK
             ? $"[RSP ] {request} — applied by the device"
-            : $"[ERR ] {request} — REJECTED by the device ({status}); it still holds its previous value";
+            : $"[ERR ] {request} — REJECTED by the device ({status})";
     }
 
     /// <summary>True for a reply to the USB controller's own <c>USB_CMD_ACK</c> — the handshake or

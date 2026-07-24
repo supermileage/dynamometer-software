@@ -45,6 +45,12 @@ public class DeviceClientTests
         public void DeviceSend(ReadOnlySpan<byte> data) =>
             _deviceToHost.Writer.WriteAsync(data.ToArray()).AsTask().GetAwaiter().GetResult();
 
+        /// <summary>Ends the device→host direction the way a vanished port does: the pending read
+        /// fails outright with <paramref name="failure"/>, or reaches end of stream when there is
+        /// none. Both are what a real unplug can produce, and the client must not tell them apart —
+        /// either way the handle refers to a device that is no longer there.</summary>
+        public void Unplug(Exception? failure = null) => _deviceToHost.Writer.Complete(failure);
+
         public void Dispose() { }
     }
 
@@ -131,6 +137,30 @@ public class DeviceClientTests
                 }
             )
         );
+
+    /// <summary>Acks every command the host sends, so the handshake completes and stays completed —
+    /// for tests whose subject is what happens to a healthy link, not how one is established.</summary>
+    private static void AnswerEveryCommand(FakeSerial serial) =>
+        serial.OnWrite = frame =>
+        {
+            var cmd = ReadCommandHeader(frame);
+            serial.DeviceSend(
+                Wire.Message(
+                    usb_msg_type_t.USB_MSG_RESPONSE,
+                    task_offset_t.TASK_OFFSET_USB_CONTROLLER,
+                    new usb_response_data_t
+                    {
+                        opcode = cmd.opcode,
+                        msg_id = cmd.msg_id,
+                        status = (uint)usb_response_status_t.USB_RSP_OK,
+                    }
+                )
+            );
+        };
+
+    /// <summary>Waits for a condition the read loop reaches on its own thread.</summary>
+    private static bool SpinUntil(Func<bool> condition) =>
+        SpinWait.SpinUntil(condition, TimeSpan.FromSeconds(5));
 
     /// <summary>A client whose heartbeat runs fast enough to assert on in a test.</summary>
     private static DeviceClient FastHeartbeatClient(FakeSerial serial) =>
@@ -380,13 +410,113 @@ public class DeviceClientTests
         };
 
         using var lost = new ManualResetEventSlim();
-        client.ConnectionLost += () => lost.Set();
+        LinkLoss how = default;
+        client.ConnectionLost += reason =>
+        {
+            how = reason;
+            lost.Set();
+        };
 
         client.Start();
         AnnounceReady(serial);
 
         Assert.True(lost.Wait(TimeSpan.FromSeconds(5)), "a silent device was never reported lost");
         Assert.False(client.IsHandshaked);
+        // A board behind a port that is still open and still there: silence is all we know.
+        Assert.Equal(LinkLoss.Unresponsive, how);
+    }
+
+    /// <summary>The heartbeat is the slow path to the same verdict — two misses of a five-second
+    /// beat, so five to ten seconds of a link the port already knows is dead. These two assert the
+    /// read loop reports it on the spot instead, which is the whole point of it reporting at all.
+    /// A default client is used deliberately: with the real heartbeat interval, nothing but the read
+    /// loop can produce this event inside the test's timeout.</summary>
+    [Fact]
+    public void ReadLoop_ReportsConnectionLost_WhenThePortFails()
+    {
+        using var serial = new FakeSerial();
+        using var client = new DeviceClient(serial);
+        AnswerEveryCommand(serial);
+
+        using var lost = new ManualResetEventSlim();
+        LinkLoss how = default;
+        client.ConnectionLost += reason =>
+        {
+            how = reason;
+            lost.Set();
+        };
+
+        client.Start();
+        AnnounceReady(serial);
+        Assert.True(SpinUntil(() => client.IsHandshaked), "the link never handshaked");
+
+        serial.Unplug(new IOException("device removed"));
+
+        Assert.True(
+            lost.Wait(TimeSpan.FromSeconds(2)),
+            "a port that failed outright was not reported lost"
+        );
+        Assert.False(client.IsHandshaked);
+        // Not merely silent: the consumer must be told this link is over, because a port that is
+        // still listed for the moment would otherwise read as a board that might yet answer.
+        Assert.Equal(LinkLoss.PortFailed, how);
+    }
+
+    [Fact]
+    public void ReadLoop_ReportsConnectionLost_WhenThePortReachesEndOfStream()
+    {
+        using var serial = new FakeSerial();
+        using var client = new DeviceClient(serial);
+        AnswerEveryCommand(serial);
+
+        using var lost = new ManualResetEventSlim();
+        LinkLoss how = default;
+        client.ConnectionLost += reason =>
+        {
+            how = reason;
+            lost.Set();
+        };
+
+        client.Start();
+        AnnounceReady(serial);
+        Assert.True(SpinUntil(() => client.IsHandshaked), "the link never handshaked");
+
+        serial.Unplug();
+
+        Assert.True(
+            lost.Wait(TimeSpan.FromSeconds(2)),
+            "a port at end of stream was not reported lost"
+        );
+        Assert.False(client.IsHandshaked);
+        // Not merely silent: the consumer must be told this link is over, because a port that is
+        // still listed for the moment would otherwise read as a board that might yet answer.
+        Assert.Equal(LinkLoss.PortFailed, how);
+    }
+
+    /// <summary>Stopping the link kills the read loop too — by closing the port under it, which is
+    /// the same failure an unplug produces. Only the cancellation that preceded it says which one
+    /// happened, so this asserts the difference is actually drawn: a Disconnect the user asked for
+    /// must not be reported back to them as the board disappearing.</summary>
+    [Fact]
+    public void ReadLoop_ReportsNothing_WhenTheLinkIsStoppedOnPurpose()
+    {
+        using var serial = new FakeSerial();
+        using var client = new DeviceClient(serial);
+        AnswerEveryCommand(serial);
+
+        int lost = 0;
+        client.ConnectionLost += _ => Interlocked.Increment(ref lost);
+
+        client.Start();
+        AnnounceReady(serial);
+        Assert.True(SpinUntil(() => client.IsHandshaked), "the link never handshaked");
+
+        client.Stop();
+        // Stop() joins the read loop, so by here it has already exited; the wait is for a report
+        // posted from it on the way out, which would arrive just after.
+        Thread.Sleep(100);
+
+        Assert.Equal(0, Volatile.Read(ref lost));
     }
 
     [Fact]
@@ -421,7 +551,7 @@ public class DeviceClientTests
 
         using var lost = new ManualResetEventSlim();
         using var handshaked = new CountdownEvent(2); // initial handshake, then the recovery
-        client.ConnectionLost += () => lost.Set();
+        client.ConnectionLost += _ => lost.Set();
         client.Handshaked += () =>
         {
             if (!handshaked.IsSet)
