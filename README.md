@@ -17,6 +17,21 @@ schema and the C# message types are generated from that same schema (see
 | `tests/Dyno.Core.Tests/` | xUnit tests (struct sizes, CRC, error decode, parser). |
 | `tools/message_gen/` | YAML → C# codegen + drift guard. See [README](tools/message_gen/README.md). |
 | `firmware/` | STM32 firmware — the wire-protocol **source of truth**. See [README](firmware/README.md). |
+| `firmware/third_party/STM32CubeH7` | ST's firmware pack, vendored as a **submodule**. Only needed to regenerate the firmware's HAL — never to build. See [README](firmware/README.md#the-firmware-pack-no-st-account-needed). |
+
+## Cloning
+A **plain clone** is all you need — for the app and for the firmware alike:
+```bash
+git clone <repository-url>
+```
+The repo has exactly one submodule, `firmware/third_party/STM32CubeH7` (ST's HAL
+package). It is needed *only* to regenerate the firmware from its `.ioc`; the
+generated HAL is committed, so nothing here requires it to build. It is also ~2 GB,
+and `firmware/Scripts/regen-cube.sh` initialises it on demand — so **don't** clone
+with `--recurse-submodules`, and never run
+`git submodule update --init --recursive`, which drags in the pack's own ~40
+eval-board BSP sub-submodules that nothing uses. Details:
+[firmware/README.md](firmware/README.md#the-firmware-pack-no-st-account-needed).
 
 ## Requirements
 | Tool | Purpose | Install (Fedora) | Install (Ubuntu/Debian) | Install (Windows) |

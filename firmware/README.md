@@ -86,6 +86,20 @@ STM32CubeMX, click **Generate Code** to refresh the HAL/driver sources and
 `cmake/stm32cubemx/CMakeLists.txt`. Your edits in the top-level `CMakeLists.txt`
 (and inside `USER CODE BEGIN/END` blocks) are preserved.
 
+### Two separate things, two separate versions
+Regenerating needs **both** of these, and the `.ioc` pins them independently. They
+are easy to confuse — the submodule solves the second one only:
+
+| | What it is | Pinned in the `.ioc` by | Where it comes from |
+|---|---|---|---|
+| **STM32CubeMX** | The *program* that generates the code | `MxCube.Version=6.15.0` | **Manual install**, one-off (1.7 GB, free myST account) |
+| **STM32Cube FW_H7** | The *HAL/driver sources* it copies from | `ProjectManager.FirmwarePackage=STM32Cube FW_H7 V1.12.1` | **The `STM32CubeH7` submodule** — public, no account |
+
+The analogy: CubeMX is the *compiler*, FW_H7 is the *library source*. Vendoring the
+pack as a submodule removed the ST login for the **library**; the **program** still
+has to be installed by hand, because ST's licence forbids redistributing it. Both
+versions must match what the `.ioc` names — see the [warning below](#the-firmware-pack-no-st-account-needed).
+
 ### One-time setup to regenerate
 Only needed by people who actually regenerate — building requires none of this.
 1. **Install STM32CubeMX 6.15.0.** The version selector on
@@ -208,6 +222,9 @@ live in a public image. It stays **skipped** until you point it at a private ima
 Once both are set the job runs on every push/PR; leave them unset and it's a no-op.
 
 ## Notes
-- Ensure all submodules are initialized and updated before building.
+- **Don't initialise submodules to build.** The repo's one submodule
+  (`third_party/STM32CubeH7`, the firmware pack) is needed *only* to regenerate from
+  the `.ioc` — the generated HAL is committed, so a plain clone builds. See
+  [Cloning](#cloning-the-repository).
 - The build is IDE-independent. The project can still be opened in STM32CubeIDE
   1.15+ via **File → Import → Import CMake Project**, but that is optional.

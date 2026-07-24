@@ -9,6 +9,8 @@ the **host** (not inside the Docker build container).
 | `build-docker.ps1` | The same Docker build on Windows (PowerShell). |
 | `flash.sh` | Flash a built image on Linux/macOS/Git-Bash. |
 | `flash.ps1` | Flash a built image on Windows (PowerShell). |
+| `regen-cube.sh` | Regenerate the HAL from the `.ioc` by driving STM32CubeMX headlessly (Linux/macOS/Git-Bash). |
+| `regen-cube.ps1` | The same headless regeneration on Windows (PowerShell). |
 | `99-stm32-flash.rules` | udev rules for non-root USB flashing on Linux. |
 
 ---
@@ -32,6 +34,36 @@ artifacts are identical either way.
 The toolchain image is Linux-based: on Windows, Docker Desktop must be in Linux
 container mode (the default). The PowerShell script checks this up front and
 tells you how to switch if it isn't.
+
+---
+
+## Regenerating from the `.ioc`
+
+Only needed after editing `stm32_dyno_firmware_v2.ioc` — **building needs none of
+this**, since the generated HAL is committed.
+
+```bash
+./Scripts/regen-cube.sh              # auto-find CubeMX and the .ioc
+./Scripts/regen-cube.sh --check      # regenerate, then fail on drift (what CI runs)
+```
+```powershell
+.\Scripts\regen-cube.ps1
+.\Scripts\regen-cube.ps1 -Check
+```
+
+These need two things, and the `.ioc` pins the version of each:
+
+- **STM32CubeMX 6.15.0** — the generator program. A **manual one-off install**
+  (free myST account); ST's licence forbids vendoring it. Point the scripts at it
+  with `--cubemx <path>` / `-Cubemx <path>` or `$STM32CUBEMX` if it isn't found.
+- **The `STM32Cube FW_H7 V1.12.1` pack** — the HAL sources. **Vendored as the
+  `third_party/STM32CubeH7` submodule**, so no ST account is needed for it. The
+  scripts initialise it on demand and link it into CubeMX's repository themselves.
+
+Both versions must match what the `.ioc` names, or CubeMX raises a migration prompt
+that nothing can answer headlessly and the run hangs silently. Full detail —
+including why the pack is a submodule and why `--recursive` is the wrong way to
+fetch it — is in [../README.md](../README.md#regenerating-code-from-the-ioc).
 
 ---
 
