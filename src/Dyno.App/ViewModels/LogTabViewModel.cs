@@ -29,7 +29,7 @@ public partial class LogTabViewModel : ObservableObject
     public bool Colorize { get; }
 
     /// <summary>Newest line at the top (events, inserted at index 0) versus appended at the bottom
-    /// and followed (console). Decides both the read order and whether the view tails the list.</summary>
+    /// (console). Decides both the read order and which end of the list the view follows.</summary>
     public bool NewestFirst { get; }
 
     /// <summary>Shown in place of the list while it is empty.</summary>
