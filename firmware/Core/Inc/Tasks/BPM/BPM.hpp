@@ -32,7 +32,7 @@ class BPM
 		void Run();
 
 	private:
-		void SetDutyCycle(float new_duty_cycle_percent);
+		float SetDutyCycle(float new_duty_cycle_percent);
 		bool TogglePWM(bool enable);
 
 		CircularBufferWriter<bpm_output_data> _data_buffer_writer;

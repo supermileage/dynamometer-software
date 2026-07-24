@@ -1,0 +1,62 @@
+{#- The host-side fault catalog: one row per value of every *_error_ids enum in the
+    schema. error_msg_generate.py has already packed each code (task offset | number),
+    stripped the severity prefix off each name and quoted each description, so this
+    template only lays out C#. Unlike the sysconfig catalog, the row type is generated
+    here too: it carries no behaviour worth hand-writing, only the five things the
+    schema already says. -#}
+// AUTO-GENERATED from tools/message_gen/schema/{{ schema_name }} by tools/message_gen/error_msg_generate.py -- DO NOT EDIT.
+// Every error and warning the firmware can report, with the sentence the app shows for it.
+// Both the code and its description come from that schema in the firmware/ tree: add a
+// fault there, with its `description:`, then run tools/message_gen/error_msg_generate.py
+// (CI verifies the committed file matches).
+
+namespace Dyno.Core.Messages;
+
+/// <summary>One fault the firmware can report.</summary>
+/// <param name="Code">The packed 32-bit code as it arrives from the board: task offset,
+/// warning flag, and the task-local number. Unique across every task, which is what makes
+/// it the lookup key -- the number alone is reused by every task that defines one.</param>
+/// <param name="Task">The task that reports it.</param>
+/// <param name="Name">The schema's name for it, without its <c>ERROR_</c>/<c>WARNING_</c>
+/// prefix. Kept as the source identifier rather than turned into prose so a line in the
+/// event log greps straight back to the firmware that emitted it.</param>
+/// <param name="IsWarning">True when the warning flag is set: something was lost or
+/// retried, but the board carries on. False means a task gave up.</param>
+/// <param name="Description">What happened and what it means for the run, written for
+/// whoever is looking at the rig.</param>
+public readonly record struct ErrorMessageDef(
+    uint Code,
+    task_offset_t Task,
+    string Name,
+    bool IsWarning,
+    string Description
+);
+
+/// <summary>Every fault this firmware contract defines, in schema order.</summary>
+public static class ErrorCatalog
+{
+    public static IReadOnlyList<ErrorMessageDef> All { get; } =
+        new ErrorMessageDef[]
+        {
+{% for f in faults %}
+            // {{ f.enum_name }}.{{ f.member }}
+            new(
+                {{ f.code }},
+                task_offset_t.{{ f.task }},
+                {{ f.name }},
+                {{ f.is_warning }},
+                {{ f.description }}
+            ),
+{% endfor %}
+        };
+
+    private static readonly Dictionary<uint, ErrorMessageDef> ByCode = All.ToDictionary(f =>
+        f.Code
+    );
+
+    /// <summary>The catalog entry for a packed error code, or null when this build has
+    /// never heard of it -- a board running newer firmware than the app. Callers fall back
+    /// to printing the raw number, which is still true and still greppable.</summary>
+    public static ErrorMessageDef? Find(uint code) =>
+        ByCode.TryGetValue(code, out var def) ? def : null;
+}

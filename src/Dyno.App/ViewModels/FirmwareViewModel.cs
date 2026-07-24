@@ -27,6 +27,7 @@ public partial class FirmwareViewModel : ObservableObject
 
     private readonly Func<IReadOnlyList<ConfigOverride>> _savedOverrides;
     private readonly Func<int> _unappliedEdits;
+    private readonly IDeviceLinkGate? _link;
     private readonly string? _firmwareDirectory;
     private readonly string? _configDirectory;
 
@@ -170,11 +171,13 @@ public partial class FirmwareViewModel : ObservableObject
 
     public FirmwareViewModel(
         Func<IReadOnlyList<ConfigOverride>> savedOverrides,
-        Func<int> unappliedEdits
+        Func<int> unappliedEdits,
+        IDeviceLinkGate? link = null
     )
     {
         _savedOverrides = savedOverrides;
         _unappliedEdits = unappliedEdits;
+        _link = link;
         _firmwareDirectory = FirmwareConfigLocator.FindFirmwareDirectory();
         _configDirectory = FirmwareConfigLocator.FindConfigDirectory();
 
@@ -199,7 +202,7 @@ public partial class FirmwareViewModel : ObservableObject
 
         OverridesSummary = Overrides.Count switch
         {
-            0 => "No compile-time overrides saved — this builds config.h and debug.h as they are.",
+            0 => "No compile-time overrides saved — this builds the firmware's own settings.",
             1 => "1 compile-time setting from the Config page will be built in:",
             var n => $"{n} compile-time settings from the Config page will be built in:",
         };
@@ -310,21 +313,67 @@ public partial class FirmwareViewModel : ObservableObject
             );
         }
 
-        await ExecuteAsync(
-            "Flashing",
-            FirmwareCommands.Flash(
-                _firmwareDirectory,
-                new FlashRequest(
-                    SelectedMethod.Method,
-                    SelectedTool,
-                    SelectedBuild,
-                    Serial,
-                    Index,
-                    Port,
-                    Baud
+        // Get the link off the board first. Programming it over the same USB the link is holding
+        // open breaks that link either way — the port stops answering, and the reset at the end of
+        // a flash takes the device node with it — so the only choice is whether it happens in an
+        // order we control. Suspend reports whether there was a link, which is what decides whether
+        // to bring one back: a flash the user started with nothing connected should leave it that
+        // way rather than helpfully connecting to a board they were only programming.
+        bool resume = _link is not null && await _link.SuspendAsync();
+        try
+        {
+            await ExecuteAsync(
+                "Flashing",
+                FirmwareCommands.Flash(
+                    _firmwareDirectory,
+                    new FlashRequest(
+                        SelectedMethod.Method,
+                        SelectedTool,
+                        SelectedBuild,
+                        Serial,
+                        Index,
+                        Port,
+                        Baud
+                    )
                 )
-            )
-        );
+            );
+        }
+        finally
+        {
+            if (resume)
+            {
+                // In a finally, so a flash that failed or was cancelled still gets the link back.
+                // The board is on the bus either way, and having to reconnect by hand because the
+                // flash errored is the pointless half of the original problem.
+                await ReconnectAsync();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Waits out the board's restart and puts the link back. Stays busy while it does: the page's
+    /// buttons are live again the moment <see cref="ExecuteAsync"/> returns, and a second Flash
+    /// started while this is still polling would begin programming the board just as the watcher
+    /// reconnects to it — with nothing connected at that moment, the flash would not know to
+    /// release the link it is about to break.
+    /// </summary>
+    private async Task ReconnectAsync()
+    {
+        IsBusy = true;
+        BusyText = "Reconnecting…";
+        _running = new CancellationTokenSource();
+        Append("Waiting for the board to restart, then reconnecting…");
+        try
+        {
+            await _link!.ResumeAsync(_running.Token);
+        }
+        finally
+        {
+            _running.Dispose();
+            _running = null;
+            IsBusy = false;
+            BusyText = string.Empty;
+        }
     }
 
     /// <summary>Ask the chosen tool what it can see and turn the answer into a list the user clicks,

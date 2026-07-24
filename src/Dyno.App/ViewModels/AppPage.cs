@@ -5,6 +5,8 @@ namespace Dyno.App.ViewModels;
 public enum AppPage
 {
     Home,
+    Plots,
     SysConfig,
     Firmware,
+    Settings,
 }

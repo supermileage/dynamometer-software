@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -65,6 +66,23 @@ public partial class SysConfigViewModel : ObservableObject
     /// <summary>Compile-time section cards currently visible, in file order.</summary>
     public ObservableCollection<ConfigCategoryViewModel> FilteredCategories { get; } = new();
 
+    /// <summary>The constants this PC derives torque, power and gearing from. They sit on this page
+    /// beside the device's parameters because that is where a user looks for "the dyno's numbers",
+    /// but they are host-only: nothing in the firmware reads them, and nothing is pushed.</summary>
+    public ObservableCollection<PcConstantViewModel> PcConstants { get; } = new();
+
+    /// <summary>Raised after Apply commits a PC constant, so the derivation picks up the new value
+    /// without waiting for a reconnect.</summary>
+    public event Action? PcConstantsChanged;
+
+    public const string MomentOfInertiaName = "MOMENT_OF_INERTIA_KG_M2";
+    public const string ForceLeverArmName = "DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M";
+    public const string GearRatioName = "GEAR_RATIO";
+
+    /// <summary>The value in force for a PC constant, or its default when unknown.</summary>
+    public double PcConstant(string name) =>
+        PcConstants.FirstOrDefault(c => c.Name == name)?.Value ?? 1.0;
+
     [ObservableProperty]
     private string _searchText = string.Empty;
 
@@ -72,10 +90,18 @@ public partial class SysConfigViewModel : ObservableObject
     [ObservableProperty]
     private string _runtimeStatusText = string.Empty;
 
-    /// <summary>Compile-time section: where the headers came from, how a save went, or why
+    /// <summary>Compile-time section: how many settings were found, how a save went, or why
     /// loading failed.</summary>
     [ObservableProperty]
     private string _statusText = string.Empty;
+
+    /// <summary>PC-constants section: what the last Apply did with them, or why it could not. Empty
+    /// the rest of the time, and hidden while it is — the section needs no standing caption. Its own
+    /// line rather than sharing the runtime one, because the two sections answer different questions
+    /// — nothing here is ever sent to a device, so "applied to the device" would be the wrong
+    /// reassurance and its absence would read as a failure.</summary>
+    [ObservableProperty]
+    private string _pcStatusText = string.Empty;
 
     [ObservableProperty]
     private bool _loadFailed;
@@ -92,6 +118,12 @@ public partial class SysConfigViewModel : ObservableObject
 
     public string PendingSummary =>
         PendingCount == 1 ? "1 pending change" : $"{PendingCount} pending changes";
+
+    /// <summary>The effective value of a named compile-time <c>#define</c>: the override saved on
+    /// this PC if there is one, else what the header declares. Null when the headers could not be
+    /// loaded or no such define exists.</summary>
+    public string? CompileTimeValue(string name) =>
+        _parameters.FirstOrDefault(p => p.Name == name)?.SavedValue;
 
     public SysConfigViewModel(Func<DeviceClient?> getClient, string? databasePath = null)
     {
@@ -111,7 +143,7 @@ public partial class SysConfigViewModel : ObservableObject
         {
             _store = new SysConfigStore(databasePath);
             saved = _store.LoadAll();
-            RuntimeStatusText = $"Values persist in {_store.DatabasePath} and re-apply on connect";
+            RuntimeStatusText = "Values persist on this PC and re-apply on connect";
         }
         catch (Exception ex)
         {
@@ -132,7 +164,274 @@ public partial class SysConfigViewModel : ObservableObject
                 )
             );
         }
+
+        BuildPcConstants();
     }
+
+    private void BuildPcConstants()
+    {
+        IReadOnlyDictionary<string, double> saved;
+        try
+        {
+            saved = _store?.LoadAllPcConstants() ?? new Dictionary<string, double>();
+        }
+        catch
+        {
+            saved = new Dictionary<string, double>();
+        }
+
+        // Only the failure is worth a line. Where the values are kept is this app's business, not
+        // something the user has to know to use the page, and it pushed the constants themselves
+        // further down the page to say it.
+        PcStatusText = _store is null
+            ? "Settings database unavailable — edits won't outlast this session"
+            : string.Empty;
+
+        void Add(
+            string name,
+            string label,
+            string unit,
+            string description,
+            double min,
+            double max,
+            double fallback
+        ) =>
+            PcConstants.Add(
+                new PcConstantViewModel(
+                    name,
+                    label,
+                    unit,
+                    description,
+                    min,
+                    max,
+                    fallback,
+                    saved.TryGetValue(name, out var value) ? value : null,
+                    Recount
+                )
+            );
+
+        Add(
+            ForceLeverArmName,
+            "Force sensor lever arm",
+            "m",
+            "Distance from the force sensor to the shaft centre. A longer arm means more torque for the same measured force.",
+            1.0e-6,
+            1000.0,
+            0.1
+        );
+        Add(
+            MomentOfInertiaName,
+            "Moment of inertia",
+            "kg·m²",
+            "Rotating assembly's moment of inertia. Leave at 0 until it has been measured: the torque then counts only the force at the arm, ignoring what it takes to spin the rotor up.",
+            0.0,
+            1.0e6,
+            0.0
+        );
+        Add(
+            GearRatioName,
+            "Gear ratio",
+            "",
+            "Sensed shaft to output ratio; 1.0 is direct drive. The geared readouts trade one for the other: torque is multiplied by this, speed divided by it.",
+            1.0e-6,
+            1000.0,
+            1.0
+        );
+    }
+
+    private int SavePcConstants()
+    {
+        var saved = 0;
+        foreach (var constant in PcConstants.Where(c => c.IsDirty).ToList())
+        {
+            if (constant.ParsedValue is not double value)
+            {
+                continue;
+            }
+            _store?.SavePcConstant(constant.Name, value);
+            constant.MarkSaved();
+            saved++;
+        }
+        if (saved > 0)
+        {
+            PcStatusText =
+                $"Saved {Wording.Count(saved, "constant")} on this PC — the readouts and plots "
+                + "derive from the new value starting with the next sample";
+            PcConstantsChanged?.Invoke();
+        }
+        return saved;
+    }
+
+    // ---- Import / export of the whole page as JSON ----------------------------------------------
+
+    /// <summary>Everything this page holds, as it stands now — the values in force, not the ones
+    /// staged in the boxes. Exporting what you have applied rather than what you have typed is what
+    /// makes the file a description of a configuration rather than of a half-finished edit.
+    /// </summary>
+    public ConfigBundle CurrentConfiguration() =>
+        new(
+            _runtimeParameters.ToDictionary(p => p.Name, p => p.SavedValue, StringComparer.Ordinal),
+            PcConstants.ToDictionary(c => c.Name, c => c.Value, StringComparer.Ordinal),
+            _parameters.ToDictionary(p => p.Name, p => p.SavedValue, StringComparer.Ordinal)
+        );
+
+    /// <summary>
+    /// Loads a bundle into the page. Every setting the page knows is given a value: the file's, if
+    /// it has a usable one, otherwise the setting's own default. Nothing is saved or sent — the
+    /// values are staged exactly as if typed, so the pending count says how much the file changed
+    /// and Apply is still the only thing that commits it.
+    /// </summary>
+    /// <returns>Lines for the event log: what the file did not supply, and what in it could not be
+    /// used. An import that covers everything cleanly returns nothing.</returns>
+    /// <remarks>Staging rather than applying is deliberate. An import can come from a file someone
+    /// else wrote, and a runtime value goes to a connected board the moment it is applied — so the
+    /// user gets to look at what arrived, on a page that marks every changed row, before any of it
+    /// reaches hardware.</remarks>
+    public IReadOnlyList<string> ApplyImported(ConfigBundle bundle)
+    {
+        var report = new List<string>();
+        var missingRuntime = new List<string>();
+        var missingPc = new List<string>();
+        var missingCompileTime = new List<string>();
+
+        foreach (var parameter in _runtimeParameters)
+        {
+            if (!bundle.Runtime.TryGetValue(parameter.Name, out var value))
+            {
+                missingRuntime.Add(parameter.Name);
+                StageRuntimeDefault(parameter);
+            }
+            else if (!parameter.Def.IsValid(value))
+            {
+                // Out of the firmware's range, so it would be refused with MALFORMED. Treated like
+                // an absent value rather than staged as an invalid one, which would leave the page
+                // un-appliable until the user found and fixed the row by hand.
+                report.Add(
+                    $"[WARN] config import: {parameter.Name} = {parameter.Def.Format(value)} is "
+                        + $"outside {parameter.Def.Format(parameter.Def.Min)} to "
+                        + $"{parameter.Def.Format(parameter.Def.Max)}"
+                );
+                StageRuntimeDefault(parameter);
+            }
+            else
+            {
+                parameter.Text = parameter.Def.Format(value);
+            }
+        }
+
+        foreach (var constant in PcConstants)
+        {
+            if (bundle.PcConstants.TryGetValue(constant.Name, out var value))
+            {
+                constant.EditedText = value.ToString(CultureInfo.InvariantCulture);
+            }
+            else
+            {
+                missingPc.Add(constant.Name);
+                constant.ResetCommand.Execute(null);
+            }
+        }
+
+        foreach (var parameter in _parameters)
+        {
+            if (bundle.CompileTime.TryGetValue(parameter.Name, out var value))
+            {
+                if (parameter.IsBool)
+                {
+                    parameter.IsOn = value is "1" or "true" or "True";
+                }
+                else
+                {
+                    parameter.Text = value;
+                }
+            }
+            else
+            {
+                missingCompileTime.Add(parameter.Name);
+                parameter.ResetCommand.Execute(null);
+            }
+        }
+
+        // Names in the file that this build has nothing to put them in — a typo, or a file from a
+        // firmware with settings this one does not have. Worth saying: silently dropping them is
+        // how someone concludes the import worked and the value did not take.
+        report.AddRange(
+            Unknown(
+                bundle.Runtime.Keys,
+                _runtimeParameters.Select(p => p.Name),
+                "runtime parameter"
+            )
+        );
+        report.AddRange(
+            Unknown(bundle.PcConstants.Keys, PcConstants.Select(c => c.Name), "PC constant")
+        );
+        report.AddRange(
+            Unknown(
+                bundle.CompileTime.Keys,
+                _parameters.Select(p => p.Name),
+                "compile-time setting"
+            )
+        );
+
+        report.AddRange(Missing(missingRuntime, "runtime parameter"));
+        report.AddRange(Missing(missingPc, "PC constant"));
+        report.AddRange(Missing(missingCompileTime, "compile-time setting"));
+
+        Recount();
+        ApplyFilter();
+        return report;
+    }
+
+    /// <summary>Puts a runtime parameter back on the firmware default. A staged reset is the way to
+    /// say "no override" — but only when there is one to drop, since requesting a reset on a
+    /// parameter already running the default would mark the row changed with nothing to change.
+    /// </summary>
+    private static void StageRuntimeDefault(RuntimeParameterViewModel parameter)
+    {
+        if (parameter.IsOverride)
+        {
+            parameter.ResetCommand.Execute(null);
+        }
+    }
+
+    /// <summary>One line naming what the file left out, rather than one line each. A partial file is
+    /// the normal case — a few parameters pasted from somewhere — and a line per untouched setting
+    /// would be eighty of them, burying both the real warnings here and whatever the log already
+    /// held. Long lists are cut short, because a line nobody can read to the end is no better.
+    /// </summary>
+    private static IEnumerable<string> Missing(IReadOnlyList<string> names, string kind) =>
+        names.Count == 0
+            ? []
+            :
+            [
+                $"[WARN] config import: {Wording.Count(names.Count, kind)} not in the file: "
+                    + NameList(names),
+            ];
+
+    private static IEnumerable<string> Unknown(
+        IEnumerable<string> fileNames,
+        IEnumerable<string> known,
+        string kind
+    )
+    {
+        var unknown = fileNames.Except(known, StringComparer.Ordinal).ToList();
+        return unknown.Count == 0
+            ? []
+            :
+            [
+                $"[WARN] config import: {Wording.Count(unknown.Count, kind)} not in this build: "
+                    + NameList(unknown),
+            ];
+    }
+
+    /// <summary>How many names a warning spells out before it stops counting them.</summary>
+    private const int NamesListed = 12;
+
+    private static string NameList(IReadOnlyList<string> names) =>
+        names.Count <= NamesListed
+            ? string.Join(", ", names)
+            : string.Join(", ", names.Take(NamesListed))
+                + $", and {names.Count - NamesListed} more";
 
     private bool CanApply => PendingCount > 0;
 
@@ -146,10 +445,14 @@ public partial class SysConfigViewModel : ObservableObject
     {
         var savedRuntime = SaveRuntime();
         SaveCompileTime();
+        SavePcConstants();
 
         if (savedRuntime > 0)
         {
             RuntimeStatusText = $"Saved {Wording.Count(savedRuntime, "change")} on this PC";
+            // Announced before the push rather than after it: the sync can take a moment or fail
+            // outright, and a mirror of a saved value should track what was saved.
+            RuntimeSettingsChanged?.Invoke();
             await SyncDeviceAsync(ConnectedClient(), announce: true);
         }
     }
@@ -211,8 +514,8 @@ public partial class SysConfigViewModel : ObservableObject
         if (saved > 0)
         {
             StatusText =
-                $"Saved {Wording.Count(saved, "compile-time setting")} on this PC — the firmware still "
-                + "builds from config.h / debug.h, so nothing on the board has changed";
+                $"Saved {Wording.Count(saved, "compile-time setting")} on this PC — nothing on the "
+                + "board has changed until it is rebuilt and flashed";
         }
     }
 
@@ -310,6 +613,19 @@ public partial class SysConfigViewModel : ObservableObject
     private Dictionary<sysconfig_param_t, double> SavedValues() =>
         _runtimeParameters.ToDictionary(p => p.Def.Id, p => p.SavedValue);
 
+    /// <summary>
+    /// The value this PC holds for one runtime parameter — which is also the value any connected
+    /// device is running, since it is pushed after every handshake and re-pushed whenever it
+    /// changes. Falls back to the firmware default for a parameter this build does not know.
+    /// </summary>
+    public double RuntimeValue(sysconfig_param_t id) =>
+        _runtimeParameters.FirstOrDefault(p => p.Def.Id == id)?.SavedValue
+        ?? SysConfigCatalog.Get(id).Default;
+
+    /// <summary>Raised after Apply has persisted new runtime values, for anything that mirrors one
+    /// outside this page. Fires once per Apply, not once per parameter.</summary>
+    public event Action? RuntimeSettingsChanged;
+
     /// <summary>Status lines can come off the handshake thread, so they are marshalled.</summary>
     private void Report(string status) =>
         Dispatcher.UIThread.Post(() => RuntimeStatusText = status);
@@ -328,12 +644,34 @@ public partial class SysConfigViewModel : ObservableObject
         _getClient() is { IsHandshaked: true } client ? client : null;
 
     private void Recount() =>
-        PendingCount = _runtimeParameters.Count(p => p.IsDirty) + _parameters.Count(p => p.IsDirty);
+        PendingCount =
+            _runtimeParameters.Count(p => p.IsDirty)
+            + _parameters.Count(p => p.IsDirty)
+            + PcConstants.Count(c => c.IsDirty);
 
-    /// <summary>Re-reads the headers, discarding staged edits to them. Saved values survive: they
-    /// live in the database, not in the files.</summary>
-    [RelayCommand]
-    private void Reload() => Load();
+    /// <summary>
+    /// Re-reads the firmware's headers if it can be done without cost to the user, so the page
+    /// cannot go on showing what a file said at startup. Called when the page is opened.
+    /// </summary>
+    /// <remarks>
+    /// This replaced a Reload button, which was easy to read as the opposite of Apply and is not:
+    /// Apply saves what you typed, this re-reads what the firmware source says. The reason it has
+    /// to happen at all is that the headers are read once, at startup, and nothing in the app
+    /// writes them — so a pull, a branch switch, or an edit in another editor leaves the page
+    /// describing a firmware that is no longer there.
+    ///
+    /// Skipped outright while any compile-time edit is staged, because re-reading rebuilds the rows
+    /// and would throw that edit away. Losing typed work to a navigation would be a far worse
+    /// surprise than a value that is briefly stale, and the next visit after an Apply picks it up.
+    /// </remarks>
+    public void RefreshFromDisk()
+    {
+        if (_parameters.Any(p => p.IsDirty))
+        {
+            return;
+        }
+        Load();
+    }
 
     private void Load()
     {
@@ -357,7 +695,7 @@ public partial class SysConfigViewModel : ObservableObject
                 LoadFile(dir, "config.h", saved, binaryTogglesAreBool: false);
                 LoadFile(dir, "debug.h", saved, binaryTogglesAreBool: true);
                 LoadFailed = false;
-                StatusText = $"{_parameters.Count} compile-time settings — {dir}";
+                StatusText = $"{_parameters.Count} compile-time settings";
             }
             catch (Exception ex)
             {
@@ -445,7 +783,6 @@ public partial class SysConfigViewModel : ObservableObject
                     new ConfigCategoryViewModel
                     {
                         Name = group.Key.Category.Length > 0 ? group.Key.Category : "Other",
-                        FileLabel = group.Key.FileLabel,
                         Parameters = visible,
                     }
                 );

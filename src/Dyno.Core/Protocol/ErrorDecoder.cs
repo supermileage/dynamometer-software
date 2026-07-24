@@ -15,6 +15,10 @@ public readonly record struct DecodedError(
 );
 
 /// <summary>Decodes the packed <c>error_code</c> per the scheme documented in the schema.</summary>
+/// <remarks>Only the unpacking lives here. What a code <em>means</em> — its name and the sentence
+/// shown for it — comes from <see cref="ErrorCatalog"/>, generated from the same schema and keyed
+/// on <see cref="DecodedError.Raw"/>: the number on its own is task-local and says nothing, so the
+/// packed code is the only sound lookup key.</remarks>
 public static class ErrorDecoder
 {
     public static DecodedError Decode(uint errorCode) =>

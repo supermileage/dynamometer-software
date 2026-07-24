@@ -30,9 +30,9 @@ USBController::USBController(osMessageQueueId_t sessionControllerToUsbController
                              osMessageQueueId_t forceSensorCommandQueue,
                              osMessageQueueId_t taskCompletionQueue)
     : _task_errors_buffer_reader(task_error_circular_buffer, &task_error_circular_buffer_index_writer, TASK_ERROR_CIRCULAR_BUFFER_SIZE),
-        _buffer_reader_optical_encoder(optical_encoder_circular_buffer, &optical_encoder_circular_buffer_index_writer, BPM_CIRCULAR_BUFFER_SIZE),
+      _buffer_reader_optical_encoder(optical_encoder_circular_buffer, &optical_encoder_circular_buffer_index_writer, OPTICAL_ENCODER_CIRCULAR_BUFFER_SIZE),
       _buffer_reader_forcesensor(forcesensor_circular_buffer, &forcesensor_circular_buffer_index_writer, FORCESENSOR_CIRCULAR_BUFFER_SIZE),
-      _buffer_reader_bpm(bpm_circular_buffer, &bpm_circular_buffer_index_writer, OPTICAL_ENCODER_CIRCULAR_BUFFER_SIZE),
+      _buffer_reader_bpm(bpm_circular_buffer, &bpm_circular_buffer_index_writer, BPM_CIRCULAR_BUFFER_SIZE),
       _taskMonitorToUsbControllerHandle(taskMonitorToUsbControllerHandle),
       _sessionControllerToUsbController(sessionControllerToUsbController),
       _forceSensorCommandQueue(forceSensorCommandQueue),
@@ -213,8 +213,7 @@ void USBController::SendResponse(task_offset_t taskOffset, uint16_t opcode, uint
         .task_offset = taskOffset,
         .payload_len = sizeof(resp)
     };
-    AddToBuffer<usb_msg_header_t>(&header, sizeof(header));
-    AddToBuffer<usb_response_data_t>(&resp, sizeof(resp));
+    AppendFrame(header, &resp, sizeof(resp));
 }
 
 void USBController::SendDeviceReady()
@@ -229,8 +228,7 @@ void USBController::SendDeviceReady()
         .task_offset = TASK_OFFSET_USB_CONTROLLER,
         .payload_len = sizeof(evt)
     };
-    AddToBuffer<usb_msg_header_t>(&header, sizeof(header));
-    AddToBuffer<usb_device_ready_event>(&evt, sizeof(evt));
+    AppendFrame(header, &evt, sizeof(evt));
 }
 
 void USBController::SendSessionState(bool inSession)
@@ -249,8 +247,47 @@ void USBController::SendSessionState(bool inSession)
         .task_offset = TASK_OFFSET_SESSION_CONTROLLER,
         .payload_len = sizeof(evt)
     };
-    AddToBuffer<usb_msg_header_t>(&header, sizeof(header));
-    AddToBuffer<session_state_event>(&evt, sizeof(evt));
+    AppendFrame(header, &evt, sizeof(evt));
+}
+
+void USBController::AppendBatchTrailer()
+{
+    // batch_len describes the transfer as the host will see it, so it counts this record too --
+    // the host compares it against the bytes it decoded and skipped between two trailers, and a
+    // length that excluded itself would read as a 24-byte shortfall on every healthy batch.
+    usb_tx_batch_trailer trailer =
+    {
+        .batch_seq = _batchSeq,
+        .batch_len = static_cast<uint32_t>(_txBufferIndex) + BATCH_TRAILER_FRAME_SIZE
+    };
+
+    // No IsBufferFull check: the reserve it holds back guarantees the room (see IsBufferFull).
+    usb_msg_header_t header =
+    {
+        .msg_type = USB_MSG_STATUS,
+        .task_offset = TASK_OFFSET_USB_CONTROLLER,
+        .payload_len = sizeof(trailer)
+    };
+    AppendFrame(header, &trailer, sizeof(trailer));
+}
+
+uint8_t USBController::TransmitBatch()
+{
+    AppendBatchTrailer();
+
+    uint8_t result = CDC_Transmit_FS(_txBuffer, _txBufferIndex);
+    if (result != USBD_OK)
+    {
+        // Refused -- BUSY (retry later) or FAIL (batch abandoned by the caller). Either way these
+        // bytes did not go out, so the stamp comes back off and the sequence does not move: a
+        // number the host never receives, spent on a transfer that never left, reads to it as a
+        // transfer lost in flight. That is the one conclusion this record exists to rule out.
+        _txBufferIndex -= BATCH_TRAILER_FRAME_SIZE;
+        return result;
+    }
+
+    _batchSeq++;
+    return result;
 }
 
 void USBController::AnnounceReadyIfDue()
@@ -292,23 +329,20 @@ void USBController::HandleHostDetach()
     _lastAnnounceTick = 0;  // 0 means "announce immediately", not up to 200ms from now
     _txBufferIndex = 0;
     usb_rx_flush();
-}
-
-void USBController::WaitForHandshake()
-{
-    // Block until the host completes the USB_CMD_ACK handshake, announcing device-ready
-    // and flushing the TX buffer as it goes. Used by the mock/debug path.
-    while (!_appReady)
+    // The drop tally belongs to the session that just ended; reporting it to the *next* host
+    // (which is how "TX saturated" appeared 9 ms before a fresh handshake even completed)
+    // would be telling it about data it never asked for.
+    _txDropsPending = 0;
+    _lastDropReportTick = 0;
+    // Same reasoning for the mock stream's canned faults: the next host gets one on its first
+    // pass, rather than up to a second of silence left over from the session that just ended.
+    _lastMockFaultTick = 0;
+    // And the same for buffer overflows: samples lost while the last host was connected were that
+    // session's, and the readers are caught up to their writers on the next session entry anyway.
+    for (uint8_t stream = 0; stream < OVERFLOW_STREAM_COUNT; ++stream)
     {
-        ProcessIncomingFrames();
-        AnnounceReadyIfDue();
-
-        if (_txBufferIndex > 0 && CDC_Transmit_FS(_txBuffer, _txBufferIndex) != USBD_BUSY)
-        {
-            _txBufferIndex = 0;
-        }
-
-        osDelay(10);
+        _overflowPending[stream] = 0;
+        _lastOverflowReportTick[stream] = 0;
     }
 }
 
@@ -323,6 +357,7 @@ void USBController::Run()
 {
     bool inSession = false;
     bool prevInSession = false;
+    uint32_t mockTimestamp = 0;
 
     while (1)
     {
@@ -352,6 +387,18 @@ void USBController::Run()
         //    always sees the data a running session produces.
         GetLatestFromQueue(_sessionControllerToUsbController, &inSession, sizeof(inSession), 0);
 
+        // 4b. The mock stream stands in for the sensors, so it also stands in for the session that
+        //     gates them: the host displays sensor data only while it believes one is running, and
+        //     the whole point of the mock path is to exercise the link with no sensors -- and
+        //     usually no brake, no SessionController state, nothing -- involved. Forcing the flag
+        //     here rather than at the streaming step means the announcement in step 6 goes out too,
+        //     so the host is told what it is being shown instead of quietly receiving it.
+        const bool mockEnabled = sysconfig_get_u32(SYSCFG_USB_MOCK_MESSAGES) != 0u;
+        if (mockEnabled)
+        {
+            inSession = true;
+        }
+
         // 5. Entering a session: skip the readers past everything the sensor tasks buffered while
         //    we were idle. They sample continuously (SessionController enables them once, at
         //    startup) and their circular buffers keep filling whether or not we drain them, so
@@ -377,7 +424,14 @@ void USBController::Run()
         prevInSession = inSession;
 
         // 7. Stream sensor data once the host has handshaked *and* a session is running.
-        if (_appReady && inSession)
+        if (_appReady && inSession && mockEnabled)
+        {
+            // Diagnostic stand-in: synthetic records in place of the sensor reads below, leaving
+            // every other step of the loop -- commands, health, faults, framing, flush -- exactly
+            // as it is. Nothing here is a measurement; the host warns about that on its plots.
+            AppendMockFrames(mockTimestamp);
+        }
+        else if (_appReady && inSession)
         {
             #if !defined(OPTICAL_ENCODER_TASK_ENABLE)
             #error "OPTICAL_ENCODER_TASK_ENABLE must be defined"
@@ -399,6 +453,9 @@ void USBController::Run()
             // Process BPM data
             ProcessTaskData(_buffer_reader_bpm, TASK_OFFSET_BPM_CONTROLLER);
             #endif
+
+            // No derived-quantity stream: torque and power are the host's to compute from the
+            // force and encoder samples above, using constants it keeps on the PC.
         }
 
         // 8. Health and faults are *not* sensor data: they are streamed to any handshaked host,
@@ -415,16 +472,25 @@ void USBController::Run()
             #endif
 
             ProcessErrorsAndWarnings();
+            ReportTxDropsIfDue();
+            // After the drains above, so a lap detected on this pass -- including one on the error
+            // buffer ProcessErrorsAndWarnings just read -- is counted before the tallies are checked.
+            ReportBufferOverflowsIfDue();
         }
 
         // 9. Flush whatever accumulated this iteration: command responses, session events and/or
         //    stream records. Nothing is transmitted when the buffer is empty.
         if (_txBufferIndex > 0)
         {
-            if (CDC_Transmit_FS(_txBuffer, _txBufferIndex) == USBD_BUSY)
+            uint8_t result = TransmitBatch();
+            if (result == USBD_BUSY)
             {
                 osDelay(sysconfig_get_u32(SYSCFG_USB_TASK_OSDELAY));
                 continue; // host busy; keep the buffer and retry next iteration
+            }
+            if (result != USBD_OK && _appReady)
+            {
+                _txDropsPending++; // FAIL (e.g. device not configured): the batch never left
             }
             _txBufferIndex = 0;
         }
@@ -458,20 +524,10 @@ void USBController::Run()
 
 // }
 
-void USBController::MockMessages(const bool forever)
+void USBController::AppendMockFrames(uint32_t &timestamp)
 {
-
-    uint32_t timestamp = 0;
     usb_msg_header_t usb_header{};
 
-    // Wait for the host handshake before starting data transmission
-    WaitForHandshake();
-
-    // There is no SessionController in the mock path, but the host only displays sensor data for a
-    // running session -- so say one is running, or the mock stream below arrives and is discarded.
-    SendSessionState(true);
-
-    while(forever)
     {
         #if !defined(OPTICAL_ENCODER_TASK_ENABLE)
         #error "OPTICAL_ENCODER_TASK_ENABLE must be defined"
@@ -489,9 +545,7 @@ void USBController::MockMessages(const bool forever)
         usb_header.msg_type = USB_MSG_STREAM;
         usb_header.task_offset = TASK_OFFSET_OPTICAL_ENCODER;
         usb_header.payload_len = sizeof(optical_encoder_output_data);
-
-        AddToBuffer<usb_msg_header_t>(&usb_header, sizeof(usb_msg_header_t));
-        AddToBuffer<optical_encoder_output_data>(&mock_data, sizeof(optical_encoder_output_data));
+        AppendFrame(usb_header, &mock_data, sizeof(optical_encoder_output_data));
         #endif
 
         #if !defined(FORCE_SENSOR_ADS1115_TASK_ENABLE) || !defined(FORCE_SENSOR_ADC_TASK_ENABLE)
@@ -507,9 +561,7 @@ void USBController::MockMessages(const bool forever)
         usb_header.msg_type = USB_MSG_STREAM;
         usb_header.task_offset = ACTIVE_FORCE_SENSOR_TASK_OFFSET;
         usb_header.payload_len = sizeof(forcesensor_output_data);
-
-        AddToBuffer<usb_msg_header_t>(&usb_header, sizeof(usb_msg_header_t));
-        AddToBuffer<forcesensor_output_data>(&mock_fs_data, sizeof(forcesensor_output_data));
+        AppendFrame(usb_header, &mock_fs_data, sizeof(forcesensor_output_data));
         #endif
 
         #if !defined(BPM_CONTROLLER_TASK_ENABLE)
@@ -525,8 +577,7 @@ void USBController::MockMessages(const bool forever)
         usb_header.msg_type = USB_MSG_STREAM;
         usb_header.task_offset = TASK_OFFSET_BPM_CONTROLLER;
         usb_header.payload_len = sizeof(bpm_output_data);
-        AddToBuffer<usb_msg_header_t>(&usb_header, sizeof(usb_msg_header_t));
-        AddToBuffer<bpm_output_data>(&mock_bpm_data, sizeof(bpm_output_data));
+        AppendFrame(usb_header, &mock_bpm_data, sizeof(bpm_output_data));
         #endif
 
         #if !defined(TASK_MONITOR_TASK_ENABLE)
@@ -543,66 +594,65 @@ void USBController::MockMessages(const bool forever)
         usb_header.msg_type = USB_MSG_STREAM;
         usb_header.task_offset = TASK_OFFSET_TASK_MONITOR;
         usb_header.payload_len = sizeof(task_monitor_output_data);
-        AddToBuffer<usb_msg_header_t>(&usb_header, sizeof(usb_msg_header_t));
-        AddToBuffer<task_monitor_output_data>(&mock_tm_data, sizeof(task_monitor_output_data));
+        AppendFrame(usb_header, &mock_tm_data, sizeof(task_monitor_output_data));
         #endif
 
-        task_error_data mock_error_data = 
-        PopulateTaskErrorDataStruct(
-            timestamp++,
-            TASK_OFFSET_SESSION_CONTROLLER,
-            ERROR_SESSION_CONTROLLER_TIMESTAMP_TIMER_START_FAILURE
-        );
+        // The canned fault pair, at most once a second -- unlike the streams above, which are
+        // meant to run flat out. These exist to exercise the error/warning framing and the host's
+        // decoding of it, and one of each per second shows that just as well as one per loop. Per
+        // loop is what they used to be, and at this task's rate it buried every real line in the
+        // host's event log under hundreds of fabricated ones a second: a diagnostic mode whose
+        // diagnostics cannot be read.
+        uint32_t now = osKernelGetTickCount();
+        if (_lastMockFaultTick == 0 || (now - _lastMockFaultTick) >= MOCK_FAULT_INTERVAL_MS)
+        {
+            _lastMockFaultTick = now;
 
-        usb_header.msg_type = USB_MSG_ERROR;
-        usb_header.task_offset = TASK_OFFSET_SESSION_CONTROLLER;
-        usb_header.payload_len = sizeof(task_error_data);
+            task_error_data mock_error_data =
+            PopulateTaskErrorDataStruct(
+                timestamp++,
+                TASK_OFFSET_SESSION_CONTROLLER,
+                ERROR_SESSION_CONTROLLER_TIMESTAMP_TIMER_START_FAILURE
+            );
 
-        AddToBuffer<usb_msg_header_t>(&usb_header, sizeof(usb_header));
-        AddToBuffer<task_error_data>(&mock_error_data, sizeof(mock_error_data));
+            usb_header.msg_type = USB_MSG_ERROR;
+            usb_header.task_offset = TASK_OFFSET_SESSION_CONTROLLER;
+            usb_header.payload_len = sizeof(task_error_data);
+            AppendFrame(usb_header, &mock_error_data, sizeof(mock_error_data));
 
-        task_error_data mock_warning_data = PopulateTaskErrorDataStruct(
-            timestamp++,
-            TASK_OFFSET_FORCE_SENSOR_ADS1115,
-            WARNING_FORCE_SENSOR_ADS1115_TRIGGER_CONVERSION_FAILURE
-        );
+            task_error_data mock_warning_data = PopulateTaskErrorDataStruct(
+                timestamp++,
+                TASK_OFFSET_FORCE_SENSOR_ADS1115,
+                WARNING_FORCE_SENSOR_ADS1115_TRIGGER_CONVERSION_FAILURE
+            );
 
-        usb_header.msg_type = USB_MSG_WARNING;
-        usb_header.task_offset = TASK_OFFSET_FORCE_SENSOR_ADS1115;
-        usb_header.payload_len = sizeof(task_error_data);
-
-        AddToBuffer<usb_msg_header_t>(&usb_header, sizeof(usb_header));
-        AddToBuffer<task_error_data>(&mock_warning_data, sizeof(mock_warning_data));
-
-
-        if (CDC_Transmit_FS(_txBuffer, _txBufferIndex) == USBD_BUSY) {
-            continue;
+            usb_header.msg_type = USB_MSG_WARNING;
+            usb_header.task_offset = TASK_OFFSET_FORCE_SENSOR_ADS1115;
+            usb_header.payload_len = sizeof(task_error_data);
+            AppendFrame(usb_header, &mock_warning_data, sizeof(mock_warning_data));
         }
-        _txBufferIndex = 0;
-
-       
-        osDelay(sysconfig_get_u32(SYSCFG_USB_TASK_OSDELAY));
     }
+    // No transmit here: Run's flush step sends what this appended, in the same batch as the
+    // command responses and session events of the same pass. The mock stream stands in for the
+    // sensors, not for the link.
 }
 
 void USBController::ProcessErrorsAndWarnings()
 {
-    while(_task_errors_buffer_reader.HasData()) 
+    while(_task_errors_buffer_reader.HasData())
     {
 
         StallIfIsBufferFull(IsBufferFull(sizeof(task_error_data)));
 
         task_error_data error_data;
         if (_task_errors_buffer_reader.GetElementAndIncrementIndex(error_data)) {
-            usb_msg_header_t header = 
+            usb_msg_header_t header =
             {
                 .msg_type = (error_data.error_code & WARNING_FLAG) ? USB_MSG_WARNING : USB_MSG_ERROR,
                 .task_offset = (task_offset_t)(error_data.error_code & TASK_OFFSET_MASK),
                 .payload_len = sizeof(task_error_data)
             };
-
-            AddToBuffer<usb_msg_header_t>(&header, sizeof(header));
-            AddToBuffer<task_error_data>(&error_data, sizeof(task_error_data));
+            AppendFrame(header, &error_data, sizeof(task_error_data));
         }
     }
 }
@@ -621,22 +671,137 @@ void USBController::StallIfIsBufferFull(bool bufferFull)
     // retry.
     const uint32_t maxRetries = sysconfig_get_u32(SYSCFG_USB_TX_FLUSH_MAX_RETRIES);
     for (uint32_t attempt = 0; attempt < maxRetries; ++attempt) {
-        if (CDC_Transmit_FS(_txBuffer, _txBufferIndex) != USBD_BUSY) {
+        const uint8_t result = TransmitBatch();
+        if (result != USBD_BUSY) {
+            // A FAIL here loses the batch exactly as the give-up below does, so it is counted the
+            // same way. Leaving it uncounted made drops on the flush path the one kind that never
+            // reached the event log -- silent precisely when the link is unhealthy enough to hit
+            // this function at all.
+            if (result != USBD_OK && _appReady) {
+                _txDropsPending++;
+            }
             _txBufferIndex = 0;
             return;
         }
         osDelay(1);
     }
     _txBufferIndex = 0; // host not draining; drop this batch and move on
+    if (_appReady)
+    {
+        // Only an acked host was owed this data. Un-acked drops are routine (device-ready
+        // announcements piling up with nobody listening) and reporting them on the next
+        // handshake would tell that host about batches it was never meant to get.
+        _txDropsPending++;
+    }
+}
+
+void USBController::ReportTxDropsIfDue()
+{
+    // At most one warning per second while batches are being dropped: enough for the host's
+    // event log to show a saturated link without the report itself adding to the saturation.
+    if (_txDropsPending == 0)
+    {
+        return;
+    }
+    uint32_t now = osKernelGetTickCount();
+    if (_lastDropReportTick != 0 && (now - _lastDropReportTick) < 1000)
+    {
+        return;
+    }
+    if (IsBufferFull(sizeof(task_error_data)))
+    {
+        return; // no room without flushing (which is what just failed); try again next pass
+    }
+
+    task_error_data warning = PopulateTaskErrorDataStruct(
+        get_timestamp(),
+        TASK_OFFSET_USB_CONTROLLER,
+        static_cast<uint32_t>(WARNING_USB_TX_BATCH_DROPPED)
+    );
+    usb_msg_header_t header =
+    {
+        .msg_type = USB_MSG_WARNING,
+        .task_offset = TASK_OFFSET_USB_CONTROLLER,
+        .payload_len = sizeof(task_error_data)
+    };
+    AppendFrame(header, &warning, sizeof(warning));
+
+    _lastDropReportTick = now;
+    _txDropsPending = 0;
+    return;
+}
+
+void USBController::ReportBufferOverflowsIfDue()
+{
+    // Collected every pass, reported at most once a second: TakeDroppedCount clears as it reads,
+    // so a lap that happened while a report was not yet due would otherwise be forgotten.
+    _overflowPending[OVERFLOW_OPTICAL_ENCODER] +=
+        static_cast<uint32_t>(_buffer_reader_optical_encoder.TakeDroppedCount());
+    _overflowPending[OVERFLOW_FORCE_SENSOR] +=
+        static_cast<uint32_t>(_buffer_reader_forcesensor.TakeDroppedCount());
+    _overflowPending[OVERFLOW_BPM] +=
+        static_cast<uint32_t>(_buffer_reader_bpm.TakeDroppedCount());
+    _overflowPending[OVERFLOW_TASK_ERROR] +=
+        static_cast<uint32_t>(_task_errors_buffer_reader.TakeDroppedCount());
+
+    // All four carry TASK_OFFSET_USB_CONTROLLER, not the producing task's: the number in a packed
+    // error code is only meaningful within the enum of the task the code is attributed to, and
+    // these live in usb_controller_task_error_ids. The buffer is named by the code itself.
+    static constexpr uint32_t codes[OVERFLOW_STREAM_COUNT] = {
+        WARNING_USB_OPTICAL_ENCODER_BUFFER_OVERFLOW,
+        WARNING_USB_FORCE_SENSOR_BUFFER_OVERFLOW,
+        WARNING_USB_BPM_BUFFER_OVERFLOW,
+        WARNING_USB_TASK_ERROR_BUFFER_OVERFLOW
+    };
+
+    const uint32_t now = osKernelGetTickCount();
+    for (uint8_t stream = 0; stream < OVERFLOW_STREAM_COUNT; ++stream)
+    {
+        if (_overflowPending[stream] == 0)
+        {
+            continue;
+        }
+        if (_lastOverflowReportTick[stream] != 0 &&
+            (now - _lastOverflowReportTick[stream]) < BUFFER_OVERFLOW_REPORT_INTERVAL_MS)
+        {
+            continue;
+        }
+        if (IsBufferFull(sizeof(task_error_data)))
+        {
+            return; // no room this pass; the tally is kept and goes out on a later one
+        }
+
+        task_error_data warning = PopulateTaskErrorDataStruct(
+            get_timestamp(),
+            TASK_OFFSET_USB_CONTROLLER,
+            codes[stream]
+        );
+        usb_msg_header_t header =
+        {
+            .msg_type = USB_MSG_WARNING,
+            .task_offset = TASK_OFFSET_USB_CONTROLLER,
+            .payload_len = sizeof(task_error_data)
+        };
+        AppendFrame(header, &warning, sizeof(warning));
+
+        _lastOverflowReportTick[stream] = now;
+        _overflowPending[stream] = 0;
+    }
 }
 
 bool USBController::IsBufferFull(std::size_t msgSize)
-{   
-    if (_txBufferIndex + sizeof(usb_msg_header_t) + msgSize >= USB_TX_BUFFER_SIZE) {
-        return true;   
+{
+    // Room for one full framed record: SOF + header + payload + CRC (see AppendFrame), plus the
+    // trailer every transfer ends with. Reserving the trailer here rather than checking for it in
+    // TransmitBatch is what lets that function be infallible: a flush is called from paths that
+    // have no way to report "no room", and a batch that could not be stamped would be a batch the
+    // host cannot account for -- precisely the case this record exists to rule out.
+    const std::size_t envelope = 2 * sizeof(uint16_t);
+    const std::size_t needed = envelope + sizeof(usb_msg_header_t) + msgSize + BATCH_TRAILER_FRAME_SIZE;
+    if (_txBufferIndex + needed >= USB_TX_BUFFER_SIZE) {
+        return true;
     }
-	return false;
-
+    return false;
 }
 
 extern "C" void usbcontroller_main(osMessageQueueId_t sessionControllerToUsbController,
@@ -652,11 +817,5 @@ extern "C" void usbcontroller_main(osMessageQueueId_t sessionControllerToUsbCont
 		 osThreadSuspend(osThreadGetId());;
 	}
 
-    #if !defined(DEBUG_USB_CONTROLLER_MOCK_MESSAGES)
-    #error "DEBUG_USB_CONTROLLER_MOCK_MESSAGES must be defined"
-    #elif (DEBUG_USB_CONTROLLER_MOCK_MESSAGES == 1)
-    usb.MockMessages();
-    #else
 	usb.Run();
-    #endif
 }

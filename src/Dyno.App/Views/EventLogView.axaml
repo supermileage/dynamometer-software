@@ -139,12 +139,19 @@
           VerticalAlignment="Top"
           IsVisible="{Binding !SelectedLogTab.Lines.Count}"
         />
+        <!-- AutoScrollToSelectedItem is off because the code-behind owns every scroll (the _pinned
+             follow). Left on (its default), an events tab inserts each new line at index 0, which
+             shifts the selected item's index and makes the ListBox scroll that selection back into
+             view, yanking a user reading the backlog to their selection, past the _pinned check
+             that never sees this internal scroll. A console tab appends after the selection and is
+             unaffected. -->
         <ListBox
           x:Name="EventList"
           ItemsSource="{Binding SelectedLogTab.Lines}"
           Tag="{Binding SelectedLogTab.Colorize}"
           SelectionMode="Multiple"
           KeyDown="OnEventListKeyDown"
+          AutoScrollToSelectedItem="False"
         >
           <ListBox.ItemTemplate>
             <!-- Non-compiled on purpose: the foreground is a MultiBinding of the line and the tab's

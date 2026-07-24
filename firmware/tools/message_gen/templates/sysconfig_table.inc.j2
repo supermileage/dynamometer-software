@@ -1,13 +1,14 @@
 {#- The sysconfig store's designated-initializer entries, one per parameter of the
     schema's sysconfig_params section. Included inside the s_table[] initializer in
     Core/Src/Config/sysconfig.c, which defines the SYSCFG_F32/SYSCFG_U32 macros
-    (kind, config.h default, accepted range). -#}
+    (kind, boot default, accepted range). The default is the parameter's config.h macro,
+    or a literal from the schema for parameters that exist only at runtime. -#}
 // AUTO-GENERATED from tools/message_gen/schema/{{ schema_name }} by generate.py -- DO NOT EDIT.
 // Change that schema and re-run tools/message_gen/generate.py (CI verifies they match).
 {% for s in sections %}
 {% if s.kind == "sysconfig_params" %}
 {% for p in s.params %}
-[{{ p._enum_name }}] = {{ p._c_macro }}({{ p.name }}, {{ p._c_min }}, {{ p._c_max }}),
+[{{ p._enum_name }}] = {{ p._c_macro }}({{ p._c_default }}, {{ p._c_min }}, {{ p._c_max }}),
 {% endfor %}
 {% endif %}
 {% endfor %}

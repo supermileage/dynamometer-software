@@ -10,6 +10,9 @@ namespace Dyno.Core.SysConfig;
 /// <item><b><c>sysconfig</c></b> — the runtime parameters. The board has no settings storage, so
 /// this table is the durable copy: the app re-pushes every saved value to the device after each
 /// handshake, and a parameter with no row here simply runs the firmware's config.h default.</item>
+/// <item><b><c>pcconstants</c></b> — values the desktop app uses itself and never sends to the
+/// device: the moment of inertia, the force-sensor lever arm and the gear ratio behind the torque,
+/// power and geared readouts it derives. Keyed by name, since no wire id describes them.</item>
 /// <item><b><c>compiletime</c></b> — the <c>#define</c>s from config.h / debug.h. Nothing consumes
 /// these yet: the firmware still builds from the headers, and the app no longer writes them. A row
 /// records only that the user wants a value the header doesn't have, and the page shows it back.
@@ -61,8 +64,119 @@ public sealed class SysConfigStore : IDisposable
                 value      TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS pcconstants (
+                name       TEXT PRIMARY KEY,
+                value      REAL NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             """;
         create.ExecuteNonQuery();
+
+        RekeySysConfigByName();
+    }
+
+    /// <summary>
+    /// Re-keys saved runtime parameters onto the current catalog's ids, matching on the stored
+    /// name, and forgets rows whose name the catalog no longer has.
+    /// </summary>
+    /// <remarks>
+    /// Wire ids are positional, so removing a parameter shifts every id after it. A database
+    /// written before such a change holds rows under the old numbering, and reading them back by
+    /// id would silently hand each parameter its neighbour's value — a PID gain landing in a
+    /// mechanical constant, with nothing to show anything had gone wrong. The name column exists
+    /// for exactly this: it makes the file self-describing enough to renumber safely.
+    ///
+    /// Runs on every open and is a no-op once the ids agree, so it costs one query in the normal
+    /// case and needs no schema version to track.
+    /// </remarks>
+    private void RekeySysConfigByName()
+    {
+        var byName = SysConfigCatalog.Parameters.ToDictionary(p => p.Name, p => p.Id);
+
+        var rows = new List<(int Id, string Name, double Value, string UpdatedAt)>();
+        using (var select = _connection.CreateCommand())
+        {
+            select.CommandText = "SELECT param_id, name, value, updated_at FROM sysconfig";
+            using var reader = select.ExecuteReader();
+            while (reader.Read())
+            {
+                rows.Add(
+                    (
+                        reader.GetInt32(0),
+                        reader.GetString(1),
+                        reader.GetDouble(2),
+                        reader.GetString(3)
+                    )
+                );
+            }
+        }
+
+        bool stale = rows.Any(r => !byName.TryGetValue(r.Name, out var id) || (int)id != r.Id);
+        if (!stale)
+        {
+            return;
+        }
+
+        using var transaction = _connection.BeginTransaction();
+        using (var clear = _connection.CreateCommand())
+        {
+            clear.Transaction = transaction;
+            clear.CommandText = "DELETE FROM sysconfig";
+            clear.ExecuteNonQuery();
+        }
+        foreach (var row in rows)
+        {
+            // A name the catalog has dropped is deliberately not carried over: the parameter no
+            // longer exists on the device, so there is nothing for its value to mean.
+            if (!byName.TryGetValue(row.Name, out var id))
+            {
+                continue;
+            }
+            using var insert = _connection.CreateCommand();
+            insert.Transaction = transaction;
+            insert.CommandText = """
+                INSERT INTO sysconfig (param_id, name, value, updated_at)
+                VALUES ($id, $name, $value, $updated);
+                """;
+            insert.Parameters.AddWithValue("$id", (int)id);
+            insert.Parameters.AddWithValue("$name", row.Name);
+            insert.Parameters.AddWithValue("$value", row.Value);
+            insert.Parameters.AddWithValue("$updated", row.UpdatedAt);
+            insert.ExecuteNonQuery();
+        }
+        transaction.Commit();
+    }
+
+    /// <summary>Every saved PC constant, keyed by name. These never reach the device — they are
+    /// the desktop app's own inputs to the torque, power and gearing it derives.</summary>
+    public IReadOnlyDictionary<string, double> LoadAllPcConstants()
+    {
+        var values = new Dictionary<string, double>();
+        using var select = _connection.CreateCommand();
+        select.CommandText = "SELECT name, value FROM pcconstants";
+        using var reader = select.ExecuteReader();
+        while (reader.Read())
+        {
+            values[reader.GetString(0)] = reader.GetDouble(1);
+        }
+        return values;
+    }
+
+    /// <summary>Inserts or updates one PC constant.</summary>
+    public void SavePcConstant(string name, double value)
+    {
+        using var upsert = _connection.CreateCommand();
+        upsert.CommandText = """
+            INSERT INTO pcconstants (name, value, updated_at)
+            VALUES ($name, $value, $now)
+            ON CONFLICT (name) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at;
+            """;
+        upsert.Parameters.AddWithValue("$name", name);
+        upsert.Parameters.AddWithValue("$value", value);
+        upsert.Parameters.AddWithValue("$now", DateTime.UtcNow.ToString("o"));
+        upsert.ExecuteNonQuery();
     }
 
     /// <summary>All saved values, keyed by wire id. Parameters absent here have never been

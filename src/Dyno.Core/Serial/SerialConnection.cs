@@ -18,6 +18,11 @@ public sealed class SerialConnection : ISerialConnection
         {
             ReadTimeout = SerialPort.InfiniteTimeout,
             WriteTimeout = 2000,
+            // 1 MB of driver-side slack (~60 s of the device's full stream rate) instead of the
+            // 4 KB default (~250 ms). The stream has no CRC and no framing, so an overflow here
+            // doesn't error — it silently drops bytes mid-record and the parser has to resync.
+            // Windows honors this; Linux ignores it, which is harmless.
+            ReadBufferSize = 1 << 20,
             // Hold DTR for as long as the port is open. On a USB-CDC link there is no other way to
             // tell the device a session began or ended — the cable stays enumerated across a close —
             // so the firmware watches this line (CDC_SET_CONTROL_LINE_STATE) to know the host left

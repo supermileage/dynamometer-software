@@ -1,0 +1,17 @@
+# Dyno board — STM32H7 USB-CDC. Match the descriptors the firmware reports:
+# VID 1155 (0x0483) / PID 22336 (0x5740), from firmware/USB_DEVICE/App/usbd_desc.c.
+#
+# Install:
+#   sudo install -m 0644 scripts/udev/99-dyno-cdc.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=tty
+#
+# The ID_MM_DEVICE_IGNORE tag is the load-bearing part. ModemManager ships active on Fedora and
+# Ubuntu, and treats any newly-appeared ttyACM as a possible modem: it opens the port and probes it
+# with AT commands for ~20-30 s after each plug-in. While that runs the port is held open, so the
+# app's connect fails outright or reads back the tail of someone else's conversation. It clears on
+# its own, which is worse than a hard failure -- it presents as a flaky board rather than a busy one.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", ENV{ID_MM_DEVICE_IGNORE}="1", GROUP="dialout", MODE="0660", SYMLINK+="dyno"
+
+# The USB node too, so libusb-based tools (and CubeProgrammer in DFU mode) reach the board without
+# root. uaccess grants the ACL to whoever is logged in at the physical seat.
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="5740", MODE="0666", TAG+="uaccess"

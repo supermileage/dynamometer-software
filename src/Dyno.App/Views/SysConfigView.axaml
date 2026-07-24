@@ -69,7 +69,7 @@
     <!-- Toolbar: title + search + the page's single Apply. It lives here, outside the scroller, so
          it stays reachable from either half of the page — both halves save to the same place. -->
     <Border Grid.Row="0" Classes="card" Padding="12">
-      <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" ColumnSpacing="8">
         <TextBlock
           Grid.Column="0"
           Classes="heading"
@@ -94,6 +94,18 @@
         />
         <Button
           Grid.Column="3"
+          Content="Import JSON"
+          Click="OnImportJsonClick"
+          ToolTip.Tip="Load every setting on this page from a JSON file. Anything the file does not mention goes back to its default, and the Errors / Events log says what that was. Nothing is saved or sent to the device until you press Apply."
+        />
+        <Button
+          Grid.Column="4"
+          Content="Export JSON"
+          Click="OnExportJsonClick"
+          ToolTip.Tip="Write every setting on this page to a JSON file — the values in force, not any edit you have staged but not applied."
+        />
+        <Button
+          Grid.Column="5"
           Classes="accent"
           Content="Apply"
           Command="{Binding SysConfig.ApplyCommand}"
@@ -104,6 +116,105 @@
 
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
       <StackPanel Spacing="12">
+        <!-- ===================== PC CONSTANTS ===================== -->
+        <!-- Host-only values. Nothing here is sent to the device: the firmware streams what it
+             measures and this app derives torque, power and the geared readouts from it, so these
+             are its own inputs. Editing one recomputes from the next sample, with no reflash. -->
+        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="10" Margin="4,0">
+          <TextBlock
+            Grid.Column="0"
+            Classes="sectiontitle"
+            Text="PC CONSTANTS"
+            VerticalAlignment="Center"
+          />
+          <Border Grid.Column="1" Classes="filebadge">
+            <TextBlock Text="used by this app · never sent to the device" />
+          </Border>
+        </Grid>
+        <TextBlock
+          Text="The dyno's physical constants, which this app derives torque and power from. Correcting one recomputes the readouts from the next sample — no rebuild, no reflash."
+          Classes="paramdesc"
+          Margin="4,-6,4,0"
+          TextWrapping="Wrap"
+        />
+        <!-- Only ever carries a warning or the result of an Apply; silent when all is well, so it
+             does not spend a line of the page restating where the values are kept. -->
+        <TextBlock
+          Text="{Binding SysConfig.PcStatusText}"
+          Classes="paramdesc"
+          Margin="4,-8,4,0"
+          TextWrapping="Wrap"
+          IsVisible="{Binding SysConfig.PcStatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+        />
+
+        <Border Classes="card">
+          <ItemsControl ItemsSource="{Binding SysConfig.PcConstants}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <StackPanel Spacing="10" />
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:PcConstantViewModel">
+                <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="10">
+                  <!-- Pending-change marker, as on a runtime parameter: these are staged for Apply
+                       too, and without it the box looks like it took effect as it was typed. -->
+                  <Ellipse
+                    Grid.Column="0"
+                    Width="7"
+                    Height="7"
+                    VerticalAlignment="Center"
+                    Fill="{StaticResource AccentBrush}"
+                    IsVisible="{Binding IsDirty}"
+                    ToolTip.Tip="Changed — not yet applied"
+                  />
+                  <StackPanel Grid.Column="1" Spacing="2">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                      <TextBlock Text="{Binding Label}" VerticalAlignment="Center" />
+                      <TextBlock
+                        Text="{Binding Unit}"
+                        Classes="paramdesc"
+                        VerticalAlignment="Center"
+                        IsVisible="{Binding HasUnit}"
+                      />
+                    </StackPanel>
+                    <TextBlock
+                      Text="{Binding Description}"
+                      Classes="paramdesc"
+                      TextWrapping="Wrap"
+                    />
+                    <TextBlock Classes="paramdesc" Text="{Binding RangeText}" FontSize="10.5" />
+                    <TextBlock
+                      Text="{Binding Error}"
+                      Foreground="#E5484D"
+                      FontSize="11"
+                      IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}"
+                    />
+                  </StackPanel>
+                  <TextBox
+                    Grid.Column="2"
+                    Classes="definevalue"
+                    Classes.invalid="{Binding IsInvalid}"
+                    Text="{Binding EditedText}"
+                    MinWidth="120"
+                    VerticalAlignment="Center"
+                  />
+                  <Button
+                    Grid.Column="3"
+                    Content="Reset"
+                    FontSize="11"
+                    Padding="9,4"
+                    VerticalAlignment="Center"
+                    IsVisible="{Binding CanReset}"
+                    Command="{Binding ResetCommand}"
+                    ToolTip.Tip="Put the default back in the box — press Apply to save it"
+                  />
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </Border>
+
         <!-- ===================== DEVICE RUNTIME ===================== -->
         <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="10" Margin="4,0">
           <TextBlock
@@ -250,7 +361,9 @@
         </ItemsControl>
 
         <!-- ===================== COMPILE-TIME ===================== -->
-        <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="10" Margin="4,14,4,0">
+        <!-- No Reload button: the firmware's settings are re-read whenever this page is opened
+             (MainWindowViewModel.Navigate), so there is nothing left for the user to ask for. -->
+        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="10" Margin="4,14,4,0">
           <TextBlock
             Grid.Column="0"
             Classes="sectiontitle"
@@ -258,14 +371,8 @@
             VerticalAlignment="Center"
           />
           <Border Grid.Column="1" Classes="filebadge">
-            <TextBlock Text="saved on this PC · the firmware still builds from config.h / debug.h" />
+            <TextBlock Text="saved on this PC · takes a rebuild and a flash to reach the board" />
           </Border>
-          <Button
-            Grid.Column="3"
-            Content="Reload"
-            Command="{Binding SysConfig.ReloadCommand}"
-            ToolTip.Tip="Re-read config.h and debug.h from disk, discarding edits you haven't applied. Saved values are kept — they live in this PC's database, not in the headers."
-          />
         </Grid>
         <TextBlock Text="{Binding SysConfig.StatusText}" Classes="paramdesc" Margin="4,-6,4,0" />
 
@@ -280,12 +387,16 @@
             <DataTemplate x:DataType="vm:ConfigCategoryViewModel">
               <Border Classes="card">
                 <StackPanel Spacing="4">
-                  <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
-                    <TextBlock Classes="heading" Text="{Binding Name}" VerticalAlignment="Center" />
-                    <Border Grid.Column="1" Classes="filebadge">
-                      <TextBlock Text="{Binding FileLabel}" />
-                    </Border>
-                  </Grid>
+                  <!-- No file badge: which header a setting is declared in is not something the
+                       user of this page can act on, and the badge took the width these section
+                       names need (the longest, "Voltage Reference (should be 3V3)", was clipped). -->
+                  <TextBlock
+                    Classes="heading"
+                    Text="{Binding Name}"
+                    VerticalAlignment="Center"
+                    TextWrapping="Wrap"
+                    Margin="0,0,0,6"
+                  />
                   <ItemsControl ItemsSource="{Binding Parameters}">
                     <ItemsControl.ItemTemplate>
                       <DataTemplate x:DataType="vm:ConfigParameterViewModel">

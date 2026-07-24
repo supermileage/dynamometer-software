@@ -59,8 +59,9 @@ def _c_float(value) -> str:
 
 
 def _annotate_sysconfig(schema: dict) -> None:
-    """Computes the C-side fields of each sysconfig_params entry: the enum member name
-    and the min/max literals typed to the parameter's kind."""
+    """Computes the C-side fields of each sysconfig_params entry: the enum member name,
+    the min/max literals typed to the parameter's kind, and the expression the store
+    seeds itself from."""
     for s in schema["sections"]:
         if s.get("kind") != "sysconfig_params":
             continue
@@ -82,6 +83,20 @@ def _annotate_sysconfig(schema: dict) -> None:
                 p["_c_max"] = f"{len(p['options']) - 1}u"
             else:
                 raise ValueError(f"sysconfig param {p['name']}: unknown type {p['type']!r}")
+
+            # Most parameters name a config.h #define, which is also compiled into the task
+            # that reads them, so the macro is the default and the two cannot drift. A
+            # parameter that exists *only* at runtime has no such macro to name -- writing
+            # one would invite the idea that rebuilding with it changed something -- so it
+            # carries `default:` in the schema and the literal is emitted here instead.
+            if "default" in p:
+                p["_c_default"] = (
+                    _c_float(p["default"])
+                    if p["type"] == "float"
+                    else f"{int(p['default'])}u"
+                )
+            else:
+                p["_c_default"] = p["name"]
 
 
 def render(schema_path: Path, template_name: str) -> str:

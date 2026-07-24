@@ -15,6 +15,15 @@
 # `static_assert` is its own section so it lands in the original order, and so the
 # 10-line #ifdef STM32H7xx_H / _Static_assert / static_assert boilerplate exists in
 # exactly one place (the template macro) instead of being hand-copied per type.
+#
+# The fault enums (the *_error_ids) carry two more keys, which only the host reads. The
+# section's `task:` names the task_offset_t its numbers belong to: an error number is
+# task-local, so #1 means a different fault for every task, and the offset is the only
+# thing that gives it meaning. Each value then carries a `description:` -- the sentence
+# the app prints beside it in the event log, written for whoever is looking at the rig
+# rather than for whoever wrote the task. Both are required, and
+# tools/message_gen/error_msg_generate.py refuses to generate without them, so a fault
+# added here cannot reach a user as a bare number with nothing to look up.
 
 guard: INC_MAIN_BOARD_MESSAGEPASSING_MESSAGES_PUBLIC_H_
 includes:
@@ -92,62 +101,173 @@ sections:
   - kind: enum
     name: session_controller_task_error_ids
     base: uint32_t
+    task: TASK_OFFSET_SESSION_CONTROLLER
     values:
-      - { name: ERROR_SESSION_CONTROLLER_TIMESTAMP_TIMER_START_FAILURE, value: "0" }
-      - { name: ERROR_SESSION_CONTROLLER_INVALID_TASK_QUEUE_POINTER }
-      - { name: ERROR_SESSION_CONTROLLER_INVALID_UART1_MUTEX_POINTER }
+      - name: ERROR_SESSION_CONTROLLER_TIMESTAMP_TIMER_START_FAILURE
+        value: "0"
+        description: >-
+          the hardware timer every sample is stamped from would not start, so the session
+          controller parked itself at boot — no session can run and nothing is timestamped.
+          Reported once per boot; only a reset can retry it
+      - name: ERROR_SESSION_CONTROLLER_INVALID_TASK_QUEUE_POINTER
+        description: >-
+          one of the queues the session controller drives its tasks through was missing at
+          startup, so it parked itself and commands from this app reach nothing. A firmware
+          build fault, not something a run can cause
+      - name: ERROR_SESSION_CONTROLLER_INVALID_UART1_MUTEX_POINTER
+        description: >-
+          the UART1 mutex was missing at startup and the session controller parked itself. A
+          firmware build fault, not something a run can cause
 
   - { kind: static_assert, expr: "sizeof(session_controller_task_error_ids) == 4", message: "Size of session_controller_task_error_ids must be 4 bytes" }
 
   - kind: enum
     name: bpm_task_error_ids
     base: uint32_t
+    task: TASK_OFFSET_BPM_CONTROLLER
     values:
-      - { name: ERROR_BPM_PWM_START_FAILURE, value: "0" }
-      - { name: ERROR_BPM_PWM_STOP_FAILURE }
+      - name: ERROR_BPM_PWM_START_FAILURE
+        value: "0"
+        description: >-
+          the brake's PWM timer refused to start, so the brake did not engage when the session
+          asked for it. The task parks itself rather than keep driving blind, so the brake stays
+          dead until the board is reset
+      - name: ERROR_BPM_PWM_STOP_FAILURE
+        description: >-
+          the brake's PWM timer refused to stop, so the brake may still be driven after the
+          session ended. The task parks itself; treat the brake as live until the board is reset
 
   - { kind: static_assert, expr: "sizeof(bpm_task_error_ids) == 4", message: "Size of bpm_task_error_ids must be 4 bytes" }
 
   - kind: enum
     name: lumex_lcd_task_error_ids
     base: uint32_t
+    task: TASK_OFFSET_LUMEX_LCD
     values:
-      - { name: ERROR_LUMEX_LCD_TIMER_START_FAILURE, value: "0" }
+      - name: ERROR_LUMEX_LCD_TIMER_START_FAILURE
+        value: "0"
+        description: >-
+          the timer that clocks the on-board LCD would not start, so the display is blank or
+          frozen. Nothing streamed to this app is affected — only the readout on the rig itself
 
   - { kind: static_assert, expr: "sizeof(lumex_lcd_task_error_ids) == 4", message: "Size of lumex_lcd_task_error_ids must be 4 bytes" }
 
   - kind: enum
     name: task_monitor_task_error_ids
     base: uint32_t
+    task: TASK_OFFSET_TASK_MONITOR
     values:
-      - { name: ERROR_TASK_MONITOR_INVALID_THREAD_ID_POINTER, value: "0" }
+      - name: ERROR_TASK_MONITOR_INVALID_THREAD_ID_POINTER
+        value: "0"
+        description: >-
+          the task monitor was handed a missing thread handle at startup and parked itself, so
+          the per-task stack and state table stays empty for this session. A firmware build
+          fault; the rest of the board runs normally
 
   - { kind: static_assert, expr: "sizeof(task_monitor_task_error_ids) == 4", message: "Size of task_monitor_task_error_ids must be 4 bytes" }
 
   - kind: enum
     name: pid_controller_task_error_ids
     base: uint32_t
+    task: TASK_OFFSET_PID_CONTROLLER
     values:
-      - { name: WARNING_PID_CONTROLLER_MESSAGE_QUEUE_FULL, value: "WARNING_FLAG" }
+      - name: WARNING_PID_CONTROLLER_MESSAGE_QUEUE_FULL
+        value: "WARNING_FLAG"
+        description: >-
+          the PID controller could not hand its new duty cycle to the brake task, whose queue was
+          full, so the brake is still running on the previous value. It backs off and retries; a
+          steady run of these means the brake task is not keeping up
 
   - { kind: static_assert, expr: "sizeof(pid_controller_task_error_ids) == 4", message: "Size of pid_controller_task_error_ids must be 4 bytes" }
 
   - kind: enum
+    name: usb_controller_task_error_ids
+    base: uint32_t
+    comment: |-
+      The TX path drops telemetry batches rather than stall when the CDC endpoint stays busy
+      (bounded retries, then give up). That loss used to be silent; this warning is emitted at
+      most once per second while it is happening, so a saturated link shows up in the host's
+      event log instead of masquerading as a quiet stream.
+
+      The _BUFFER_OVERFLOW warnings below are the same idea one stage earlier, on the read side.
+      Each names a circular buffer whose producer lapped this task's reader -- a full lap, so
+      samples that were never read have been overwritten. Reported per buffer, because which one
+      it is says what went wrong: one stream means that producer outran the drain, all of them at
+      once means the USB task itself stalled. They are warnings, matching TX_BATCH_DROPPED: data
+      is lost but the link and the session carry on. Rate-limited the same way, since a reader
+      that has fallen a lap behind usually stays behind for a while.
+
+      Only buffers this task reads are covered. An osMessageQueue that fills is rejected at the
+      *writer*, which is a different report belonging to the task that was pushing.
+    task: TASK_OFFSET_USB_CONTROLLER
+    values:
+      - name: WARNING_USB_TX_BATCH_DROPPED
+        value: "WARNING_FLAG"
+        description: >-
+          the board gave up flushing a batch of telemetry and threw those samples away — its USB
+          transmit path is saturated. Reported at most once a second while it is happening, so
+          one line can stand for many lost batches
+      - name: WARNING_USB_OPTICAL_ENCODER_BUFFER_OVERFLOW
+        description: >-
+          the optical encoder filled its buffer faster than the USB task drained it, so encoder
+          samples were overwritten before they could be sent and this run has a gap in speed and
+          acceleration
+      - name: WARNING_USB_FORCE_SENSOR_BUFFER_OVERFLOW
+        description: >-
+          the force sensor filled its buffer faster than the USB task drained it, so force
+          samples were overwritten before they could be sent and this run has a gap in force and
+          torque
+      - name: WARNING_USB_BPM_BUFFER_OVERFLOW
+        description: >-
+          the brake task filled its buffer faster than the USB task drained it, so duty-cycle
+          samples were overwritten before they could be sent and this run has a gap in what the
+          brake was doing
+      - name: WARNING_USB_TASK_ERROR_BUFFER_OVERFLOW
+        description: >-
+          faults were reported faster than the USB task could send them and the oldest were
+          overwritten, so some errors and warnings from this board are missing from this log
+          entirely — most likely the ones from before this app connected
+
+  - { kind: static_assert, expr: "sizeof(usb_controller_task_error_ids) == 4", message: "Size of usb_controller_task_error_ids must be 4 bytes" }
+
+  - kind: enum
     name: force_sensor_adc_task_error_ids
     base: uint32_t
+    task: TASK_OFFSET_FORCE_SENSOR_ADC
     values:
-      - { name: ERROR_FORCE_SENSOR_ADC_START_FAILURE, value: "0" }
+      - name: ERROR_FORCE_SENSOR_ADC_START_FAILURE
+        value: "0"
+        description: >-
+          the on-chip ADC would not start a conversion, so the force sensor task stopped reading.
+          Force telemetry ends at this timestamp and does not come back without a reset
 
   - { kind: static_assert, expr: "sizeof(force_sensor_adc_task_error_ids) == 4", message: "Size of force_sensor_adc_task_error_ids must be 4 bytes" }
 
   - kind: enum
     name: force_sensor_ads1115_error_ids
     base: uint32_t
+    task: TASK_OFFSET_FORCE_SENSOR_ADS1115
     values:
-      - { name: ERROR_FORCE_SENSOR_ADS1115_INIT_FAILURE, value: "0" }
-      - { name: WARNING_FORCE_SENSOR_ADS1115_TRIGGER_CONVERSION_FAILURE, value: "WARNING_FLAG" }
-      - { name: WARNING_FORCE_SENSOR_ADS1115_GET_CONVERSION_FAILURE }
-      - { name: WARNING_FORCE_SENSOR_ADS1115_CONFIG_FAILURE }
+      - name: ERROR_FORCE_SENSOR_ADS1115_INIT_FAILURE
+        value: "0"
+        description: >-
+          the ADS1115 force sensor did not answer over I2C at startup — most often it is simply
+          not plugged in — so the task parked itself. Reported once per boot: connecting the
+          sensor afterwards will not bring it back, the board has to be reset with it attached
+      - name: WARNING_FORCE_SENSOR_ADS1115_TRIGGER_CONVERSION_FAILURE
+        value: "WARNING_FLAG"
+        description: >-
+          the ADS1115 did not accept the command to start a conversion, so that reading is lost.
+          The task backs off and retries; a steady run of these points at the I2C wiring
+      - name: WARNING_FORCE_SENSOR_ADS1115_GET_CONVERSION_FAILURE
+        description: >-
+          the ADS1115 either never signalled its conversion ready or would not hand the result
+          over, so that reading is lost. The task backs off and retries
+      - name: WARNING_FORCE_SENSOR_ADS1115_CONFIG_FAILURE
+        description: >-
+          a gain, sample-rate or mode change could not be written to the ADS1115, so it is still
+          sampling on its previous settings and the force readings do not yet reflect what the
+          Config page shows. The task backs off and retries
 
   - { kind: static_assert, expr: "sizeof(force_sensor_ads1115_error_ids) == 4", message: "Size of force_sensor_ads1115_error_ids must be 4 bytes" }
 
@@ -185,14 +305,17 @@ sections:
 
   - kind: comment
     text: |-
-      ---- Host -> device framed command envelope -------------------------------
-      Inbound (PC -> STM32) frames are wrapped so the parser can resync after a ring
-      overflow drops bytes mid-stream:
+      ---- Framed envelope (both directions, as of v5) ---------------------------
+      Every frame on the wire -- PC -> STM32 commands and, since v5, the STM32 -> PC
+      stream too -- is wrapped so the receiver can detect corruption and resync after
+      bytes are lost mid-stream:
         [uint16_t USB_FRAME_SOF][usb_msg_header_t header][payload bytes][uint16_t crc]
       crc is CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF) computed over the header
       bytes followed by the payload bytes (the SOF marker and crc field themselves are
       excluded). Multi-byte fields are little-endian, matching both the STM32 and the
-      x86 host. The same envelope is reused for the host-side parser.
+      x86 host. A receiver scans to the SOF, checks the CRC, and on a mismatch treats
+      the SOF as spurious -- so a cut-off record is *detected*, not inferred from
+      implausible header bytes as the unframed v4 stream had to.
 
   - { kind: define, name: USB_FRAME_SOF,      value: "0xA55Au" }
   - { kind: define, name: USB_FRAME_CRC_INIT, value: "0xFFFFu" }
@@ -223,7 +346,31 @@ sections:
       against v2 firmware those pushes would be silently unknown commands and the dyno
       would run defaults while the host displays the values it believes it set.
 
-  - { kind: define, name: USB_PROTOCOL_VERSION, value: "3u" }
+      v4 added session_controller_output_data (torque / power stream). A v4 host expects
+      those readouts during a session; against v3 firmware they would simply never arrive
+      and torque/power would sit blank next to live sensor data with nothing saying why.
+
+      v5 framed the device->host stream with the SOF+CRC envelope the other direction
+      already used. A v5 host scans for SOF markers and verifies CRCs; against unframed
+      v4 firmware nothing it receives would carry a SOF and the whole stream would be
+      skipped as garbage -- and v4 hosts would misread v5's SOF/CRC bytes as data.
+
+      v6 removed session_controller_output_data again: torque and power are derived on
+      the host from the raw force and velocity streams, so the constants behind them
+      (moment of inertia, force-sensor lever arm, gear ratio) live on the PC and can be
+      corrected after a run instead of being baked into the recording. Their sysconfig
+      ids went with them, which renumbers every parameter after them -- a v6 host pushing
+      to v5 firmware would write PID gains into mechanical constants. Hence the version
+      bump: the handshake refuses the link rather than letting that happen.
+
+      v7 added usb_tx_batch_trailer, which closes every CDC transfer. A v7 host uses it to
+      account for the bytes in each transfer, so it can tell a transfer that arrived short
+      from one that never left; against v6 firmware no trailer ever arrives and the host's
+      accounting would report the whole stream as unaccounted-for. In the other direction a
+      v6 host would decode the trailer as an unknown STATUS record and log it a few hundred
+      times a second.
+
+  - { kind: define, name: USB_PROTOCOL_VERSION, value: "7u" }
 
   - kind: comment
     text: |-
@@ -337,6 +484,40 @@ sections:
 
   - { kind: static_assert, expr: "sizeof(session_state_event) == 4 + 4", message: "Size of session_state_event must be 8 bytes" }
 
+  - kind: comment
+    text: |-
+      Transfer accounting (STM32 -> PC): emitted as USB_MSG_STATUS with task_offset
+      TASK_OFFSET_USB_CONTROLLER as the *last* record of every CDC transfer, describing the
+      transfer it closes. It is a framing-layer record, not telemetry: the host's parser
+      consumes it for accounting and never publishes it as a message.
+
+      This exists to make a short transfer distinguishable from a lost one. The framed
+      envelope already tells the host that bytes went missing (a record whose CRC fails, or
+      whose SOF never arrives), but not *where* they went missing -- and the two answers point
+      at opposite halves of the link. batch_len is the exact byte count the device handed to
+      CDC_Transmit_FS, including this trailer, so a host that counts the bytes it actually
+      decoded and skipped between two trailers learns which it is:
+
+        observed == batch_len, seq contiguous   the transfer arrived whole; any loss the
+                                                parser reported happened inside a record the
+                                                device itself framed wrong
+        observed <  batch_len, seq contiguous   the transfer arrived short -- the device
+                                                framed and submitted bytes that never landed
+        seq gap                                 an entire transfer the device believes it
+                                                sent never arrived
+
+      seq counts transfers the driver *accepted*: it advances only when CDC_Transmit_FS
+      returns something other than USBD_BUSY, so a batch the firmware gave up on (and reported
+      as WARNING_USB_TX_BATCH_DROPPED) never burns a number and never shows up here as a gap.
+
+  - kind: struct
+    name: usb_tx_batch_trailer
+    fields:
+      - { type: uint32_t, name: batch_seq, comment: "monotonic per accepted transfer; a gap = a whole transfer lost" }
+      - { type: uint32_t, name: batch_len, comment: "bytes in this transfer, including this trailer record" }
+
+  - { kind: static_assert, expr: "sizeof(usb_tx_batch_trailer) == 4 + 4", message: "Size of usb_tx_batch_trailer must be 8 bytes" }
+
   # (The force-sensor task defines no host command opcodes: its ADS1115 config is now runtime
   # sysconfig -- ADS1115_RATE and the other ADS1115_* params -- applied by ReconcileConfig.)
 
@@ -379,33 +560,52 @@ sections:
       One id per runtime-tunable parameter. The name matches the config.h #define
       that provides its boot default. Ids are positional: append only.
     params:
-      - { name: DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M, type: float, min: 1.0e-6, max: 1000.0, category: "Mechanical", unit: "m", description: "Lever arm from the force sensor to the shaft center, used in the torque calculation." }
-      - { name: MOMENT_OF_INERTIA_KG_M2, type: float, min: 1.0e-9, max: 1.0e6, category: "Mechanical", unit: "kg·m²", description: "Rotating assembly's moment of inertia, used in the torque calculation." }
-      - { name: K_P, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Proportional gain." }
-      - { name: K_I, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Integral gain." }
-      - { name: K_D, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Derivative gain." }
-      - { name: PID_MAX_OUTPUT, type: float, min: 1.0e-6, max: 1.0e6, category: "PID Controller", unit: "", description: "Normalization bound for the PID output before throttle/brake mixing." }
-      - { name: THROTTLE_GAIN, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Gain applied to the throttle half of the PID output mix." }
-      - { name: BRAKE_GAIN, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Gain applied to the brake half of the PID output mix." }
-      - { name: HORIZONTAL_BIAS, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Horizontal offset of the throttle/brake mixing curve." }
-      - { name: VERTICAL_BIAS, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Vertical offset of the throttle/brake mixing curve." }
+      # The torque constants (lever arm, moment of inertia) and the gear ratio are NOT here:
+      # nothing on the device reads them now that the host derives torque and power, so they
+      # are host-only settings kept in the app's own database. Removing them renumbered every
+      # id below -- see the v6 note above.
+      #
+      # Every range below is the full range of the type the value logically is -- a millisecond
+      # delay is a uint16_t, so 0..65535; a retry count is a uint8_t, so 0..255. `type:` stays
+      # uint32/float because that is the *wire* encoding (each parameter is one 32-bit word);
+      # the min/max is where the narrower type is expressed. The point is that these bounds
+      # exist to stop a value that cannot be represented, not to stop one that is a bad idea:
+      # the extreme end of each range is reachable on purpose. A 0 ms delay does mean the task
+      # stops yielding, and that is allowed.
+      #
+      # Floats have no width to read a range off, so theirs is invented: +-1e9, wide enough not
+      # to be in anyone's way and finite so a typo still cannot get through as inf. The two duty
+      # cycles are the exception, because 0..1 *is* the type there -- they are a fraction of the
+      # PWM period, and BPM::SetDutyCycle multiplies by the timer's autoreload into a uint16_t,
+      # so a value above 1 does not mean "harder", it means the compare register wraps.
+      - { name: K_P, type: float, min: -1.0e9, max: 1.0e9, category: "PID Controller", unit: "", description: "Proportional gain." }
+      - { name: K_I, type: float, min: -1.0e9, max: 1.0e9, category: "PID Controller", unit: "", description: "Integral gain." }
+      - { name: K_D, type: float, min: -1.0e9, max: 1.0e9, category: "PID Controller", unit: "", description: "Derivative gain." }
+      - { name: PID_MAX_OUTPUT, type: float, min: -1.0e9, max: 1.0e9, category: "PID Controller", unit: "", description: "Normalization bound for the PID output before throttle/brake mixing." }
+      - { name: THROTTLE_GAIN, type: float, min: -1.0e9, max: 1.0e9, category: "PID Controller", unit: "", description: "Gain applied to the throttle half of the PID output mix." }
+      - { name: BRAKE_GAIN, type: float, min: -1.0e9, max: 1.0e9, category: "PID Controller", unit: "", description: "Gain applied to the brake half of the PID output mix." }
+      - { name: HORIZONTAL_BIAS, type: float, min: -1.0e9, max: 1.0e9, category: "PID Controller", unit: "", description: "Horizontal offset of the throttle/brake mixing curve." }
+      - { name: VERTICAL_BIAS, type: float, min: -1.0e9, max: 1.0e9, category: "PID Controller", unit: "", description: "Vertical offset of the throttle/brake mixing curve." }
       - { name: MIN_DUTY_CYCLE_PERCENT, type: float, min: 0.0, max: 1.0, category: "BPM", unit: "0–1", description: "Lower clamp on the brake PWM duty cycle." }
       - { name: MAX_DUTY_CYCLE_PERCENT, type: float, min: 0.0, max: 1.0, category: "BPM", unit: "0–1", description: "Upper clamp on the brake PWM duty cycle." }
-      - { name: MAX_FORCE_LBF, type: float, min: 1.0e-3, max: 1.0e5, category: "Force Sensor", subsection: "All", unit: "lbf", description: "Full-scale force of the load cell; scales raw ADC counts to newtons." }
-      - { name: SESSIONCONTROLLER_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "Session Controller", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
-      - { name: BPM_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "BPM", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
-      - { name: FORCESENSOR_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "Force Sensor", subsection: "All", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
-      - { name: FORCESENSOR_COMMAND_POLL_OSDELAY, type: uint32, min: 1, max: 60000, category: "Force Sensor", subsection: "All", unit: "ms", description: "Bounded wait on the enable queue while the sensor is idle, so USB commands still get serviced." }
-      - { name: FORCESENSOR_CONVERSION_TIMEOUT_MS, type: uint32, min: 1, max: 60000, category: "Force Sensor", subsection: "I2C", unit: "ms", description: "How long to wait for the ADS1115 conversion-ready alert before abandoning the sample." }
-      - { name: OPTICAL_ENCODER_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "Optical Encoder", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
-      - { name: NUM_APERTURES, type: uint32, min: 1, max: 100000, category: "Optical Encoder", unit: "", description: "Apertures on the encoder wheel (tied to the physical 3D-printed apparatus)." }
-      - { name: PID_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "PID Controller", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
-      - { name: USB_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "USB", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
-      - { name: USB_TX_FLUSH_MAX_RETRIES, type: uint32, min: 0, max: 1000, category: "USB", unit: "attempts", description: "Bounded retries when flushing a full TX buffer before dropping the batch." }
-      - { name: LCD_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "LCD", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
-      - { name: LED_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "LED", unit: "ms", description: "Blink half-period of the status LED task." }
-      - { name: TASK_WARNING_RETRY_OSDELAY, type: uint32, min: 1, max: 60000, category: "Tasks & Monitoring", unit: "ms", description: "Back-off a task sleeps after reporting a warning before retrying." }
-      - { name: TASK_MONITOR_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "Tasks & Monitoring", unit: "ms", description: "How often the task monitor samples every task's state and free stack." }
+      - { name: MAX_FORCE_LBF, type: float, min: -1.0e9, max: 1.0e9, category: "Force Sensor", subsection: "All", unit: "lbf", description: "Full-scale force of the load cell; scales raw ADC counts to newtons." }
+      # Task loop periods and timeouts, all milliseconds: uint16_t, so 0 to 65535 (~65 s).
+      - { name: SESSIONCONTROLLER_TASK_OSDELAY, type: uint32, min: 0, max: 65535, category: "Session Controller", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
+      - { name: BPM_TASK_OSDELAY, type: uint32, min: 0, max: 65535, category: "BPM", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
+      - { name: FORCESENSOR_TASK_OSDELAY, type: uint32, min: 0, max: 65535, category: "Force Sensor", subsection: "All", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
+      - { name: FORCESENSOR_COMMAND_POLL_OSDELAY, type: uint32, min: 0, max: 65535, category: "Force Sensor", subsection: "All", unit: "ms", description: "Bounded wait on the enable queue while the sensor is idle, so USB commands still get serviced." }
+      - { name: FORCESENSOR_CONVERSION_TIMEOUT_MS, type: uint32, min: 0, max: 65535, category: "Force Sensor", subsection: "I2C", unit: "ms", description: "How long to wait for the ADS1115 conversion-ready alert before abandoning the sample." }
+      - { name: OPTICAL_ENCODER_TASK_OSDELAY, type: uint32, min: 0, max: 65535, category: "Optical Encoder", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
+      # A slot count on a wheel: uint16_t.
+      - { name: NUM_APERTURES, type: uint32, min: 0, max: 65535, category: "Optical Encoder", unit: "", description: "Apertures on the encoder wheel (tied to the physical 3D-printed apparatus)." }
+      - { name: PID_TASK_OSDELAY, type: uint32, min: 0, max: 65535, category: "PID Controller", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
+      - { name: USB_TASK_OSDELAY, type: uint32, min: 0, max: 65535, category: "USB", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
+      # A retry count: uint8_t.
+      - { name: USB_TX_FLUSH_MAX_RETRIES, type: uint32, min: 0, max: 255, category: "USB", unit: "attempts", description: "Bounded retries when flushing a full TX buffer before dropping the batch." }
+      - { name: LCD_TASK_OSDELAY, type: uint32, min: 0, max: 65535, category: "LCD", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
+      - { name: LED_TASK_OSDELAY, type: uint32, min: 0, max: 65535, category: "LED", unit: "ms", description: "Blink half-period of the status LED task." }
+      - { name: TASK_WARNING_RETRY_OSDELAY, type: uint32, min: 0, max: 65535, category: "Tasks & Monitoring", unit: "ms", description: "Back-off a task sleeps after reporting a warning before retrying." }
+      - { name: TASK_MONITOR_TASK_OSDELAY, type: uint32, min: 0, max: 65535, category: "Tasks & Monitoring", unit: "ms", description: "How often the task monitor samples every task's state and free stack." }
       # ADS1115 config registers (I2C force-sensor path). Appended here to keep wire ids stable;
       # the host groups them under Force Sensor > I2C by category/subsection, not by position. The
       # force-sensor task re-applies any change over I2C on its next loop (ReconcileConfig). Codes
@@ -418,6 +618,21 @@ sections:
       - { name: ADS1115_COMP_POL, type: enum, category: "Force Sensor", subsection: "I2C", unit: "", description: "ADS1115 ALERT/RDY pin active polarity.", options: [ {value: 0, label: "Active low"}, {value: 1, label: "Active high"} ] }
       - { name: ADS1115_COMP_LAT, type: enum, category: "Force Sensor", subsection: "I2C", unit: "", description: "ADS1115 comparator latching of the ALERT/RDY pin.", options: [ {value: 0, label: "Non-latching"}, {value: 1, label: "Latching"} ] }
       - { name: ADS1115_COMP_QUE, type: enum, category: "Force Sensor", subsection: "I2C", unit: "", description: "ADS1115 comparator queue: conversions before ALERT asserts (or disable the comparator).", options: [ {value: 0, label: "Assert after 1"}, {value: 1, label: "Assert after 2"}, {value: 2, label: "Assert after 4"}, {value: 3, label: "Disabled"} ] }
+      # Diagnostic, and the only parameter here that changes what the data *means* rather than how
+      # it is produced. It was a compile-time define (DEBUG_USB_CONTROLLER_MOCK_MESSAGES), which
+      # meant testing the link end-to-end cost a rebuild and a flash, and a board flashed with it
+      # on gave no sign of it. As a runtime parameter it can be turned on against a board already
+      # in the field -- so the app labels every plot as fabricated while it is enabled, because
+      # that is now a state a running dyno can be put into rather than a build you had to make.
+      #
+      # The first parameter to carry its own `default:` rather than naming a config.h macro: it is
+      # device state and nothing else, so there is no compile-time setting for it to agree with,
+      # and a macro would only suggest that rebuilding with it changed something. Default 0 --
+      # off is the only safe way for a board to come up, since anything it streams is invented.
+      - { name: USB_MOCK_MESSAGES, type: enum, default: 0, category: "USB", unit: "", description: "Replace the sensor stream with synthetic counter data (and report a session as running, since the host shows sensor data only during one). For exercising the link with no sensors attached. Leave disabled for any real run: nothing it streams is a measurement.", options: [ {value: 0, label: "Disabled"}, {value: 1, label: "Enabled (fake data)"} ] }
+      # GEAR_RATIO is deliberately NOT here: it is a compile-time config.h setting (editable via
+      # the app's compile-time overrides, applied on the next build/flash), and it is not streamed
+      # either -- the host reads it from its own copy of the firmware config for the geared readouts.
 
   - { kind: static_assert, expr: "sizeof(sysconfig_param_t) == 2", message: "Size of sysconfig_param_t must be 2 bytes" }
 
@@ -464,6 +679,13 @@ sections:
       - { type: uint32_t, name: raw_value, comment: "Really just padding to match the other output data types" }
 
   - { kind: static_assert, expr: "sizeof(bpm_output_data) == 4 + 4 + 4", message: "Size of bpm_output_data must be 12 bytes" }
+
+  # Torque and power are deliberately absent: the device no longer derives them. It streams
+  # what it measures (force, velocity, acceleration, duty cycle) and the host computes
+  # torque = I*alpha + F*r and power = torque * omega from that, using constants it keeps in
+  # its own database. Recomputing a past run after correcting the inertia or the lever arm is
+  # then just a matter of re-reading the raw stream, rather than being impossible because the
+  # wrong numbers were already baked in on the device.
 
   - kind: struct
     name: task_monitor_output_data

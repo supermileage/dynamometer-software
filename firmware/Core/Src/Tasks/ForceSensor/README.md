@@ -28,7 +28,7 @@ idle, when enabled they sample every `FORCESENSOR_TASK_OSDELAY` and convert via
 `force = f(raw) … * MAX_FORCE_LBF * LBF_TO_NEWTON`.
 
 ## ADS1115 variant (i2c) — `TASK_OFFSET_FORCE_SENSOR_ADS1115`
-- Uses the [[ADS1115 driver]] over HAL I2C (`forceSensorADS1115Handle`), single-shot at `ADS1115_SAMPLE_SPEED`.
+- Uses the [[ADS1115 driver]] over HAL I2C (`forceSensorADS1115Handle`), single-shot at `ADS1115_RATE`.
 - `triggerConversion()` → wait on the ALERT/RDY GPIO (EXTI sets `ads1115_alert_status`) → `getConversion()`.
 - Errors: `ERROR_FORCE_SENSOR_ADS1115_INIT_FAILURE`;
   warnings `WARNING_FORCE_SENSOR_ADS1115_TRIGGER_CONVERSION_FAILURE`, `_GET_CONVERSION_FAILURE`.
@@ -39,7 +39,7 @@ idle, when enabled they sample every `FORCESENSOR_TASK_OSDELAY` and convert via
 - Error: `ERROR_FORCE_SENSOR_ADC_START_FAILURE`.
 
 ## Key constants (config.h)
-- `MAX_FORCE_LBF`, `FORCESENSOR_TASK_OSDELAY`, `FORCESENSOR_CIRCULAR_BUFFER_SIZE`, `ADS1115_SAMPLE_SPEED`
+- `MAX_FORCE_LBF`, `FORCESENSOR_TASK_OSDELAY`, `FORCESENSOR_CIRCULAR_BUFFER_SIZE`, `ADS1115_RATE`
 
 ## Related
 [[SessionController]] · [[ADS1115 driver]] · [[MessagePassing]]
