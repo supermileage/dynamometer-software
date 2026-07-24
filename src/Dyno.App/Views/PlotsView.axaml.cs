@@ -51,6 +51,13 @@ public partial class PlotsView : UserControl
     /// <summary>Saves the recorded channels to a CSV the user picks. The dialog belongs here rather
     /// than in the view model because it needs this control's window; the file's contents come from
     /// <see cref="PlotsViewModel.WriteExport"/>, which is where the format is decided and tested.</summary>
+    /// <remarks>The picker call is inside the try, and that is the whole point of the try. This
+    /// handler is <c>async void</c>, so an exception escaping it is never returned to a caller — it
+    /// reaches the synchronization context unobserved and, with no global handler installed, ends
+    /// the process. Opening the dialog was outside the try, and on Linux that call is a DBus request
+    /// to xdg-desktop-portal rather than anything in-process: when the portal did not answer, the
+    /// button took the app down instead of reporting it, which is what "Export CSV crashes" was.
+    /// </remarks>
     private async void OnExportClick(object? sender, RoutedEventArgs e)
     {
         var main = DataContext as MainWindowViewModel;
@@ -65,28 +72,31 @@ public partial class PlotsView : UserControl
             return;
         }
 
-        var storage = TopLevel.GetTopLevel(this)?.StorageProvider;
-        if (storage is null)
-        {
-            return;
-        }
-
-        var file = await storage.SaveFilePickerAsync(
-            new FilePickerSaveOptions
-            {
-                Title = "Export plot data",
-                SuggestedFileName = $"dyno-export-{DateTime.Now:yyyyMMdd-HHmmss}.csv",
-                DefaultExtension = "csv",
-                FileTypeChoices = [new FilePickerFileType("CSV") { Patterns = ["*.csv"] }],
-            }
-        );
-        if (file is null)
-        {
-            return; // cancelled
-        }
-
         try
         {
+            var storage = TopLevel.GetTopLevel(this)?.StorageProvider;
+            if (storage is null)
+            {
+                main!.AddEvent(
+                    "[ERR ] this window cannot open a file dialog — no storage provider"
+                );
+                return;
+            }
+
+            var file = await storage.SaveFilePickerAsync(
+                new FilePickerSaveOptions
+                {
+                    Title = "Export plot data",
+                    SuggestedFileName = $"dyno-export-{DateTime.Now:yyyyMMdd-HHmmss}.csv",
+                    DefaultExtension = "csv",
+                    FileTypeChoices = [new FilePickerFileType("CSV") { Patterns = ["*.csv"] }],
+                }
+            );
+            if (file is null)
+            {
+                return; // cancelled
+            }
+
             // Read the buffers on the UI thread (their single-threaded contract) and write from
             // here too: the file is small enough that the alternative -- copying every sample out
             // first just to move the write off-thread -- would cost more than it saves.
@@ -97,7 +107,13 @@ public partial class PlotsView : UserControl
         }
         catch (Exception ex)
         {
-            main!.AddEvent($"[ERR ] export failed — {ex.Message}");
+            main!.AddEvent(
+                ex is TimeoutException or OperationCanceledException
+                    ? "[ERR ] export failed — the system file dialog did not respond. On Linux this "
+                        + "is xdg-desktop-portal; check that a portal backend for your desktop is "
+                        + "installed and running"
+                    : $"[ERR ] export failed — {ex.GetType().Name}: {ex.Message}"
+            );
         }
     }
 
