@@ -1,6 +1,6 @@
 ---
 module: SessionController
-summary: Central orchestrator — runs the UI state machine, coordinates every task, computes torque/power.
+summary: Central orchestrator — runs the UI state machine and coordinates every task.
 code:
   - Core/Src/Tasks/SessionController/SessionController.cpp
   - Core/Inc/Tasks/SessionController/SessionController.hpp
@@ -19,7 +19,7 @@ related: [BPM, PID, USB, LCD, ForceSensor, OpticalSensor, TimeKeeping]
 # SessionController — orchestrator
 
 The top-level task. Starts the timestamp timer, validates every queue handle, runs the
-UI/FSM, dispatches commands to all other tasks, and turns sensor data into torque/power.
+UI/FSM, dispatches commands to all other tasks, and drives the LCD readout.
 
 ## Sub-modules
 - **input_manager_interrupts** (C) — button + rotary-encoder GPIO ISRs write `button_press_data`
@@ -40,14 +40,22 @@ UI/FSM, dispatches commands to all other tasks, and turns sensor data into torqu
 4. On PID enable change: send `session_controller_to_pid_controller` (enable + desired ω); await `pid_controller_ack`.
 5. Manual mode: push throttle/BPM duty cycle to the BPM queue.
 6. Drain latest `forcesensor_output_data` + `optical_encoder_output_data` (via `GetLatestFromQueue`-style buffer reads).
-7. Compute torque/power; push RPM/torque/power to the LCD when changed.
+7. Push angular velocity and force to the LCD, each only when its value changed.
 
 ## Queues out — `session_controller_os_task_queues`
 `usb_controller, sd_controller, force_sensor, optical_sensor, bpm_controller, pid_controller, pid_controller_ack, lumex_lcd`
 
-## Physics
-- Torque: `τ = I·α + F·d + τ_losses` (`I`=`MOMENT_OF_INERTIA_KG_M2`, `d`=`DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M`, losses=0 for now).
-- Power: `P = τ·ω`.
+## Nothing is derived here
+Torque and power used to be computed in this task and shown on the LCD. They are not: the device
+streams what it *measures* — angular velocity, acceleration, force — and the host derives the rest
+(`src/Dyno.Core/Derived/DerivedQuantities.cs`, protocol v6 onward).
+
+The constants those formulas need — moment of inertia, lever arm, gear ratio — therefore live on
+the PC, which is the point: a past run can be recomputed after correcting one, where a value baked
+into the firmware at capture time would have been unrecoverable without a re-run.
+
+The LCD still shows the two measured quantities directly, so the dyno reads out usefully with no
+computer attached — it just no longer shows numbers it would have to derive to get.
 
 ## Errors
 - `ERROR_SESSION_CONTROLLER_TIMESTAMP_TIMER_START_FAILURE`, `_INVALID_TASK_QUEUE_POINTER`, `_INVALID_UART1_MUTEX_POINTER`.

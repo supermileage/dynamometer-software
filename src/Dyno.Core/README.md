@@ -20,16 +20,17 @@ unit-testable and headless-runnable. The Avalonia app ([[Dyno.App]]) is a thin s
 | Area | Type | Role |
 |---|---|---|
 | `Serial/` | `ISerialConnection`, `SerialConnection` | `System.IO.Ports` wrapper (115200 8-N-1); `COM3` ↔ `/dev/ttyACM0`. The interface lets tests inject a fake. |
-| `Protocol/` | `StreamParser` | Decodes the **unframed** STM32 → PC stream into typed `DeviceMessage`s. |
+| `Protocol/` | `StreamParser` | Decodes the **framed** STM32 → PC stream into typed `DeviceMessage`s; resyncs on loss and audits each transfer. |
 | `Protocol/` | `UsbFrame` | Builds **framed** PC → STM32 commands (`[SOF][header][payload][crc16]`) and ports the CRC. |
 | `Protocol/` | `ErrorDecoder` | Unpacks the 32-bit `error_code` (task / number / warning-flag). |
 | `Messages/Generated/` | `Messages.cs` | Enums, packed structs and constants — **generated** from the firmware schema by [[message_gen]]. Do not hand-edit. |
 | (root) | `DeviceClient` | Owns the connection, pumps bytes through the parser on a background loop, and correlates command RESPONSEs by `msg_id`. |
 
 ## Receive path (STM32 → PC)
-The firmware emits `usb_msg_header_t`(12 B) + payload back-to-back with **no SOF/CRC** (USB
-CDC is already reliable). `StreamParser.Append` accumulates bytes, reads each header, waits
-for `payload_len` bytes, then dispatches on `(msg_type, task_offset)` to an
+Since v5 the firmware frames this direction too: each record travels as
+`[uint16 SOF][usb_msg_header_t (12 B)][payload][uint16 crc16]` — the same envelope the PC → STM32
+direction always used. `StreamParser.Append` accumulates bytes, scans to a SOF, verifies the CRC over
+header + payload, then dispatches one `DeviceMessage` per valid frame on `(msg_type, task_offset)` to an
 `OpticalEncoderSample` / `ForceSensorSample` / `BpmSample` / `TaskMonitorSample` /
 `DeviceFault` / `CommandResponse` / `DeviceReady` / `SessionState` / `UnknownMessage`.
 
@@ -40,27 +41,26 @@ come back. `task_offset` says which module the payload belongs to, and the two t
 record: `EVENT` + `USB_CONTROLLER` is a device-ready announce, `STREAM` + `OPTICAL_ENCODER` is an
 encoder sample, and so on.
 
-### Resync, and why it has to be strict
-Nothing in this direction is framed — no start marker, no CRC, no length prefix beyond the header's
-own — so **any 12 bytes that look like a header are a header**, and the parser will consume a
-payload's worth of real data behind them. If the board ever drops bytes (a full USB ring is the
-likely cause), every record after the gap is misaligned, and a window onto the middle of one record
-can pass for the start of another.
+### Resync — detected, not guessed
+The envelope is what makes loss **detectable** rather than inferred. Bytes cut from a record leave a
+frame whose CRC fails, or whose SOF never arrives; either way the parser skips a byte and rescans to
+the next SOF. A spurious SOF *inside* payload data is caught the same way — its CRC cannot match — at
+the cost of rescanning from one byte past it. A claimed `payload_len` beyond `MaxPayload` marks the
+SOF as spurious without waiting for bytes that will never come.
 
-`IsPlausible` is therefore as strict as the format allows: an inbound-only `msg_type`, a
-`task_offset` the firmware actually has (they are sparse — 0, 0x10000, 0x20000 …), a payload within
-bounds, and — for every record we can decode — **exactly** the size that record must be. That last
-check matters more than it looks: `TASK_OFFSET_TASK_MONITOR` is 0, so without it a run of zeros is a
-"valid" task, and a stray `4` nearby is a "valid" STREAM type. A real link produced
-`RESPONSE / task 252 / len 4` — impossible twice over (no such task; a RESPONSE is always 8 bytes) —
-and a laxer check reported it upward as a message the device never sent.
+This replaced byte-by-byte header-plausibility guessing (`IsPlausible`), which was as strict as an
+unframed format allowed and still not enough: **any 12 bytes that looked like a header were a
+header**, so a window onto the middle of one record could pass for the start of another. A real link
+produced `RESPONSE / task 252 / len 4` — impossible twice over — and the parser had to reject it on
+per-record size rules rather than on a checksum. With a CRC the question is answered instead of
+argued, and `UnknownMessage` now means only what it says: a well-formed record this host has no
+decoder for.
 
 Bytes skipped to regain alignment are counted and raised on `Resynced` **once alignment is regained**
 (not per read — one lost record is re-scanned across several serial chunks, and reporting per chunk
 turns one fault into a stutter of warnings). `DeviceClient` re-raises it as `StreamResynced`, and the
 app logs it as a warning: dropped bytes are the *only* evidence this link ever loses data, so they
-are a link fault to surface, not noise to swallow. An `UnknownMessage` now means what it says — a
-well-formed record this host has no decoder for.
+are a link fault to surface, not noise to swallow.
 
 ### Transfer accounting, and why a resync alone is not enough
 A resync proves bytes were lost. It cannot say *whose* bytes — whether the firmware failed to send

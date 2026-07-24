@@ -103,11 +103,19 @@ note over USB, Task : sensor tasks sample continuously and fill their circular b
 loop each Run() iteration, while _appReady
     USB -> App : USB_MSG_STREAM  task_monitor_output_data      (TASK_OFFSET_TASK_MONITOR)
     USB -> App : USB_MSG_ERROR / USB_MSG_WARNING  task_error_data\n(task_offset + number packed in error_code)
+    USB -> App : USB_MSG_WARNING  WARNING_USB_TX_BATCH_DROPPED\n(ReportTxDropsIfDue)
+    USB -> App : USB_MSG_WARNING  WARNING_USB_{OPTICAL_ENCODER,FORCE_SENSOR,BPM,TASK_ERROR}_BUFFER_OVERFLOW\n(ReportBufferOverflowsIfDue)
 end
 note over App, USB
   Not sensor data, so not session-gated: a task dying or a stack running out
   is most worth seeing while the dyno sits idle. Draining the task-monitor
   queue unconditionally also stops it filling up between sessions.
+
+  The overflow warnings name the buffer, per buffer, because which one it is *is* the
+  diagnosis: one stream means that producer outran the drain, all four at once means
+  this task stalled. Rate-limited to one per buffer per second — a reader a lap behind
+  usually stays behind, and the report would otherwise add to the load that caused it.
+  Both reports run *after* the drains, so a loss detected on this pass counts.
 end note
 
 == Sensor data — only while _appReady && a session is running ==
@@ -151,6 +159,20 @@ App -> USB : USB_MSG_COMMAND / TASK_OFFSET_USB_CONTROLLER\nopcode, msg_id (>= 1)
 note over USB : HandleUsbLocalCommand() answers directly
 USB -> App : USB_MSG_RESPONSE  echo opcode + msg_id, status
 
+App -> USB : **USB_CMD_SET_SYSCONFIG**\nsysconfig_set_param_body{ param_id, raw_value }
+note over USB
+  sysconfig_set_raw() — range-checked (NaN/Inf rejected
+  for floats); tasks read the store every loop pass, so
+  it takes effect on the next one with no queue or wake-up
+end note
+USB -> App : USB_MSG_RESPONSE  USB_RSP_OK | USB_RSP_MALFORMED
+note over App, USB
+  Applied by the USB task itself — the store is plain RAM — so this OK is still a
+  full-path ack, not a "queued" one. The board persists nothing: the host keeps the
+  values and re-pushes them after every handshake, so a freshly-booted board runs the
+  config.h defaults until it does.
+end note
+
 == Host command — routed to a task (full-path "non-posted" ack) ==
 
 App -> USB : USB_MSG_COMMAND / e.g. TASK_OFFSET_FORCE_SENSOR_ADS1115\nopcode (FORCE_SENSOR_CMD_SET_DATA_RATE), msg_id (>= 1), body
@@ -170,15 +192,46 @@ else no route / body too big / queue full
     USB -> App : USB_MSG_RESPONSE\nUSB_RSP_NOT_SUPPORTED | USB_RSP_MALFORMED | USB_RSP_QUEUE_FULL
 end
 
+== Transfer accounting — closes every CDC transfer (v7) ==
+
+note over USB
+  TransmitBatch()
+  stamp the trailer onto the pending records,
+  then hand the whole buffer to CDC_Transmit_FS
+end note
+
+USB -> App : **USB_MSG_STATUS** / TASK_OFFSET_USB_CONTROLLER\nusb_tx_batch_trailer{ batch_seq, batch_len }
+
+note over App, USB
+  Makes byte loss **attributable**. The SOF/CRC envelope already says bytes went missing;
+  it cannot say whether they were lost above the driver or below it, and those are opposite
+  bugs. Counting the bytes that arrive between two trailers against batch_len answers it:
+    • short            ⇒ the firmware framed and submitted bytes that never landed
+    • batch_seq gap    ⇒ a whole accepted transfer vanished
+    • adds up, but the parser still resyncs ⇒ the device framed a record wrong to begin with
+
+  It is a **trailer, not a header**: the loss it was built to diagnose eats the *leading* bytes
+  of a transfer, exactly where a marker would be destroyed by the thing it is meant to measure.
+
+  batch_seq advances **only on acceptance**, so a batch the driver refused burns no number and
+  cannot be misread as a transfer lost in flight — that case is WARNING_USB_TX_BATCH_DROPPED.
+
+  The host consumes the trailer as framing and never publishes it as a message
+  (StreamParser / BatchAccounting).
+end note
+
 note over App, Task
-  **Framing.** Inbound (PC → STM32) frames are wrapped so the parser can resync:
-  [uint16 SOF][usb_msg_header_t][payload][uint16 CRC-16/CCITT-FALSE].
-  Outbound (STM32 → PC) records are unframed: usb_msg_header_t + payload (USB-CDC is reliable).
+  **Framing — both directions.** Every record is wrapped so the receiver can resync:
+  [uint16 USB_FRAME_SOF][usb_msg_header_t][payload][uint16 CRC-16/CCITT-FALSE].
+  The CRC covers the header + payload bytes; the SOF and the CRC field itself are excluded.
+  A receiver scans to a SOF, checks the CRC, and on a mismatch treats that SOF as spurious —
+  so a cut-off record is *detected*, not inferred from a payload that looks wrong.
+  (v5: outbound records used to be unframed, on the assumption USB-CDC is reliable.)
 
   **Correlation.** msg_id ties each RESPONSE to its COMMAND; msg_id 0 is firmware-internal (no host ack).
 
   **Contract.** All struct/enum layouts are generated from messages_public.yaml (single source of
-  truth); USB_PROTOCOL_VERSION guards that the host and firmware agree at runtime.
+  truth); USB_PROTOCOL_VERSION (currently 7) guards that the host and firmware agree at runtime.
 end note
 
 @enduml

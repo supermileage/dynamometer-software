@@ -21,7 +21,7 @@ Arduino library, ported to the STM32 HAL I2C API.
 
 ## Register/setting defines
 `ADS1115_main.h` — addresses, MUX/PGA/rate/comparator constants, `ADS1115_DEFAULT_ADDRESS`,
-mV-per-count tables. `config.h` selects `ADS1115_SAMPLE_SPEED`.
+mV-per-count tables. `config.h` selects `ADS1115_RATE`.
 
 ## Notes
 - The force-sensor task drives it in **single-shot** mode and waits on the ALERT/RDY GPIO
