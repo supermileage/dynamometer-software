@@ -118,11 +118,6 @@ public partial class SysConfigViewModel : ObservableObject
     public string PendingSummary =>
         PendingCount == 1 ? "1 pending change" : $"{PendingCount} pending changes";
 
-    /// <summary>Raised whenever the effective compile-time values may have moved: after the headers
-    /// are (re)loaded and after an Apply persists edits. Lets readouts derived from a compile-time
-    /// setting (the gear ratio) refresh without polling this page.</summary>
-    public event Action? CompileTimeSettingsChanged;
-
     /// <summary>The effective value of a named compile-time <c>#define</c>: the override saved on
     /// this PC if there is one, else what the header declares. Null when the headers could not be
     /// loaded or no such define exists.</summary>
@@ -349,7 +344,6 @@ public partial class SysConfigViewModel : ObservableObject
             StatusText =
                 $"Saved {Wording.Count(saved, "compile-time setting")} on this PC — nothing on the "
                 + "board has changed until it is rebuilt and flashed";
-            CompileTimeSettingsChanged?.Invoke();
         }
     }
 
@@ -540,7 +534,6 @@ public partial class SysConfigViewModel : ObservableObject
 
         Recount();
         ApplyFilter();
-        CompileTimeSettingsChanged?.Invoke();
     }
 
     private void LoadFile(
