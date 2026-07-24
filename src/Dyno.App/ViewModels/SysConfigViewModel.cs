@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -260,6 +261,183 @@ public partial class SysConfigViewModel : ObservableObject
         }
         return saved;
     }
+
+    // ---- Import / export of the whole page as JSON ----------------------------------------------
+
+    /// <summary>Everything this page holds, as it stands now — the values in force, not the ones
+    /// staged in the boxes. Exporting what you have applied rather than what you have typed is what
+    /// makes the file a description of a configuration rather than of a half-finished edit.
+    /// </summary>
+    public ConfigBundle CurrentConfiguration() =>
+        new(
+            _runtimeParameters.ToDictionary(p => p.Name, p => p.SavedValue, StringComparer.Ordinal),
+            PcConstants.ToDictionary(c => c.Name, c => c.Value, StringComparer.Ordinal),
+            _parameters.ToDictionary(p => p.Name, p => p.SavedValue, StringComparer.Ordinal)
+        );
+
+    /// <summary>
+    /// Loads a bundle into the page. Every setting the page knows is given a value: the file's, if
+    /// it has a usable one, otherwise the setting's own default. Nothing is saved or sent — the
+    /// values are staged exactly as if typed, so the pending count says how much the file changed
+    /// and Apply is still the only thing that commits it.
+    /// </summary>
+    /// <returns>Lines for the event log: what the file did not supply, and what in it could not be
+    /// used. An import that covers everything cleanly returns nothing.</returns>
+    /// <remarks>Staging rather than applying is deliberate. An import can come from a file someone
+    /// else wrote, and a runtime value goes to a connected board the moment it is applied — so the
+    /// user gets to look at what arrived, on a page that marks every changed row, before any of it
+    /// reaches hardware.</remarks>
+    public IReadOnlyList<string> ApplyImported(ConfigBundle bundle)
+    {
+        var report = new List<string>();
+        var missingRuntime = new List<string>();
+        var missingPc = new List<string>();
+        var missingCompileTime = new List<string>();
+
+        foreach (var parameter in _runtimeParameters)
+        {
+            if (!bundle.Runtime.TryGetValue(parameter.Name, out var value))
+            {
+                missingRuntime.Add(parameter.Name);
+                StageRuntimeDefault(parameter);
+            }
+            else if (!parameter.Def.IsValid(value))
+            {
+                // Out of the firmware's range, so it would be refused with MALFORMED. Treated like
+                // an absent value rather than staged as an invalid one, which would leave the page
+                // un-appliable until the user found and fixed the row by hand.
+                report.Add(
+                    $"[WARN] config import: {parameter.Name} = {parameter.Def.Format(value)} is "
+                        + $"outside the accepted {parameter.Def.Format(parameter.Def.Min)} to "
+                        + $"{parameter.Def.Format(parameter.Def.Max)} — left at the firmware default"
+                );
+                StageRuntimeDefault(parameter);
+            }
+            else
+            {
+                parameter.Text = parameter.Def.Format(value);
+            }
+        }
+
+        foreach (var constant in PcConstants)
+        {
+            if (bundle.PcConstants.TryGetValue(constant.Name, out var value))
+            {
+                constant.EditedText = value.ToString(CultureInfo.InvariantCulture);
+            }
+            else
+            {
+                missingPc.Add(constant.Name);
+                constant.ResetCommand.Execute(null);
+            }
+        }
+
+        foreach (var parameter in _parameters)
+        {
+            if (bundle.CompileTime.TryGetValue(parameter.Name, out var value))
+            {
+                if (parameter.IsBool)
+                {
+                    parameter.IsOn = value is "1" or "true" or "True";
+                }
+                else
+                {
+                    parameter.Text = value;
+                }
+            }
+            else
+            {
+                missingCompileTime.Add(parameter.Name);
+                parameter.ResetCommand.Execute(null);
+            }
+        }
+
+        // Names in the file that this build has nothing to put them in — a typo, or a file from a
+        // firmware with settings this one does not have. Worth saying: silently dropping them is
+        // how someone concludes the import worked and the value did not take.
+        report.AddRange(
+            Unknown(
+                bundle.Runtime.Keys,
+                _runtimeParameters.Select(p => p.Name),
+                "runtime parameter"
+            )
+        );
+        report.AddRange(
+            Unknown(bundle.PcConstants.Keys, PcConstants.Select(c => c.Name), "PC constant")
+        );
+        report.AddRange(
+            Unknown(
+                bundle.CompileTime.Keys,
+                _parameters.Select(p => p.Name),
+                "compile-time setting"
+            )
+        );
+
+        report.AddRange(Missing(missingRuntime, "runtime parameter", "the firmware default"));
+        report.AddRange(Missing(missingPc, "PC constant", "its default"));
+        report.AddRange(
+            Missing(missingCompileTime, "compile-time setting", "what the header says")
+        );
+
+        Recount();
+        ApplyFilter();
+        return report;
+    }
+
+    /// <summary>Puts a runtime parameter back on the firmware default. A staged reset is the way to
+    /// say "no override" — but only when there is one to drop, since requesting a reset on a
+    /// parameter already running the default would mark the row changed with nothing to change.
+    /// </summary>
+    private static void StageRuntimeDefault(RuntimeParameterViewModel parameter)
+    {
+        if (parameter.IsOverride)
+        {
+            parameter.ResetCommand.Execute(null);
+        }
+    }
+
+    /// <summary>One line naming what the file left out, rather than one line each. A partial file is
+    /// the normal case — a few parameters pasted from somewhere — and a line per untouched setting
+    /// would be eighty of them, burying both the real warnings here and whatever the log already
+    /// held. Long lists are cut short, because a line nobody can read to the end is no better.
+    /// </summary>
+    private static IEnumerable<string> Missing(
+        IReadOnlyList<string> names,
+        string kind,
+        string fallback
+    ) =>
+        names.Count == 0
+            ? []
+            :
+            [
+                $"[WARN] config import: {Wording.Count(names.Count, kind)} not in the file — "
+                    + $"left at {fallback}: {NameList(names)}",
+            ];
+
+    private static IEnumerable<string> Unknown(
+        IEnumerable<string> fileNames,
+        IEnumerable<string> known,
+        string kind
+    )
+    {
+        var unknown = fileNames.Except(known, StringComparer.Ordinal).ToList();
+        return unknown.Count == 0
+            ? []
+            :
+            [
+                $"[WARN] config import: {Wording.Count(unknown.Count, kind)} in the file that this "
+                    + $"build does not have — ignored: {NameList(unknown)}",
+            ];
+    }
+
+    /// <summary>How many names a warning spells out before it stops counting them.</summary>
+    private const int NamesListed = 12;
+
+    private static string NameList(IReadOnlyList<string> names) =>
+        names.Count <= NamesListed
+            ? string.Join(", ", names)
+            : string.Join(", ", names.Take(NamesListed))
+                + $", and {names.Count - NamesListed} more";
 
     private bool CanApply => PendingCount > 0;
 

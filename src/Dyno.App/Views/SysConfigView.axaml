@@ -69,7 +69,7 @@
     <!-- Toolbar: title + search + the page's single Apply. It lives here, outside the scroller, so
          it stays reachable from either half of the page — both halves save to the same place. -->
     <Border Grid.Row="0" Classes="card" Padding="12">
-      <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" ColumnSpacing="8">
         <TextBlock
           Grid.Column="0"
           Classes="heading"
@@ -94,6 +94,18 @@
         />
         <Button
           Grid.Column="3"
+          Content="Import JSON"
+          Click="OnImportJsonClick"
+          ToolTip.Tip="Load every setting on this page from a JSON file. Anything the file does not mention goes back to its default, and the Errors / Events log says what that was. Nothing is saved or sent to the device until you press Apply."
+        />
+        <Button
+          Grid.Column="4"
+          Content="Export JSON"
+          Click="OnExportJsonClick"
+          ToolTip.Tip="Write every setting on this page to a JSON file — the values in force, not any edit you have staged but not applied."
+        />
+        <Button
+          Grid.Column="5"
           Classes="accent"
           Content="Apply"
           Command="{Binding SysConfig.ApplyCommand}"
