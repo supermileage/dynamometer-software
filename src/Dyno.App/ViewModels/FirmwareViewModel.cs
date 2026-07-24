@@ -202,7 +202,7 @@ public partial class FirmwareViewModel : ObservableObject
 
         OverridesSummary = Overrides.Count switch
         {
-            0 => "No compile-time overrides saved — this builds config.h and debug.h as they are.",
+            0 => "No compile-time overrides saved — this builds the firmware's own settings.",
             1 => "1 compile-time setting from the Config page will be built in:",
             var n => $"{n} compile-time settings from the Config page will be built in:",
         };

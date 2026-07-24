@@ -120,12 +120,20 @@
           </Border>
         </Grid>
         <TextBlock
-          Text="Torque = I·α + F·r, power = torque × ω. The device no longer computes these, so correcting a constant here recomputes what follows instead of needing a rebuild."
+          Text="The dyno's physical constants, which this app derives torque and power from. Correcting one recomputes the readouts from the next sample — no rebuild, no reflash."
           Classes="paramdesc"
           Margin="4,-6,4,0"
           TextWrapping="Wrap"
         />
-        <TextBlock Text="{Binding SysConfig.PcStatusText}" Classes="paramdesc" Margin="4,-8,4,0" />
+        <!-- Only ever carries a warning or the result of an Apply; silent when all is well, so it
+             does not spend a line of the page restating where the values are kept. -->
+        <TextBlock
+          Text="{Binding SysConfig.PcStatusText}"
+          Classes="paramdesc"
+          Margin="4,-8,4,0"
+          TextWrapping="Wrap"
+          IsVisible="{Binding SysConfig.PcStatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+        />
 
         <Border Classes="card">
           <ItemsControl ItemsSource="{Binding SysConfig.PcConstants}">
@@ -341,7 +349,9 @@
         </ItemsControl>
 
         <!-- ===================== COMPILE-TIME ===================== -->
-        <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="10" Margin="4,14,4,0">
+        <!-- No Reload button: the firmware's settings are re-read whenever this page is opened
+             (MainWindowViewModel.Navigate), so there is nothing left for the user to ask for. -->
+        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="10" Margin="4,14,4,0">
           <TextBlock
             Grid.Column="0"
             Classes="sectiontitle"
@@ -349,14 +359,8 @@
             VerticalAlignment="Center"
           />
           <Border Grid.Column="1" Classes="filebadge">
-            <TextBlock Text="saved on this PC · the firmware still builds from config.h / debug.h" />
+            <TextBlock Text="saved on this PC · takes a rebuild and a flash to reach the board" />
           </Border>
-          <Button
-            Grid.Column="3"
-            Content="Reload"
-            Command="{Binding SysConfig.ReloadCommand}"
-            ToolTip.Tip="Re-read config.h and debug.h from disk, discarding edits you haven't applied. Saved values are kept — they live in this PC's database, not in the headers."
-          />
         </Grid>
         <TextBlock Text="{Binding SysConfig.StatusText}" Classes="paramdesc" Margin="4,-6,4,0" />
 
@@ -371,12 +375,16 @@
             <DataTemplate x:DataType="vm:ConfigCategoryViewModel">
               <Border Classes="card">
                 <StackPanel Spacing="4">
-                  <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
-                    <TextBlock Classes="heading" Text="{Binding Name}" VerticalAlignment="Center" />
-                    <Border Grid.Column="1" Classes="filebadge">
-                      <TextBlock Text="{Binding FileLabel}" />
-                    </Border>
-                  </Grid>
+                  <!-- No file badge: which header a setting is declared in is not something the
+                       user of this page can act on, and the badge took the width these section
+                       names need (the longest, "Voltage Reference (should be 3V3)", was clipped). -->
+                  <TextBlock
+                    Classes="heading"
+                    Text="{Binding Name}"
+                    VerticalAlignment="Center"
+                    TextWrapping="Wrap"
+                    Margin="0,0,0,6"
+                  />
                   <ItemsControl ItemsSource="{Binding Parameters}">
                     <ItemsControl.ItemTemplate>
                       <DataTemplate x:DataType="vm:ConfigParameterViewModel">

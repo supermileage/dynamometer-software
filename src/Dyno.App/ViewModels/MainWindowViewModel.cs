@@ -176,6 +176,13 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
             // Cheap, and it means the page can never show a stale answer to "what will this build".
             Firmware.Refresh();
         }
+        else if (page == AppPage.SysConfig)
+        {
+            // Same reasoning, and what the Reload button used to be for: the firmware's headers are
+            // read at startup and can change under the app (a pull, a branch switch, an edit
+            // elsewhere), so re-read them on the way in rather than making the user ask.
+            SysConfig.RefreshFromDisk();
+        }
     }
 
     [ObservableProperty]

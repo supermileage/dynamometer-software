@@ -89,15 +89,16 @@ public partial class SysConfigViewModel : ObservableObject
     [ObservableProperty]
     private string _runtimeStatusText = string.Empty;
 
-    /// <summary>Compile-time section: where the headers came from, how a save went, or why
+    /// <summary>Compile-time section: how many settings were found, how a save went, or why
     /// loading failed.</summary>
     [ObservableProperty]
     private string _statusText = string.Empty;
 
-    /// <summary>PC-constants section: where they are kept, and what the last Apply did with them.
-    /// Its own line rather than sharing the runtime one, because the two sections answer different
-    /// questions — nothing here is ever sent to a device, so "applied to the device" would be the
-    /// wrong reassurance and its absence would read as a failure.</summary>
+    /// <summary>PC-constants section: what the last Apply did with them, or why it could not. Empty
+    /// the rest of the time, and hidden while it is — the section needs no standing caption. Its own
+    /// line rather than sharing the runtime one, because the two sections answer different questions
+    /// — nothing here is ever sent to a device, so "applied to the device" would be the wrong
+    /// reassurance and its absence would read as a failure.</summary>
     [ObservableProperty]
     private string _pcStatusText = string.Empty;
 
@@ -146,7 +147,7 @@ public partial class SysConfigViewModel : ObservableObject
         {
             _store = new SysConfigStore(databasePath);
             saved = _store.LoadAll();
-            RuntimeStatusText = $"Values persist in {_store.DatabasePath} and re-apply on connect";
+            RuntimeStatusText = "Values persist on this PC and re-apply on connect";
         }
         catch (Exception ex)
         {
@@ -183,9 +184,12 @@ public partial class SysConfigViewModel : ObservableObject
             saved = new Dictionary<string, double>();
         }
 
+        // Only the failure is worth a line. Where the values are kept is this app's business, not
+        // something the user has to know to use the page, and it pushed the constants themselves
+        // further down the page to say it.
         PcStatusText = _store is null
             ? "Settings database unavailable — edits won't outlast this session"
-            : $"Values persist in {_store.DatabasePath}; press Apply to save an edit";
+            : string.Empty;
 
         void Add(
             string name,
@@ -214,16 +218,16 @@ public partial class SysConfigViewModel : ObservableObject
             ForceLeverArmName,
             "Force sensor lever arm",
             "m",
-            "Distance from the force sensor to the shaft centre. Scales the F·r term of the torque.",
+            "Distance from the force sensor to the shaft centre. A longer arm means more torque for the same measured force.",
             1.0e-6,
             1000.0,
-            1.0
+            0.1
         );
         Add(
             MomentOfInertiaName,
             "Moment of inertia",
             "kg·m²",
-            "Rotating assembly's moment of inertia. 0 drops the I·α term until it has been measured.",
+            "Rotating assembly's moment of inertia. Leave at 0 until it has been measured: the torque then counts only the force at the arm, ignoring what it takes to spin the rotor up.",
             0.0,
             1.0e6,
             0.0
@@ -232,7 +236,7 @@ public partial class SysConfigViewModel : ObservableObject
             GearRatioName,
             "Gear ratio",
             "",
-            "Sensed shaft to output ratio; 1.0 is direct drive. Multiplies the geared torque and velocity readouts.",
+            "Sensed shaft to output ratio; 1.0 is direct drive. The geared readouts trade one for the other: torque is multiplied by this, speed divided by it.",
             1.0e-6,
             1000.0,
             1.0
@@ -343,8 +347,8 @@ public partial class SysConfigViewModel : ObservableObject
         if (saved > 0)
         {
             StatusText =
-                $"Saved {Wording.Count(saved, "compile-time setting")} on this PC — the firmware still "
-                + "builds from config.h / debug.h, so nothing on the board has changed";
+                $"Saved {Wording.Count(saved, "compile-time setting")} on this PC — nothing on the "
+                + "board has changed until it is rebuilt and flashed";
             CompileTimeSettingsChanged?.Invoke();
         }
     }
@@ -479,10 +483,29 @@ public partial class SysConfigViewModel : ObservableObject
             + _parameters.Count(p => p.IsDirty)
             + PcConstants.Count(c => c.IsDirty);
 
-    /// <summary>Re-reads the headers, discarding staged edits to them. Saved values survive: they
-    /// live in the database, not in the files.</summary>
-    [RelayCommand]
-    private void Reload() => Load();
+    /// <summary>
+    /// Re-reads the firmware's headers if it can be done without cost to the user, so the page
+    /// cannot go on showing what a file said at startup. Called when the page is opened.
+    /// </summary>
+    /// <remarks>
+    /// This replaced a Reload button, which was easy to read as the opposite of Apply and is not:
+    /// Apply saves what you typed, this re-reads what the firmware source says. The reason it has
+    /// to happen at all is that the headers are read once, at startup, and nothing in the app
+    /// writes them — so a pull, a branch switch, or an edit in another editor leaves the page
+    /// describing a firmware that is no longer there.
+    ///
+    /// Skipped outright while any compile-time edit is staged, because re-reading rebuilds the rows
+    /// and would throw that edit away. Losing typed work to a navigation would be a far worse
+    /// surprise than a value that is briefly stale, and the next visit after an Apply picks it up.
+    /// </remarks>
+    public void RefreshFromDisk()
+    {
+        if (_parameters.Any(p => p.IsDirty))
+        {
+            return;
+        }
+        Load();
+    }
 
     private void Load()
     {
@@ -506,7 +529,7 @@ public partial class SysConfigViewModel : ObservableObject
                 LoadFile(dir, "config.h", saved, binaryTogglesAreBool: false);
                 LoadFile(dir, "debug.h", saved, binaryTogglesAreBool: true);
                 LoadFailed = false;
-                StatusText = $"{_parameters.Count} compile-time settings — {dir}";
+                StatusText = $"{_parameters.Count} compile-time settings";
             }
             catch (Exception ex)
             {
@@ -595,7 +618,6 @@ public partial class SysConfigViewModel : ObservableObject
                     new ConfigCategoryViewModel
                     {
                         Name = group.Key.Category.Length > 0 ? group.Key.Category : "Other",
-                        FileLabel = group.Key.FileLabel,
                         Parameters = visible,
                     }
                 );
