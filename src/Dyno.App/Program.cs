@@ -60,5 +60,18 @@ internal static class Program
     }
 
     public static AppBuilder BuildAvaloniaApp() =>
-        AppBuilder.Configure<App>().UsePlatformDetect().WithInterFont().LogToTrace();
+        AppBuilder
+            .Configure<App>()
+            .UsePlatformDetect()
+            // Don't route file dialogs through xdg-desktop-portal on X11. The portal identifies its
+            // caller by opening /proc/<pid>/root, and when that identification fails it refuses the
+            // whole request — "Portal operation not allowed" — rather than falling back to treating
+            // the caller as unsandboxed. That is a refusal we cannot answer: the app is unsandboxed
+            // and same-user, the machine grants every permission the check needs (no hidepid,
+            // ptrace_scope 0, SELinux unconfined), and it still lands, which took out Export CSV.
+            // Avalonia then picks its GTK or managed dialog instead: no DBus, no /proc, no portal.
+            // The option is X11-only and inert elsewhere, so Windows keeps its native IFileDialog.
+            .With(new X11PlatformOptions { UseDBusFilePicker = false })
+            .WithInterFont()
+            .LogToTrace();
 }
