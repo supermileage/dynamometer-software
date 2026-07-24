@@ -306,7 +306,12 @@ int main(void)
   MX_ADC3_Init();
   MX_I2C4_Init();
   /* USER CODE BEGIN 2 */
-  HAL_GPIO_WritePin(LED_BRAKE_GPIO_Port, LED_BRAKE_Pin, (GPIO_PinState)!HAL_GPIO_ReadPin(BTN_BRAKE_GPIO_Port, BTN_BRAKE_Pin));
+  /* Brake indicator off, whatever the button is doing right now. It used to be seeded from the
+     pin, which lit it whenever the board was reset with the brake held -- showing an engaged brake
+     while the FSM comes up idle (and, by design, stays idle until the button is released and
+     pressed again). MX_GPIO_Init has already driven it high; this restates it so the reason is
+     recorded next to the line that used to do the opposite. Active low: SET is off. */
+  HAL_GPIO_WritePin(LED_BRAKE_GPIO_Port, LED_BRAKE_Pin, GPIO_PIN_SET);
   /* Seed the runtime sysconfig store from the config.h defaults before any task runs. */
   sysconfig_init();
   /* USER CODE END 2 */
@@ -887,7 +892,7 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 400-1;
+  htim2.Init.Prescaler = 200-1;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim2.Init.Period = 4294967295;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -1218,6 +1223,17 @@ static void MX_GPIO_Init(void)
   HAL_NVIC_EnableIRQ(ADS1115_ALERT_EXTI_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
+
+  /* The optical encoder input (OP_IN, PF9) sits on EXTI line 9, so its interrupt is EXTI9_5 --
+     the same one BTN_SELECT (PF5) needs. CubeMX therefore enables it above for the button, and
+     the encoder only counts as a side effect of that: delete or move BTN_SELECT and the encoder
+     stops counting silently, with the task still running and reporting a plausible zero.
+     Claim the line explicitly so the encoder's own requirement is recorded and enforced.
+     Enabling an already-enabled IRQ is idempotent, and the priority matches what is set above
+     (5 == configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY, so taskENTER_CRITICAL masks it and the
+     pulse count/timestamp pair can be read atomically). */
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
 
   /* USER CODE END MX_GPIO_Init_2 */
 }

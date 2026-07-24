@@ -47,8 +47,12 @@ sits idle.
 ## Pages
 - **Home** — connect, live telemetry, task monitor.
 - **Config** (`SysConfigViewModel`) — the device's runtime parameters (saved on this PC, pushed over
-  USB) and the firmware's compile-time `#define`s (saved on this PC, built in by the Firmware page).
-  One Apply button commits both; see [[Dyno.Core]] for why saving and applying are separate.
+  USB), the firmware's compile-time `#define`s (saved on this PC, built in by the Firmware page), and
+  the **PC constants** the app derives torque, power and the geared readouts from — host-only values
+  no firmware reads. One Apply button commits all three; see [[Dyno.Core]] for why saving and
+  applying are separate. Every row behaves the same way whichever section it is in: an edit is staged
+  (blue dot), its default and accepted range are stated under it, Reset stages that default, and
+  nothing is written until Apply.
 - **Firmware** (`FirmwareViewModel`) — build the firmware in the Docker toolchain, then flash it over
   SWD, USB DFU or UART. It runs `firmware/Scripts/` and shows their output verbatim.
 
@@ -65,7 +69,11 @@ It holds **tabs**, one per stream it can show — the same window furniture (tab
 pin, hide, resize) serving all of them. Each tab is a `LogTabViewModel` over an existing collection,
 so the panel is indifferent to what a tab actually is and a third is a constructor call, not new
 plumbing. Two exist today:
-- **Errors / Events** — the device link log, newest first, coloured by severity.
+- **Errors / Events** — the device link log, newest first, coloured by severity. A fault from the
+  board is printed with its name and a sentence saying what it means for the run, both looked up in
+  `ErrorCatalog` — generated from the firmware's schema, so the explanation is written next to the
+  code it belongs to and arrives with it. A code this build has never seen still gets its number
+  and its task, which is all that is genuinely known about it.
 - **Console** — build/flash/scan output, appended and followed, plain text. It used to live on the
   Firmware page; moving it here means output is watchable from any page, and the panel reveals this
   tab automatically the moment a command runs (`FirmwareViewModel.OutputStarted`) so output the user

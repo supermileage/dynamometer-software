@@ -61,7 +61,6 @@ public class TelemetryLoggerTests
                 }
             )
         );
-
         string[] lines = Lines(sink);
         Assert.Equal(4, lines.Length); // header + three rows
 
@@ -73,7 +72,7 @@ public class TelemetryLoggerTests
         Assert.Equal((-0.25f).ToString("R", CultureInfo.InvariantCulture), encoder[4]);
         Assert.Equal("", encoder[5]); // force blank
         Assert.Equal("", encoder[6]); // duty blank
-        Assert.Equal("7", encoder[7]);
+        Assert.Equal("7", encoder[7]); // raw value
 
         var force = lines[2].Split(',');
         Assert.Equal("FORCE_SENSOR_ADS1115", force[2]);

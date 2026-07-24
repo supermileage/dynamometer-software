@@ -1,0 +1,132 @@
+<UserControl
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:vm="using:Dyno.App.ViewModels"
+  x:Class="Dyno.App.Views.SettingsView"
+  x:DataType="vm:MainWindowViewModel"
+>
+  <Design.DataContext>
+    <vm:MainWindowViewModel />
+  </Design.DataContext>
+
+  <UserControl.Styles>
+    <Style Selector="TextBox.axisvalue">
+      <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+      <Setter Property="FontSize" Value="12.5" />
+      <Setter Property="MinWidth" Value="130" />
+      <Setter Property="HorizontalContentAlignment" Value="Right" />
+      <Setter Property="CornerRadius" Value="7" />
+    </Style>
+    <Style Selector="TextBox.axisvalue.invalid">
+      <Setter Property="BorderBrush" Value="#E5484D" />
+    </Style>
+  </UserControl.Styles>
+
+  <ScrollViewer>
+    <StackPanel Margin="16" Spacing="14" MaxWidth="720" HorizontalAlignment="Left">
+      <Border Classes="card" Padding="12">
+        <StackPanel Spacing="3">
+          <TextBlock Classes="heading" Text="SETTINGS" />
+          <TextBlock
+            Classes="label"
+            FontSize="12"
+            Text="Application preferences. Device settings live on the SysConfig page."
+          />
+        </StackPanel>
+      </Border>
+
+      <!-- Plots subsection -->
+      <Border Classes="card">
+        <StackPanel Spacing="12">
+          <StackPanel Spacing="3">
+            <TextBlock Classes="heading" Text="PLOTS — Y-AXIS RANGES" />
+            <TextBlock
+              Classes="label"
+              FontSize="12"
+              TextWrapping="Wrap"
+              Text="Each channel's graphs either autoscale to the visible data or hold the fixed range set here. Ranges differ per channel — pick the channel to see the range you are looking at. Changes take effect when you press Apply."
+            />
+          </StackPanel>
+
+          <!-- Channel picker -->
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <TextBlock Classes="label" Text="Channel" VerticalAlignment="Center" />
+            <ComboBox
+              ItemsSource="{Binding Settings.PlotAxes}"
+              SelectedItem="{Binding Settings.SelectedPlotAxis}"
+              MinWidth="250"
+              FontSize="12"
+            >
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:PlotAxisSettingViewModel">
+                  <StackPanel Orientation="Horizontal" Spacing="7">
+                    <Border
+                      Width="10"
+                      Height="10"
+                      CornerRadius="3"
+                      Background="{Binding Channel.Stroke}"
+                      VerticalAlignment="Center"
+                    />
+                    <TextBlock Text="{Binding Title}" VerticalAlignment="Center" />
+                  </StackPanel>
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+          </StackPanel>
+
+          <!-- The selected channel's editor -->
+          <Border
+            Background="{StaticResource SurfaceRaisedBrush}"
+            CornerRadius="8"
+            Padding="12"
+            DataContext="{Binding Settings.SelectedPlotAxis}"
+          >
+            <StackPanel Spacing="10">
+              <TextBlock Classes="label" FontSize="12" Text="{Binding AppliedSummary}" />
+              <CheckBox
+                IsChecked="{Binding AutoScale}"
+                Content="Autoscale (fit the y-axis to the data)"
+              />
+              <Grid
+                ColumnDefinitions="Auto,Auto,24,Auto,Auto"
+                ColumnSpacing="8"
+                IsEnabled="{Binding !AutoScale}"
+              >
+                <TextBlock Grid.Column="0" Classes="label" Text="Min" VerticalAlignment="Center" />
+                <TextBox
+                  Grid.Column="1"
+                  Classes="axisvalue"
+                  Classes.invalid="{Binding HasError}"
+                  Text="{Binding MinText}"
+                />
+                <TextBlock Grid.Column="3" Classes="label" Text="Max" VerticalAlignment="Center" />
+                <TextBox
+                  Grid.Column="4"
+                  Classes="axisvalue"
+                  Classes.invalid="{Binding HasError}"
+                  Text="{Binding MaxText}"
+                />
+              </Grid>
+              <TextBlock
+                Foreground="#E5484D"
+                FontSize="12"
+                Text="{Binding Error}"
+                IsVisible="{Binding HasError}"
+              />
+            </StackPanel>
+          </Border>
+
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <Button Classes="accent" Content="Apply" Command="{Binding Settings.ApplyCommand}" />
+            <TextBlock
+              Classes="label"
+              FontSize="12"
+              Text="{Binding Settings.StatusText}"
+              VerticalAlignment="Center"
+            />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

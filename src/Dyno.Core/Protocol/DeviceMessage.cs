@@ -15,6 +15,8 @@ public sealed record ForceSensorSample(task_offset_t Source, forcesensor_output_
 
 public sealed record BpmSample(bpm_output_data Data) : DeviceMessage;
 
+/// <summary>The SessionController's derived torque/power stream — the same numbers the on-device
+/// LCD shows, computed from the force and encoder streams so the host need not re-derive them.</summary>
 public sealed record TaskMonitorSample(task_monitor_output_data Data) : DeviceMessage;
 
 /// <summary>An error or a warning; <see cref="DecodedError.IsWarning"/> distinguishes them.</summary>

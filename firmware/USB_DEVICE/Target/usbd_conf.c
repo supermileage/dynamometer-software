@@ -95,7 +95,16 @@ void HAL_PCD_MspInit(PCD_HandleTypeDef* pcdHandle)
     HAL_NVIC_SetPriority(OTG_FS_IRQn, 5, 0);
     HAL_NVIC_EnableIRQ(OTG_FS_IRQn);
   /* USER CODE BEGIN USB_OTG_FS_MspInit 1 */
+    /* This interrupt was briefly moved to priority 4, above configMAX_SYSCALL_INTERRUPT_PRIORITY,
+       on the theory that taskENTER_CRITICAL() masking it delayed PCD_WriteEmptyTxFifo long enough
+       for an IN token to catch a half-filled TX FIFO and split a batch. Tested on hardware and
+       disproven: the 16-byte head loss reproduced 2.3 s into the first session. Reverted, because
+       priority 4 quietly requires that nothing on this ISR's path ever call a FreeRTOS API -- true
+       today, but it is vendor code, and a future violation would hang in configASSERT with no
+       obvious cause. Not a constraint worth carrying for a theory that did not pay.
 
+       If the device is ever shown to actually underrun this FIFO, re-apply it with that evidence
+       attached. See the note on the always-exactly-16-bytes constant: this is not a race. */
   /* USER CODE END USB_OTG_FS_MspInit 1 */
   }
 }
@@ -365,9 +374,20 @@ USBD_StatusTypeDef USBD_LL_Init(USBD_HandleTypeDef *pdev)
   HAL_PCD_RegisterIsoInIncpltCallback(&hpcd_USB_OTG_FS, PCD_ISOINIncompleteCallback);
 #endif /* USE_HAL_PCD_REGISTER_CALLBACKS */
   /* USER CODE BEGIN TxRx_Configuration */
+  /* OTG_FS has 320 words of FIFO RAM and every word of it is spoken for below.
+     RX 128 + EP0 IN 48 + EP1 IN 128 + EP2 IN 16 = 320.
+
+     EP2 IN (CDC_CMD_EP, the 8-byte notification endpoint) used to be left out entirely, which
+     is not the same as giving it nothing: HAL_PCDEx_SetTxFiFo only writes DIEPTXFn when it is
+     called for n, so DIEPTXF2 kept its reset value, which addresses a window past the end of
+     this RAM. It is dormant only because ST's CDC class never actually transmits on the
+     command endpoint. The 16 words here are the minimum depth
+     the reference manual allows, taken from EP0 rather than from EP1: EP0 needs 64 bytes per
+     packet and keeps 192, while EP1 is the sensor stream and is left untouched at 512 bytes. */
   HAL_PCDEx_SetRxFiFo(&hpcd_USB_OTG_FS, 0x80);
-  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_FS, 0, 0x40);
+  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_FS, 0, 0x30);
   HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_FS, 1, 0x80);
+  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_FS, 2, 0x10);
   /* USER CODE END TxRx_Configuration */
   }
   return USBD_OK;

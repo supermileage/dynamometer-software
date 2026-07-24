@@ -8,13 +8,18 @@ namespace Dyno.Core;
 /// Records the device's streaming measurement samples to a CSV file for later analysis — the
 /// host-side successor to the firmware-era per-module data logger. Emits one long-format row per
 /// sample with unrelated columns left blank, so independently-streamed channels (e.g. speed and
-/// force) can be re-joined on the device timestamp. Diagnostic and control traffic (task-monitor
+/// force) can be re-joined on the device timestamp. It records only what the device measured --
+/// torque and power are derived on this PC from these columns and the constants in the app's PC
+/// Constants section, so they are reproducible from this file rather than frozen into it. Diagnostic and control traffic (task-monitor
 /// health, faults, responses) is not measurement data and is ignored here — that goes to the
 /// structured event log instead.
 /// </summary>
 /// <remarks>
-/// Not thread-safe: feed it from a single reader (the <see cref="DeviceClient"/> read loop). The
-/// writer is flushed per row so a crash mid-session still leaves a readable file.
+/// Not thread-safe, and rows are buffered until <see cref="Flush"/>: this is the synchronous core
+/// that <see cref="TelemetryLogWorker"/> drives from its own thread. It used to sit directly on
+/// the DeviceClient read loop with a flush per row — and the cost of those flushes (which grows
+/// with the file, antivirus scanners being what they are) eventually stalled the read loop long
+/// enough for the OS serial buffer to overflow, losing stream bytes mid-record.
 /// </remarks>
 public sealed class TelemetryLogger : IDisposable
 {
@@ -41,8 +46,9 @@ public sealed class TelemetryLogger : IDisposable
 
     /// <summary>
     /// Opens (creating parent directories) or appends to a CSV file at <paramref name="path"/>.
-    /// The header is written only for a new/empty file so appended sessions stay valid CSV. The
-    /// stream auto-flushes so rows survive an unclean shutdown.
+    /// The header is written only for a new/empty file so appended sessions stay valid CSV.
+    /// Flushing is the caller's job (see <see cref="TelemetryLogWorker"/>'s interval), which is
+    /// the point: a flush per row is what used to stall the read loop.
     /// </summary>
     public static TelemetryLogger CreateFile(string path)
     {
@@ -55,12 +61,11 @@ public sealed class TelemetryLogger : IDisposable
         bool hasContent = File.Exists(path) && new FileInfo(path).Length > 0;
         var stream = new StreamWriter(
             new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read)
-        )
-        {
-            AutoFlush = true,
-        };
+        );
         return new TelemetryLogger(stream, writeHeader: !hasContent, ownsWriter: true);
     }
+
+    public void Flush() => _writer.Flush();
 
     /// <summary>Writes a CSV row for measurement samples; every other message type is ignored.</summary>
     public void Log(DeviceMessage message)

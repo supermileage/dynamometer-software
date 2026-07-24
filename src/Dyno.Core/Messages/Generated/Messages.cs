@@ -22,8 +22,8 @@ public static class MessageConstants
     public const uint USB_FRAME_CRC_INIT = 0xFFFFu;   // 0xFFFFu
     public const uint USB_FRAME_CRC_POLY = 0x1021u;   // 0x1021u
     public const uint USB_RX_MAX_PAYLOAD = 128u;   // 128u
-    public const uint USB_PROTOCOL_VERSION = 3u;   // 3u
-    public const uint SYSCFG_PARAM_COUNT = 35u;   // 35u  -- one past the highest sysconfig_param_t id; sizes the firmware store
+    public const uint USB_PROTOCOL_VERSION = 7u;   // 7u
+    public const uint SYSCFG_PARAM_COUNT = 34u;   // 34u  -- one past the highest sysconfig_param_t id; sizes the firmware store
 }
 
 // A task error/warning is reported as a single 32-bit code:
@@ -89,6 +89,30 @@ public enum pid_controller_task_error_ids : uint
     WARNING_PID_CONTROLLER_MESSAGE_QUEUE_FULL = 0x8000,
 }
 
+/// The TX path drops telemetry batches rather than stall when the CDC endpoint stays busy
+/// (bounded retries, then give up). That loss used to be silent; this warning is emitted at
+/// most once per second while it is happening, so a saturated link shows up in the host's
+/// event log instead of masquerading as a quiet stream.
+/// 
+/// The _BUFFER_OVERFLOW warnings below are the same idea one stage earlier, on the read side.
+/// Each names a circular buffer whose producer lapped this task's reader -- a full lap, so
+/// samples that were never read have been overwritten. Reported per buffer, because which one
+/// it is says what went wrong: one stream means that producer outran the drain, all of them at
+/// once means the USB task itself stalled. They are warnings, matching TX_BATCH_DROPPED: data
+/// is lost but the link and the session carry on. Rate-limited the same way, since a reader
+/// that has fallen a lap behind usually stays behind for a while.
+/// 
+/// Only buffers this task reads are covered. An osMessageQueue that fills is rejected at the
+/// *writer*, which is a different report belonging to the task that was pushing.
+public enum usb_controller_task_error_ids : uint
+{
+    WARNING_USB_TX_BATCH_DROPPED = 0x8000,
+    WARNING_USB_OPTICAL_ENCODER_BUFFER_OVERFLOW = 0x8001,
+    WARNING_USB_FORCE_SENSOR_BUFFER_OVERFLOW = 0x8002,
+    WARNING_USB_BPM_BUFFER_OVERFLOW = 0x8003,
+    WARNING_USB_TASK_ERROR_BUFFER_OVERFLOW = 0x8004,
+}
+
 public enum force_sensor_adc_task_error_ids : uint
 {
     ERROR_FORCE_SENSOR_ADC_START_FAILURE = 0,
@@ -127,14 +151,17 @@ public struct usb_msg_header_t
     public uint payload_len;   // bytes following header
 }
 
-// ---- Host -> device framed command envelope -------------------------------
-// Inbound (PC -> STM32) frames are wrapped so the parser can resync after a ring
-// overflow drops bytes mid-stream:
+// ---- Framed envelope (both directions, as of v5) ---------------------------
+// Every frame on the wire -- PC -> STM32 commands and, since v5, the STM32 -> PC
+// stream too -- is wrapped so the receiver can detect corruption and resync after
+// bytes are lost mid-stream:
 //   [uint16_t USB_FRAME_SOF][usb_msg_header_t header][payload bytes][uint16_t crc]
 // crc is CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF) computed over the header
 // bytes followed by the payload bytes (the SOF marker and crc field themselves are
 // excluded). Multi-byte fields are little-endian, matching both the STM32 and the
-// x86 host. The same envelope is reused for the host-side parser.
+// x86 host. A receiver scans to the SOF, checks the CRC, and on a mismatch treats
+// the SOF as spurious -- so a cut-off record is *detected*, not inferred from
+// implausible header bytes as the unframed v4 stream had to.
 
 // Largest inbound payload the firmware accepts; frames claiming more are treated as
 // a spurious SOF and skipped during resync.
@@ -154,6 +181,30 @@ public struct usb_msg_header_t
 // A v3 host pushes its saved settings after every handshake and trusts they applied;
 // against v2 firmware those pushes would be silently unknown commands and the dyno
 // would run defaults while the host displays the values it believes it set.
+// 
+// v4 added session_controller_output_data (torque / power stream). A v4 host expects
+// those readouts during a session; against v3 firmware they would simply never arrive
+// and torque/power would sit blank next to live sensor data with nothing saying why.
+// 
+// v5 framed the device->host stream with the SOF+CRC envelope the other direction
+// already used. A v5 host scans for SOF markers and verifies CRCs; against unframed
+// v4 firmware nothing it receives would carry a SOF and the whole stream would be
+// skipped as garbage -- and v4 hosts would misread v5's SOF/CRC bytes as data.
+// 
+// v6 removed session_controller_output_data again: torque and power are derived on
+// the host from the raw force and velocity streams, so the constants behind them
+// (moment of inertia, force-sensor lever arm, gear ratio) live on the PC and can be
+// corrected after a run instead of being baked into the recording. Their sysconfig
+// ids went with them, which renumbers every parameter after them -- a v6 host pushing
+// to v5 firmware would write PID gains into mechanical constants. Hence the version
+// bump: the handshake refuses the link rather than letting that happen.
+// 
+// v7 added usb_tx_batch_trailer, which closes every CDC transfer. A v7 host uses it to
+// account for the bytes in each transfer, so it can tell a transfer that arrived short
+// from one that never left; against v6 firmware no trailer ever arrives and the host's
+// accounting would report the whole stream as unaccounted-for. In the other direction a
+// v6 host would decode the trailer as an unknown STATUS record and log it a few hundred
+// times a second.
 
 // Shared CRC so firmware and host compute identical checksums over a frame body.
 
@@ -229,6 +280,37 @@ public struct session_state_event
     public uint in_session;   // 1 = session running, 0 = idle
 }
 
+// Transfer accounting (STM32 -> PC): emitted as USB_MSG_STATUS with task_offset
+// TASK_OFFSET_USB_CONTROLLER as the *last* record of every CDC transfer, describing the
+// transfer it closes. It is a framing-layer record, not telemetry: the host's parser
+// consumes it for accounting and never publishes it as a message.
+// 
+// This exists to make a short transfer distinguishable from a lost one. The framed
+// envelope already tells the host that bytes went missing (a record whose CRC fails, or
+// whose SOF never arrives), but not *where* they went missing -- and the two answers point
+// at opposite halves of the link. batch_len is the exact byte count the device handed to
+// CDC_Transmit_FS, including this trailer, so a host that counts the bytes it actually
+// decoded and skipped between two trailers learns which it is:
+// 
+//   observed == batch_len, seq contiguous   the transfer arrived whole; any loss the
+//                                           parser reported happened inside a record the
+//                                           device itself framed wrong
+//   observed <  batch_len, seq contiguous   the transfer arrived short -- the device
+//                                           framed and submitted bytes that never landed
+//   seq gap                                 an entire transfer the device believes it
+//                                           sent never arrived
+// 
+// seq counts transfers the driver *accepted*: it advances only when CDC_Transmit_FS
+// returns something other than USBD_BUSY, so a batch the firmware gave up on (and reported
+// as WARNING_USB_TX_BATCH_DROPPED) never burns a number and never shows up here as a gap.
+
+[StructLayout(LayoutKind.Sequential)]
+public struct usb_tx_batch_trailer
+{
+    public uint batch_seq;   // monotonic per accepted transfer; a gap = a whole transfer lost
+    public uint batch_len;   // bytes in this transfer, including this trailer record
+}
+
 // ---- Runtime system configuration -----------------------------------------
 // The tunable quantities from Config/config.h (gains, task delays, thresholds)
 // live in a RAM store (Config/sysconfig.h) seeded from those #defines at boot;
@@ -245,41 +327,40 @@ public struct session_state_event
 /// that provides its boot default. Ids are positional: append only.
 public enum sysconfig_param_t : ushort
 {
-    SYSCFG_DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M = 0,   // float, m
-    SYSCFG_MOMENT_OF_INERTIA_KG_M2 = 1,   // float, kg·m²
-    SYSCFG_K_P = 2,   // float
-    SYSCFG_K_I = 3,   // float
-    SYSCFG_K_D = 4,   // float
-    SYSCFG_PID_MAX_OUTPUT = 5,   // float
-    SYSCFG_THROTTLE_GAIN = 6,   // float
-    SYSCFG_BRAKE_GAIN = 7,   // float
-    SYSCFG_HORIZONTAL_BIAS = 8,   // float
-    SYSCFG_VERTICAL_BIAS = 9,   // float
-    SYSCFG_MIN_DUTY_CYCLE_PERCENT = 10,   // float, 0–1
-    SYSCFG_MAX_DUTY_CYCLE_PERCENT = 11,   // float, 0–1
-    SYSCFG_MAX_FORCE_LBF = 12,   // float, lbf
-    SYSCFG_SESSIONCONTROLLER_TASK_OSDELAY = 13,   // uint32, ms
-    SYSCFG_BPM_TASK_OSDELAY = 14,   // uint32, ms
-    SYSCFG_FORCESENSOR_TASK_OSDELAY = 15,   // uint32, ms
-    SYSCFG_FORCESENSOR_COMMAND_POLL_OSDELAY = 16,   // uint32, ms
-    SYSCFG_FORCESENSOR_CONVERSION_TIMEOUT_MS = 17,   // uint32, ms
-    SYSCFG_OPTICAL_ENCODER_TASK_OSDELAY = 18,   // uint32, ms
-    SYSCFG_NUM_APERTURES = 19,   // uint32
-    SYSCFG_PID_TASK_OSDELAY = 20,   // uint32, ms
-    SYSCFG_USB_TASK_OSDELAY = 21,   // uint32, ms
-    SYSCFG_USB_TX_FLUSH_MAX_RETRIES = 22,   // uint32, attempts
-    SYSCFG_LCD_TASK_OSDELAY = 23,   // uint32, ms
-    SYSCFG_LED_TASK_OSDELAY = 24,   // uint32, ms
-    SYSCFG_TASK_WARNING_RETRY_OSDELAY = 25,   // uint32, ms
-    SYSCFG_TASK_MONITOR_TASK_OSDELAY = 26,   // uint32, ms
-    SYSCFG_ADS1115_RATE = 27,   // enum
-    SYSCFG_ADS1115_GAIN = 28,   // enum
-    SYSCFG_ADS1115_MUX = 29,   // enum
-    SYSCFG_ADS1115_MODE = 30,   // enum
-    SYSCFG_ADS1115_COMP_MODE = 31,   // enum
-    SYSCFG_ADS1115_COMP_POL = 32,   // enum
-    SYSCFG_ADS1115_COMP_LAT = 33,   // enum
-    SYSCFG_ADS1115_COMP_QUE = 34,   // enum
+    SYSCFG_K_P = 0,   // float
+    SYSCFG_K_I = 1,   // float
+    SYSCFG_K_D = 2,   // float
+    SYSCFG_PID_MAX_OUTPUT = 3,   // float
+    SYSCFG_THROTTLE_GAIN = 4,   // float
+    SYSCFG_BRAKE_GAIN = 5,   // float
+    SYSCFG_HORIZONTAL_BIAS = 6,   // float
+    SYSCFG_VERTICAL_BIAS = 7,   // float
+    SYSCFG_MIN_DUTY_CYCLE_PERCENT = 8,   // float, 0–1
+    SYSCFG_MAX_DUTY_CYCLE_PERCENT = 9,   // float, 0–1
+    SYSCFG_MAX_FORCE_LBF = 10,   // float, lbf
+    SYSCFG_SESSIONCONTROLLER_TASK_OSDELAY = 11,   // uint32, ms
+    SYSCFG_BPM_TASK_OSDELAY = 12,   // uint32, ms
+    SYSCFG_FORCESENSOR_TASK_OSDELAY = 13,   // uint32, ms
+    SYSCFG_FORCESENSOR_COMMAND_POLL_OSDELAY = 14,   // uint32, ms
+    SYSCFG_FORCESENSOR_CONVERSION_TIMEOUT_MS = 15,   // uint32, ms
+    SYSCFG_OPTICAL_ENCODER_TASK_OSDELAY = 16,   // uint32, ms
+    SYSCFG_NUM_APERTURES = 17,   // uint32
+    SYSCFG_PID_TASK_OSDELAY = 18,   // uint32, ms
+    SYSCFG_USB_TASK_OSDELAY = 19,   // uint32, ms
+    SYSCFG_USB_TX_FLUSH_MAX_RETRIES = 20,   // uint32, attempts
+    SYSCFG_LCD_TASK_OSDELAY = 21,   // uint32, ms
+    SYSCFG_LED_TASK_OSDELAY = 22,   // uint32, ms
+    SYSCFG_TASK_WARNING_RETRY_OSDELAY = 23,   // uint32, ms
+    SYSCFG_TASK_MONITOR_TASK_OSDELAY = 24,   // uint32, ms
+    SYSCFG_ADS1115_RATE = 25,   // enum
+    SYSCFG_ADS1115_GAIN = 26,   // enum
+    SYSCFG_ADS1115_MUX = 27,   // enum
+    SYSCFG_ADS1115_MODE = 28,   // enum
+    SYSCFG_ADS1115_COMP_MODE = 29,   // enum
+    SYSCFG_ADS1115_COMP_POL = 30,   // enum
+    SYSCFG_ADS1115_COMP_LAT = 31,   // enum
+    SYSCFG_ADS1115_COMP_QUE = 32,   // enum
+    SYSCFG_USB_MOCK_MESSAGES = 33,   // enum
 }
 
 // Body of USB_CMD_SET_SYSCONFIG (after the usb_cmd_header_t). raw_value carries the
@@ -340,6 +421,7 @@ public static class MessageContract
         (typeof(lumex_lcd_task_error_ids), 4),
         (typeof(task_monitor_task_error_ids), 4),
         (typeof(pid_controller_task_error_ids), 4),
+        (typeof(usb_controller_task_error_ids), 4),
         (typeof(force_sensor_adc_task_error_ids), 4),
         (typeof(force_sensor_ads1115_error_ids), 4),
         (typeof(usb_msg_type_t), 4),
@@ -348,6 +430,7 @@ public static class MessageContract
         (typeof(usb_response_data_t), 8),
         (typeof(usb_device_ready_event), 4),
         (typeof(session_state_event), 8),
+        (typeof(usb_tx_batch_trailer), 8),
         (typeof(sysconfig_param_t), 2),
         (typeof(sysconfig_set_param_body), 6),
         (typeof(optical_encoder_output_data), 16),

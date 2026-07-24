@@ -13,28 +13,6 @@ public static class SysConfigCatalog
         new SysConfigParameterDef[]
         {
             new(
-                sysconfig_param_t.SYSCFG_DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M,
-                "DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M",
-                "Mechanical",
-                "m",
-                "Lever arm from the force sensor to the shaft center, used in the torque calculation.",
-                IsFloat: true,
-                Default: 1.0,
-                Min: 1e-06,
-                Max: 1000.0
-            ),
-            new(
-                sysconfig_param_t.SYSCFG_MOMENT_OF_INERTIA_KG_M2,
-                "MOMENT_OF_INERTIA_KG_M2",
-                "Mechanical",
-                "kg·m²",
-                "Rotating assembly's moment of inertia, used in the torque calculation.",
-                IsFloat: true,
-                Default: 1.0,
-                Min: 1e-09,
-                Max: 1000000.0
-            ),
-            new(
                 sysconfig_param_t.SYSCFG_K_P,
                 "K_P",
                 "PID Controller",
@@ -42,8 +20,8 @@ public static class SysConfigCatalog
                 "Proportional gain.",
                 IsFloat: true,
                 Default: 1.0,
-                Min: -1000000.0,
-                Max: 1000000.0
+                Min: -1000000000.0,
+                Max: 1000000000.0
             ),
             new(
                 sysconfig_param_t.SYSCFG_K_I,
@@ -53,8 +31,8 @@ public static class SysConfigCatalog
                 "Integral gain.",
                 IsFloat: true,
                 Default: 1.0,
-                Min: -1000000.0,
-                Max: 1000000.0
+                Min: -1000000000.0,
+                Max: 1000000000.0
             ),
             new(
                 sysconfig_param_t.SYSCFG_K_D,
@@ -64,8 +42,8 @@ public static class SysConfigCatalog
                 "Derivative gain.",
                 IsFloat: true,
                 Default: 1.0,
-                Min: -1000000.0,
-                Max: 1000000.0
+                Min: -1000000000.0,
+                Max: 1000000000.0
             ),
             new(
                 sysconfig_param_t.SYSCFG_PID_MAX_OUTPUT,
@@ -75,8 +53,8 @@ public static class SysConfigCatalog
                 "Normalization bound for the PID output before throttle/brake mixing.",
                 IsFloat: true,
                 Default: 100.0,
-                Min: 1e-06,
-                Max: 1000000.0
+                Min: -1000000000.0,
+                Max: 1000000000.0
             ),
             new(
                 sysconfig_param_t.SYSCFG_THROTTLE_GAIN,
@@ -86,8 +64,8 @@ public static class SysConfigCatalog
                 "Gain applied to the throttle half of the PID output mix.",
                 IsFloat: true,
                 Default: 1.0,
-                Min: -1000000.0,
-                Max: 1000000.0
+                Min: -1000000000.0,
+                Max: 1000000000.0
             ),
             new(
                 sysconfig_param_t.SYSCFG_BRAKE_GAIN,
@@ -97,8 +75,8 @@ public static class SysConfigCatalog
                 "Gain applied to the brake half of the PID output mix.",
                 IsFloat: true,
                 Default: 1.0,
-                Min: -1000000.0,
-                Max: 1000000.0
+                Min: -1000000000.0,
+                Max: 1000000000.0
             ),
             new(
                 sysconfig_param_t.SYSCFG_HORIZONTAL_BIAS,
@@ -108,8 +86,8 @@ public static class SysConfigCatalog
                 "Horizontal offset of the throttle/brake mixing curve.",
                 IsFloat: true,
                 Default: 0.0,
-                Min: -1000000.0,
-                Max: 1000000.0
+                Min: -1000000000.0,
+                Max: 1000000000.0
             ),
             new(
                 sysconfig_param_t.SYSCFG_VERTICAL_BIAS,
@@ -119,8 +97,8 @@ public static class SysConfigCatalog
                 "Vertical offset of the throttle/brake mixing curve.",
                 IsFloat: true,
                 Default: 0.0,
-                Min: -1000000.0,
-                Max: 1000000.0
+                Min: -1000000000.0,
+                Max: 1000000000.0
             ),
             new(
                 sysconfig_param_t.SYSCFG_MIN_DUTY_CYCLE_PERCENT,
@@ -152,8 +130,8 @@ public static class SysConfigCatalog
                 "Full-scale force of the load cell; scales raw ADC counts to newtons.",
                 IsFloat: true,
                 Default: 25.0,
-                Min: 0.001,
-                Max: 100000.0,
+                Min: -1000000000.0,
+                Max: 1000000000.0,
                 Subsection: "All"
             ),
             new(
@@ -163,9 +141,9 @@ public static class SysConfigCatalog
                 "ms",
                 "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU.",
                 IsFloat: false,
-                Default: 5.0,
-                Min: 1.0,
-                Max: 60000.0
+                Default: 10.0,
+                Min: 0.0,
+                Max: 65535.0
             ),
             new(
                 sysconfig_param_t.SYSCFG_BPM_TASK_OSDELAY,
@@ -174,9 +152,9 @@ public static class SysConfigCatalog
                 "ms",
                 "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU.",
                 IsFloat: false,
-                Default: 3.0,
-                Min: 1.0,
-                Max: 60000.0
+                Default: 20.0,
+                Min: 0.0,
+                Max: 65535.0
             ),
             new(
                 sysconfig_param_t.SYSCFG_FORCESENSOR_TASK_OSDELAY,
@@ -186,8 +164,8 @@ public static class SysConfigCatalog
                 "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU.",
                 IsFloat: false,
                 Default: 1.0,
-                Min: 1.0,
-                Max: 60000.0,
+                Min: 0.0,
+                Max: 65535.0,
                 Subsection: "All"
             ),
             new(
@@ -198,8 +176,8 @@ public static class SysConfigCatalog
                 "Bounded wait on the enable queue while the sensor is idle, so USB commands still get serviced.",
                 IsFloat: false,
                 Default: 50.0,
-                Min: 1.0,
-                Max: 60000.0,
+                Min: 0.0,
+                Max: 65535.0,
                 Subsection: "All"
             ),
             new(
@@ -210,8 +188,8 @@ public static class SysConfigCatalog
                 "How long to wait for the ADS1115 conversion-ready alert before abandoning the sample.",
                 IsFloat: false,
                 Default: 250.0,
-                Min: 1.0,
-                Max: 60000.0,
+                Min: 0.0,
+                Max: 65535.0,
                 Subsection: "I2C"
             ),
             new(
@@ -221,9 +199,9 @@ public static class SysConfigCatalog
                 "ms",
                 "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU.",
                 IsFloat: false,
-                Default: 2.0,
-                Min: 1.0,
-                Max: 60000.0
+                Default: 10.0,
+                Min: 0.0,
+                Max: 65535.0
             ),
             new(
                 sysconfig_param_t.SYSCFG_NUM_APERTURES,
@@ -233,8 +211,8 @@ public static class SysConfigCatalog
                 "Apertures on the encoder wheel (tied to the physical 3D-printed apparatus).",
                 IsFloat: false,
                 Default: 64.0,
-                Min: 1.0,
-                Max: 100000.0
+                Min: 0.0,
+                Max: 65535.0
             ),
             new(
                 sysconfig_param_t.SYSCFG_PID_TASK_OSDELAY,
@@ -244,8 +222,8 @@ public static class SysConfigCatalog
                 "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU.",
                 IsFloat: false,
                 Default: 10.0,
-                Min: 1.0,
-                Max: 60000.0
+                Min: 0.0,
+                Max: 65535.0
             ),
             new(
                 sysconfig_param_t.SYSCFG_USB_TASK_OSDELAY,
@@ -254,9 +232,9 @@ public static class SysConfigCatalog
                 "ms",
                 "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU.",
                 IsFloat: false,
-                Default: 5.0,
-                Min: 1.0,
-                Max: 60000.0
+                Default: 2.0,
+                Min: 0.0,
+                Max: 65535.0
             ),
             new(
                 sysconfig_param_t.SYSCFG_USB_TX_FLUSH_MAX_RETRIES,
@@ -265,9 +243,9 @@ public static class SysConfigCatalog
                 "attempts",
                 "Bounded retries when flushing a full TX buffer before dropping the batch.",
                 IsFloat: false,
-                Default: 5.0,
+                Default: 20.0,
                 Min: 0.0,
-                Max: 1000.0
+                Max: 255.0
             ),
             new(
                 sysconfig_param_t.SYSCFG_LCD_TASK_OSDELAY,
@@ -277,8 +255,8 @@ public static class SysConfigCatalog
                 "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU.",
                 IsFloat: false,
                 Default: 20.0,
-                Min: 1.0,
-                Max: 60000.0
+                Min: 0.0,
+                Max: 65535.0
             ),
             new(
                 sysconfig_param_t.SYSCFG_LED_TASK_OSDELAY,
@@ -288,8 +266,8 @@ public static class SysConfigCatalog
                 "Blink half-period of the status LED task.",
                 IsFloat: false,
                 Default: 500.0,
-                Min: 1.0,
-                Max: 60000.0
+                Min: 0.0,
+                Max: 65535.0
             ),
             new(
                 sysconfig_param_t.SYSCFG_TASK_WARNING_RETRY_OSDELAY,
@@ -299,8 +277,8 @@ public static class SysConfigCatalog
                 "Back-off a task sleeps after reporting a warning before retrying.",
                 IsFloat: false,
                 Default: 100.0,
-                Min: 1.0,
-                Max: 60000.0
+                Min: 0.0,
+                Max: 65535.0
             ),
             new(
                 sysconfig_param_t.SYSCFG_TASK_MONITOR_TASK_OSDELAY,
@@ -310,8 +288,8 @@ public static class SysConfigCatalog
                 "How often the task monitor samples every task's state and free stack.",
                 IsFloat: false,
                 Default: 1000.0,
-                Min: 1.0,
-                Max: 60000.0
+                Min: 0.0,
+                Max: 65535.0
             ),
             new(
                 sysconfig_param_t.SYSCFG_ADS1115_RATE,
@@ -416,6 +394,18 @@ public static class SysConfigCatalog
                 Max: 3.0,
                 Subsection: "I2C",
                 Options: new SysConfigEnumOption[] { new(0u, "Assert after 1"), new(1u, "Assert after 2"), new(2u, "Assert after 4"), new(3u, "Disabled") }
+            ),
+            new(
+                sysconfig_param_t.SYSCFG_USB_MOCK_MESSAGES,
+                "USB_MOCK_MESSAGES",
+                "USB",
+                "",
+                "Replace the sensor stream with synthetic counter data (and report a session as running, since the host shows sensor data only during one). For exercising the link with no sensors attached. Leave disabled for any real run: nothing it streams is a measurement.",
+                IsFloat: false,
+                Default: 0.0,
+                Min: 0.0,
+                Max: 1.0,
+                Options: new SysConfigEnumOption[] { new(0u, "Disabled"), new(1u, "Enabled (fake data)") }
             ),
         };
 

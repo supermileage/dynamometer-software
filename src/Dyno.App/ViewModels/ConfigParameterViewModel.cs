@@ -37,8 +37,10 @@ public partial class ConfigParameterViewModel : ObservableObject
     public string SavedValue => _savedValue;
 
     /// <summary>Shown while the saved value differs from the header, which is the only case where
-    /// the two can be confused.</summary>
-    public string HeaderText => $"{FileLabel} has {HeaderValue}";
+    /// the two can be confused. Says what the firmware has rather than which file says so: the
+    /// filename is not something a reader of this page can act on, and naming it was what made the
+    /// line long enough to be clipped.</summary>
+    public string HeaderText => $"firmware has {HeaderValue}";
 
     /// <summary>Puts the header's value back in the editor. Staged like any other edit — Apply is
     /// what drops the saved row.</summary>

@@ -55,8 +55,11 @@
 #define LUMEX_LCD_TASK_ENABLE 1
 
 // USB Controller task settings
+// The mock-message stream used to live here as DEBUG_USB_CONTROLLER_MOCK_MESSAGES. It is now the
+// runtime parameter SYSCFG_USB_MOCK_MESSAGES (schema: sysconfig_params), so exercising the link
+// no longer costs a rebuild and a flash -- and a board running fabricated data now says so over
+// USB instead of looking like any other build.
 #define USB_CONTROLLER_TASK_ENABLE 1
-#define DEBUG_USB_CONTROLLER_MOCK_MESSAGES 0
 
 // Led Blink Task
 #define LED_BLINK_TASK_ENABLE 0

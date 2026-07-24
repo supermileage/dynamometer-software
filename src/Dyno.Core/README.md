@@ -20,16 +20,17 @@ unit-testable and headless-runnable. The Avalonia app ([[Dyno.App]]) is a thin s
 | Area | Type | Role |
 |---|---|---|
 | `Serial/` | `ISerialConnection`, `SerialConnection` | `System.IO.Ports` wrapper (115200 8-N-1); `COM3` ↔ `/dev/ttyACM0`. The interface lets tests inject a fake. |
-| `Protocol/` | `StreamParser` | Decodes the **unframed** STM32 → PC stream into typed `DeviceMessage`s. |
+| `Protocol/` | `StreamParser` | Decodes the **framed** STM32 → PC stream into typed `DeviceMessage`s; resyncs on loss and audits each transfer. |
 | `Protocol/` | `UsbFrame` | Builds **framed** PC → STM32 commands (`[SOF][header][payload][crc16]`) and ports the CRC. |
 | `Protocol/` | `ErrorDecoder` | Unpacks the 32-bit `error_code` (task / number / warning-flag). |
 | `Messages/Generated/` | `Messages.cs` | Enums, packed structs and constants — **generated** from the firmware schema by [[message_gen]]. Do not hand-edit. |
 | (root) | `DeviceClient` | Owns the connection, pumps bytes through the parser on a background loop, and correlates command RESPONSEs by `msg_id`. |
 
 ## Receive path (STM32 → PC)
-The firmware emits `usb_msg_header_t`(12 B) + payload back-to-back with **no SOF/CRC** (USB
-CDC is already reliable). `StreamParser.Append` accumulates bytes, reads each header, waits
-for `payload_len` bytes, then dispatches on `(msg_type, task_offset)` to an
+Since v5 the firmware frames this direction too: each record travels as
+`[uint16 SOF][usb_msg_header_t (12 B)][payload][uint16 crc16]` — the same envelope the PC → STM32
+direction always used. `StreamParser.Append` accumulates bytes, scans to a SOF, verifies the CRC over
+header + payload, then dispatches one `DeviceMessage` per valid frame on `(msg_type, task_offset)` to an
 `OpticalEncoderSample` / `ForceSensorSample` / `BpmSample` / `TaskMonitorSample` /
 `DeviceFault` / `CommandResponse` / `DeviceReady` / `SessionState` / `UnknownMessage`.
 
@@ -40,27 +41,48 @@ come back. `task_offset` says which module the payload belongs to, and the two t
 record: `EVENT` + `USB_CONTROLLER` is a device-ready announce, `STREAM` + `OPTICAL_ENCODER` is an
 encoder sample, and so on.
 
-### Resync, and why it has to be strict
-Nothing in this direction is framed — no start marker, no CRC, no length prefix beyond the header's
-own — so **any 12 bytes that look like a header are a header**, and the parser will consume a
-payload's worth of real data behind them. If the board ever drops bytes (a full USB ring is the
-likely cause), every record after the gap is misaligned, and a window onto the middle of one record
-can pass for the start of another.
+### Resync — detected, not guessed
+The envelope is what makes loss **detectable** rather than inferred. Bytes cut from a record leave a
+frame whose CRC fails, or whose SOF never arrives; either way the parser skips a byte and rescans to
+the next SOF. A spurious SOF *inside* payload data is caught the same way — its CRC cannot match — at
+the cost of rescanning from one byte past it. A claimed `payload_len` beyond `MaxPayload` marks the
+SOF as spurious without waiting for bytes that will never come.
 
-`IsPlausible` is therefore as strict as the format allows: an inbound-only `msg_type`, a
-`task_offset` the firmware actually has (they are sparse — 0, 0x10000, 0x20000 …), a payload within
-bounds, and — for every record we can decode — **exactly** the size that record must be. That last
-check matters more than it looks: `TASK_OFFSET_TASK_MONITOR` is 0, so without it a run of zeros is a
-"valid" task, and a stray `4` nearby is a "valid" STREAM type. A real link produced
-`RESPONSE / task 252 / len 4` — impossible twice over (no such task; a RESPONSE is always 8 bytes) —
-and a laxer check reported it upward as a message the device never sent.
+This replaced byte-by-byte header-plausibility guessing (`IsPlausible`), which was as strict as an
+unframed format allowed and still not enough: **any 12 bytes that looked like a header were a
+header**, so a window onto the middle of one record could pass for the start of another. A real link
+produced `RESPONSE / task 252 / len 4` — impossible twice over — and the parser had to reject it on
+per-record size rules rather than on a checksum. With a CRC the question is answered instead of
+argued, and `UnknownMessage` now means only what it says: a well-formed record this host has no
+decoder for.
 
 Bytes skipped to regain alignment are counted and raised on `Resynced` **once alignment is regained**
 (not per read — one lost record is re-scanned across several serial chunks, and reporting per chunk
 turns one fault into a stutter of warnings). `DeviceClient` re-raises it as `StreamResynced`, and the
 app logs it as a warning: dropped bytes are the *only* evidence this link ever loses data, so they
-are a link fault to surface, not noise to swallow. An `UnknownMessage` now means what it says — a
-well-formed record this host has no decoder for.
+are a link fault to surface, not noise to swallow.
+
+### Transfer accounting, and why a resync alone is not enough
+A resync proves bytes were lost. It cannot say *whose* bytes — whether the firmware failed to send
+them or this host failed to receive them — and those point at opposite halves of the link. Since v7
+each CDC transfer closes with a `usb_tx_batch_trailer` carrying the byte count the device handed to
+its USB driver, so the parser can weigh what arrived against what was sent. It counts every byte
+between two trailers, **decoded and skipped alike**: the question is what reached us, not what we
+could make sense of, and excluding skipped bytes would turn every resync into a phantom shortfall.
+
+| what the trailer shows | what it means |
+|---|---|
+| counts match, sequence contiguous | the transfer arrived whole; a resync here means the device framed a record wrong |
+| `ObservedBytes < DeclaredBytes` | the device framed and submitted those bytes and they did not land — the loss is below the firmware |
+| `batch_seq` gap | an entire transfer the driver accepted never arrived |
+
+Discrepancies raise `BatchMisaccounted` (`BatchAccounting`), which `DeviceClient` re-raises and the
+app logs beside the resync warning. It is **silent when the link is healthy**, so the absence of it
+next to a resync is itself a finding. The trailer is framing, not telemetry: the parser consumes it
+and never publishes it as a `DeviceMessage`, so it costs consumers nothing at a few hundred
+transfers a second. The first trailer after connect only establishes a baseline — it closes a
+transfer we joined partway through, and reporting its short count would be reporting our own late
+start.
 
 ## Transmit path (PC → STM32)
 `UsbFrame.BuildCommandFrame` wraps a `usb_cmd_header_t` (opcode + msg_id) + body in the
@@ -210,11 +232,20 @@ nothing on its own — an idle board and a dead one look the same. The device th
 the value actually moves**, since the firmware re-states it on every 5 s heartbeat and the repeats
 are not news.
 
+The state is held as a *tri-state* (`IsSessionStateKnown` reports which): null until the device has
+said, and only then false or true. "Not told" and "told there is no session" are different facts,
+and collapsing them is what would make an idle board's first announcement look like a repeat of
+what the client already assumed — swallowed, leaving the host merely *presuming* idle with no way
+to tell that apart from having checked. The first statement on a link therefore always raises,
+including an idle one; the repeats behind it do not.
+
 That per-ack repeat is what makes the state recoverable rather than merely observable: a host
 connecting to a steady board (idle, or already mid-session) learns the state without waiting for an
-edge, and a host that declared the link lost — which clears `IsSessionActive`, since a device we
-cannot reach is not one we can claim is running a session — has it restored by the ack that answers
-the next heartbeat, with no reconnect.
+edge, and a host that declared the link lost has it restored by the ack that answers the next
+heartbeat, with no reconnect. Losing the link returns the state to *unknown* rather than idle — the
+board may still be running a session we can no longer see, and recording a known-idle would make
+that restatement look like a repeat and never reach the host. Consumers are still told to stop
+showing a session, because one we cannot observe is one whose readings have stopped being current.
 
 Because `StreamParser` decodes in wire order and `DeviceClient` applies the session state *before*
 re-publishing each message, `IsSessionActive` is already correct when the samples framed behind an

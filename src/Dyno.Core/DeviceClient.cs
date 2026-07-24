@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Dyno.Core.Diagnostics;
 using Dyno.Core.Messages;
 using Dyno.Core.Protocol;
 using Dyno.Core.Serial;
@@ -7,6 +8,22 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Dyno.Core;
+
+/// <summary>Why a link was declared lost — which is really the question of whether waiting can undo
+/// it, and so what the consumer should do next.</summary>
+public enum LinkLoss
+{
+    /// <summary>The device stopped answering the heartbeat. Inferred, not proven: the board may be
+    /// wedged, or merely slow. The link itself is intact and still polling, so a device that comes
+    /// back re-handshakes on its own and needs nothing from the consumer.</summary>
+    Unresponsive,
+
+    /// <summary>The port failed or ended: reads on it cannot succeed again. Nothing re-enters the
+    /// read loop, and the heartbeat cannot recover it either — a ping waits for a RESPONSE, and
+    /// responses only arrive through that loop. This link is over, and getting the device back
+    /// takes a new one.</summary>
+    PortFailed,
+}
 
 /// <summary>
 /// Orchestrates a live device link: owns a serial connection, pumps its bytes through a
@@ -27,6 +44,11 @@ public sealed class DeviceClient : IDisposable
 
     private readonly ISerialConnection _connection;
     private readonly ILogger<DeviceClient> _log;
+
+    /// <summary>TEMP DIAGNOSTIC (16-byte head-loss investigation): records the bytes this loop is
+    /// handed, so a fault can be replayed against them offline. Null unless capture is enabled.</summary>
+    private readonly RawCapture? _rawCapture;
+
     private readonly StreamParser _parser = new();
     private readonly ConcurrentDictionary<ushort, PendingCommand> _pending = new();
 
@@ -55,10 +77,17 @@ public sealed class DeviceClient : IDisposable
     /// from the absence of errors. Fires on the heartbeat thread.</summary>
     public event Action<TimeSpan>? HeartbeatAcked;
 
-    /// <summary>Raised when the heartbeat stops getting answers: the device is no longer known to
-    /// be there. The link is left running and keeps polling, so a device that comes back re-raises
-    /// <see cref="Handshaked"/>. Fires on the heartbeat thread.</summary>
-    public event Action? ConnectionLost;
+    /// <summary>Raised when the device is no longer known to be there, carrying which of the two
+    /// things established it — see <see cref="LinkLoss"/>, because they call for different answers.
+    /// Raised once per link: whichever source gets there first clears <see cref="IsHandshaked"/>,
+    /// and the other then finds the loss already reported. Fires on the heartbeat or read-loop
+    /// thread.</summary>
+    /// <remarks>The two differ in how much they know. A silent heartbeat is inference — the board may
+    /// be wedged, or merely slow — which is why it takes <see cref="HeartbeatMissesBeforeLost"/> of
+    /// them to count, at five seconds a beat. A failed read is proof, and arrives the instant the
+    /// port does. Reporting from the read loop is what stops a certainty from waiting out the
+    /// evidence for a maybe.</remarks>
+    public event Action<LinkLoss>? ConnectionLost;
 
     /// <summary>Raised when <see cref="HandshakeTimeout"/> elapses after <see cref="Start"/> with no
     /// completed handshake — an open port with nothing (or nothing that speaks this protocol) on the
@@ -77,11 +106,19 @@ public sealed class DeviceClient : IDisposable
     /// is not something a reader can notice. Undescribed traffic (the handshake ack and the
     /// heartbeats built on it) stays silent, so this reports intent, not chatter. Fires on the
     /// caller's thread; retries do not re-raise it.</summary>
-    /// <summary>Raised when the parser had to throw bytes away to regain alignment, with how many.
-    /// The device→host stream carries no CRC and no framing, so bytes lost in transit (a full ring
-    /// buffer on the board, most likely) do not announce themselves — they just shift everything
-    /// after them, and this is the only place that shows up. Fires on the read-loop thread.</summary>
-    public event Action<int>? StreamResynced;
+    /// <summary>Raised when the parser had to throw bytes away to regain alignment, with what was
+    /// skipped and which records it sat between. The device→host stream carries no CRC and no
+    /// framing, so bytes lost in transit (a full ring buffer on the board, most likely) do not
+    /// announce themselves — they just shift everything after them, and this is the only place
+    /// that shows up. Fires on the read-loop thread.</summary>
+    public event Action<ResyncDetails>? StreamResynced;
+
+    /// <summary>Raised when a CDC transfer's bytes did not match the trailer closing it — either it
+    /// arrived short, or the device's sequence skipped transfers we never saw. Where
+    /// <see cref="StreamResynced"/> says the stream lost data, this says which side lost it: the
+    /// device's own count of what it handed the CDC driver is the reference. Fires on the read-loop
+    /// thread.</summary>
+    public event Action<BatchAccounting>? BatchMisaccounted;
 
     public event Action<string>? CommandSent;
 
@@ -96,11 +133,22 @@ public sealed class DeviceClient : IDisposable
     /// completed, and while the device keeps answering the heartbeat.</summary>
     public bool IsHandshaked { get; private set; }
 
+    /// <summary>Null until the device has stated its session state on this link. Distinct from
+    /// false: "we have not been told" and "we have been told there is no session" are different
+    /// facts, and conflating them is what would let the first announcement of an idle board be
+    /// de-duplicated away as though it were a repeat of something we already knew.</summary>
+    private bool? _sessionActive;
+
     /// <summary>Whether the dyno is currently running a session, per the device's last
     /// <see cref="SessionState"/> announcement. Sensor samples only stream during a session, so
     /// this is what separates "idle" from "dead". False until the device says otherwise — including
     /// after the link is lost, when the last-known state is no longer worth trusting.</summary>
-    public bool IsSessionActive { get; private set; }
+    public bool IsSessionActive => _sessionActive ?? false;
+
+    /// <summary>Whether the device has actually told us, as opposed to us assuming idle because it
+    /// has not. The firmware states the session state after every <c>USB_CMD_ACK</c>, so this turns
+    /// true a beat after the handshake and stays true for the life of the link.</summary>
+    public bool IsSessionStateKnown => _sessionActive is not null;
 
     /// <summary>How long one attempt at any command waits for its RESPONSE before it is a
     /// <see cref="TimeoutException"/>. Every host→device command is acked by the firmware, so this
@@ -130,21 +178,51 @@ public sealed class DeviceClient : IDisposable
     private int _handshakeStarted; // 0 until we first act on a device-ready announcement
     private int _protocolRefused; // 1 once a version mismatch has been reported
 
-    public DeviceClient(ISerialConnection connection, ILogger<DeviceClient>? logger = null)
+    public DeviceClient(
+        ISerialConnection connection,
+        ILogger<DeviceClient>? logger = null,
+        RawCapture? rawCapture = null
+    )
     {
         _connection = connection;
         _log = logger ?? NullLogger<DeviceClient>.Instance;
+        _rawCapture = rawCapture;
         _parser.MessageReceived += OnParsed;
         _parser.Resynced += OnResynced;
+        _parser.BatchMisaccounted += OnBatchMisaccounted;
     }
 
-    private void OnResynced(int bytesDropped)
+    private void OnBatchMisaccounted(BatchAccounting batch)
+    {
+        if (batch.MissingTransfers > 0)
+        {
+            _log.LogWarning(
+                "{Missing} USB transfer(s) never arrived before batch {Sequence}; the device sent them and the host never saw them",
+                batch.MissingTransfers,
+                batch.Sequence
+            );
+        }
+        else
+        {
+            _log.LogWarning(
+                "USB batch {Sequence} arrived {Shortfall} bytes short ({Observed} of {Declared}); the loss is below the firmware, not in its framing",
+                batch.Sequence,
+                batch.Shortfall,
+                batch.ObservedBytes,
+                batch.DeclaredBytes
+            );
+        }
+        BatchMisaccounted?.Invoke(batch);
+    }
+
+    private void OnResynced(ResyncDetails details)
     {
         _log.LogWarning(
-            "dropped {Bytes} bytes to resync the device stream; the link is losing data",
-            bytesDropped
+            "dropped {Bytes} bytes to resync the device stream (skipped: {Skipped}); the link is losing data",
+            details.BytesDropped,
+            Convert.ToHexString(details.SkippedBytes)
         );
-        StreamResynced?.Invoke(bytesDropped);
+        StreamResynced?.Invoke(details);
     }
 
     public bool IsRunning => _readLoop is { IsCompleted: false };
@@ -157,7 +235,7 @@ public sealed class DeviceClient : IDisposable
         }
 
         IsHandshaked = false;
-        IsSessionActive = false; // nothing is known about the new device until it announces
+        _sessionActive = null; // nothing is known about the new device until it announces
         Interlocked.Exchange(ref _handshakeStarted, 0);
         Interlocked.Exchange(ref _protocolRefused, 0);
         _heartbeatLoop = null;
@@ -444,17 +522,44 @@ public sealed class DeviceClient : IDisposable
     /// actually moves. The firmware re-states the state on every heartbeat ack (so a host that lost
     /// and regained the link recovers it), which means most calls here are a repeat of what we
     /// already believe — de-duplicating is what keeps that refresh silent.
+    ///
+    /// The first statement on a link always counts, including an idle one. Until it arrives we have
+    /// only assumed a board is idle; being told so is what makes it checked, and a consumer that
+    /// wants to say which of the two it is showing has no other moment to hang that on.
     /// </summary>
     private void SetSessionActive(bool active)
     {
-        if (IsSessionActive == active)
+        if (_sessionActive == active)
         {
             return;
         }
 
-        IsSessionActive = active;
-        _log.LogInformation("device session {State}", active ? "started" : "stopped");
+        bool firstReport = _sessionActive is null;
+        _sessionActive = active;
+        _log.LogInformation(
+            firstReport ? "device reports it is {State}" : "device session {State}",
+            firstReport ? (active ? "mid-session" : "idle") : (active ? "started" : "stopped")
+        );
         SessionStateChanged?.Invoke(active);
+    }
+
+    /// <summary>
+    /// Goes back to knowing nothing about the session, for when the link drops. Deliberately not
+    /// <c>SetSessionActive(false)</c>: the board may well still be running a session — we simply
+    /// cannot see it — and recording that as a *known* idle state would mean the restatement that
+    /// arrives with the next successful ack looked like a repeat and raised nothing. Consumers are
+    /// still told to stop showing a session, because one we cannot observe is one whose readings
+    /// have stopped being current.
+    /// </summary>
+    private void ForgetSessionState()
+    {
+        bool wasActive = _sessionActive == true;
+        _sessionActive = null;
+        if (wasActive)
+        {
+            _log.LogInformation("session state unknown; the link is no longer answering");
+            SessionStateChanged?.Invoke(false);
+        }
     }
 
     /// <summary>
@@ -692,19 +797,14 @@ public sealed class DeviceClient : IDisposable
                 cancellationToken.ThrowIfCancellationRequested();
 
                 misses++;
-                if (IsHandshaked && misses >= HeartbeatMissesBeforeLost)
+                if (misses >= HeartbeatMissesBeforeLost)
                 {
-                    IsHandshaked = false;
-                    // A device we cannot reach is not a device we can claim is running a session:
-                    // drop the belief so a consumer stops showing that session's (now frozen) data.
-                    // Recovering it needs no edge from the device — the ack that answers the next
-                    // heartbeat re-states the session state, so a link that comes back restores it.
-                    SetSessionActive(false);
-                    _log.LogError(
-                        "device missed {Misses} consecutive heartbeats; link presumed lost",
-                        misses
+                    // Recovering the session state needs no edge from the device — the ack that
+                    // answers the next heartbeat re-states it, so a link that comes back restores it.
+                    ReportLinkDropped(
+                        LinkLoss.Unresponsive,
+                        $"the device missed {misses} consecutive heartbeats"
                     );
-                    ConnectionLost?.Invoke();
                 }
             }
         }
@@ -772,25 +872,73 @@ public sealed class DeviceClient : IDisposable
             catch (Exception ex)
             {
                 _log.LogError(ex, "serial read failed; stopping read loop");
+                // Stop() cancels before it closes, and closing is what unblocks this read — so a
+                // failure with cancellation already requested is this link being torn down on
+                // purpose, and reporting the device lost would describe the user's own Disconnect
+                // as the board vanishing.
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    ReportLinkDropped(LinkLoss.PortFailed, "the serial port failed");
+                }
                 break;
             }
 
-            if (read > 0)
+            if (read == 0)
             {
-                try
+                // End of stream, per the Stream contract. A healthy port cannot reach here: it is
+                // opened with an infinite ReadTimeout, so a port with nothing to say blocks rather
+                // than returning empty. Treating it as terminal is also what keeps this loop from
+                // spinning on a stream that will never yield another byte, which is what looping
+                // for more would do at the cost of a core.
+                _log.LogError("the serial port reported end of stream; stopping read loop");
+                if (!cancellationToken.IsCancellationRequested)
                 {
-                    _parser.Append(buffer.AsSpan(0, read));
+                    ReportLinkDropped(LinkLoss.PortFailed, "the serial port reached end of stream");
                 }
-                catch (Exception ex)
-                {
-                    // Consumer callbacks are already contained in OnParsed, so reaching here means
-                    // the parser itself faulted (a decode bug). Surface it and stop, rather than
-                    // hot-looping on the same unconsumed bytes or faulting the task silently.
-                    _log.LogError(ex, "stream parser faulted; stopping read loop");
-                    break;
-                }
+                break;
+            }
+
+            // Before the parser, so the capture holds what the driver delivered rather than
+            // what we made of it — that separation is the whole point of the recording.
+            _rawCapture?.Record(buffer.AsSpan(0, read));
+            try
+            {
+                _parser.Append(buffer.AsSpan(0, read));
+            }
+            catch (Exception ex)
+            {
+                // Consumer callbacks are already contained in OnParsed, so reaching here means
+                // the parser itself faulted (a decode bug). Surface it and stop, rather than
+                // hot-looping on the same unconsumed bytes or faulting the task silently.
+                _log.LogError(ex, "stream parser faulted; stopping read loop");
+                break;
             }
         }
+    }
+
+    /// <summary>Declares the link lost, once. Both sources come through here and guard on the same
+    /// flag: whichever gets there first clears <see cref="IsHandshaked"/>, so the other finds the
+    /// loss already reported rather than announcing it twice.</summary>
+    /// <remarks>That dedupe is why <paramref name="how"/> has to travel with the event rather than
+    /// being re-derived by the consumer. A <see cref="LinkLoss.PortFailed"/> report arrives within
+    /// microseconds of the unplug — early enough that the device node may still be listed, since
+    /// udev has not caught up — and it is the only report that will come, because the heartbeat that
+    /// would have said the same thing ten seconds later now finds the loss already reported. A
+    /// consumer left to ask "has the port gone?" at that moment can get "no" and wait forever.
+    /// </remarks>
+    private void ReportLinkDropped(LinkLoss how, string reason)
+    {
+        if (!IsHandshaked)
+        {
+            return;
+        }
+
+        IsHandshaked = false;
+        // A device we cannot hear is not one we can claim is running a session: drop the belief, so
+        // a consumer stops presenting that session's (now frozen) data as live.
+        ForgetSessionState();
+        _log.LogError("link presumed lost: {Reason}", reason);
+        ConnectionLost?.Invoke(how);
     }
 
     private void FailPending(Exception ex)
@@ -809,5 +957,8 @@ public sealed class DeviceClient : IDisposable
         Stop();
         _connection.Dispose();
         _cts?.Dispose();
+        // After Stop(), so every chunk the read loop recorded is queued before the writer is
+        // closed: a capture truncated ahead of the fault it was opened to catch is worthless.
+        _rawCapture?.Dispose();
     }
 }

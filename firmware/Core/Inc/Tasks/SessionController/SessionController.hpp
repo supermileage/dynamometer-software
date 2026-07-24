@@ -64,11 +64,6 @@ class SessionController
         bool _prevInSession;
 
         bool CheckTaskQueuesValid();
-
-        inline float CalculateTorque(float angularAcceleration, float force, float angularVelocity);
-        inline float CalculatePower(float torque, float angularVelocity);
-        inline float CalculateMechanicalLosses(float angularAcceleration, float angularVelocity);
-
 };
 
 #ifdef __cplusplus

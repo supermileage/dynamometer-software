@@ -130,15 +130,25 @@ def _prepare_sysconfig(schema: dict, symbols: dict[str, int], defines: list) -> 
         defaults = _config_defaults() if defaults is None else defaults
         for i, p in enumerate(s["params"]):
             name = p["name"]
-            if name not in defaults:
+            # A parameter that also exists as a compile-time setting takes its default from
+            # config.h, so the value is written once and the task that reads the macro and the
+            # store that seeds from it cannot disagree. A parameter that exists only at runtime
+            # has no macro — there is nothing a rebuild would bake in — and carries `default:`
+            # in the schema instead. One or the other, never neither.
+            if "default" in p:
+                default = float(p["default"])
+            elif name in defaults:
+                default = defaults[name]
+            else:
                 raise KeyError(
-                    f"sysconfig param {name} has no numeric #define in {CONFIG_H}; "
-                    "every runtime parameter needs its boot default there"
+                    f"sysconfig param {name} has no numeric #define in {CONFIG_H} and no "
+                    "`default:` in the schema; every runtime parameter needs a boot default "
+                    "in one of the two"
                 )
             p["_enum_name"] = "SYSCFG_" + name
             p["_csval"] = str(i)
             p["_cs_isfloat"] = "true" if p["type"] == "float" else "false"
-            p["_cs_default"] = _cs_double(defaults[name])
+            p["_cs_default"] = _cs_double(default)
             if p["type"] == "enum":
                 # A uint32 whose value is one of `options` (contiguous codes from 0). The
                 # host range-checks it 0..last like the firmware and emits the labels so the
@@ -158,9 +168,9 @@ def _prepare_sysconfig(schema: dict, symbols: dict[str, int], defines: list) -> 
             # sysconfig_set_raw's range check, and the host re-pushes the default over USB
             # where the firmware *does* check it — so an out-of-range default would boot
             # fine and then be rejected on every handshake. Catch it here instead.
-            if not lo <= defaults[name] <= hi:
+            if not lo <= default <= hi:
                 raise ValueError(
-                    f"sysconfig param {name}: config.h default {defaults[name]} is outside "
+                    f"sysconfig param {name}: boot default {default} is outside "
                     f"the schema range [{lo}, {hi}]"
                 )
             p["_cs_category"] = _cs_string(p["category"])
@@ -243,11 +253,18 @@ def render(schema_path: Path, template_name: str) -> str:
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--target", choices=sorted(TARGETS),
-                    help="only this target (default: all)")
+    ap.add_argument("--target", help="only this target (default: all of this script's)")
     ap.add_argument("--stdout", action="store_true", help="print instead of writing")
     ap.add_argument("--out", type=Path, help="override output path (single target only)")
     args = ap.parse_args(argv)
+
+    if args.target and args.target not in TARGETS:
+        # Not a hard error, because the wrapper scripts hand the same arguments to every
+        # generator in this directory: being asked for a sibling's target is how one of
+        # them is told "not you". A name no generator claims prints this from each of
+        # them, which is its own answer.
+        print(f"{Path(__file__).name}: no target named {args.target!r} here; skipping")
+        return 0
 
     targets = [args.target] if args.target else sorted(TARGETS)
     if (args.stdout or args.out) and len(targets) != 1:

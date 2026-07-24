@@ -83,8 +83,7 @@ public:
     float GetDesiredAngularVelocity() const;
 
     void DisplayRpm(float rpm);
-    void DisplayTorque(float torque);
-    void DisplayPower(float power);
+    void DisplayForce(float force);
     void DisplayPIDEnabled();
     void DisplayManualBPMDutyCycle();
     void DisplayManualThrottleDutyCycle();
@@ -120,6 +119,9 @@ private:
     bool _pidEnabled;
     bool _throttleControlModeEnabled;
     bool _inSession;
+    // Whether a brake press may start a session. Cleared when the button is already held as this
+    // FSM comes up, and set again by the release that follows -- see HandleButtonBrakeInput.
+    bool _brakeArmed;
     float _desiredManualBpmDutyCycle;
     float _desiredManualThrottleDutyCycle;
     int _desiredRpm;

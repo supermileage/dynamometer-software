@@ -40,17 +40,20 @@ TEST_F(SysConfigTest, AppliesAnInRangeU32Write)
 
 TEST_F(SysConfigTest, U32RangeBoundariesAreInclusive)
 {
-    // The generated table gives every *_OSDELAY the range [1, 60000].
-    EXPECT_TRUE(sysconfig_set_raw(SYSCFG_PID_TASK_OSDELAY, 1));
-    EXPECT_TRUE(sysconfig_set_raw(SYSCFG_PID_TASK_OSDELAY, 60000));
+    // The generated table gives every *_OSDELAY the width of the uint16_t a millisecond
+    // delay logically is, so [0, 65535]. Zero is reachable on purpose: a task that stops
+    // yielding is a bad idea, not an unrepresentable value, and the range only stops the
+    // latter.
+    EXPECT_TRUE(sysconfig_set_raw(SYSCFG_PID_TASK_OSDELAY, 0));
+    EXPECT_TRUE(sysconfig_set_raw(SYSCFG_PID_TASK_OSDELAY, 65535));
 }
 
 TEST_F(SysConfigTest, RejectsAnOutOfRangeU32WriteAndKeepsTheOldValue)
 {
     ASSERT_TRUE(sysconfig_set_raw(SYSCFG_PID_TASK_OSDELAY, 42));
 
-    EXPECT_FALSE(sysconfig_set_raw(SYSCFG_PID_TASK_OSDELAY, 0));     // below min (busy-spin)
-    EXPECT_FALSE(sysconfig_set_raw(SYSCFG_PID_TASK_OSDELAY, 60001)); // above max
+    // Only the top of an integer range can be exceeded -- every one of them starts at 0.
+    EXPECT_FALSE(sysconfig_set_raw(SYSCFG_PID_TASK_OSDELAY, 65536));
     EXPECT_EQ(sysconfig_get_u32(SYSCFG_PID_TASK_OSDELAY), 42u);
 }
 

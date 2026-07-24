@@ -5,6 +5,7 @@ using Dyno.Core.Messages;
 using Dyno.Core.Protocol;
 using Dyno.Core.Serial;
 using Dyno.Core.SysConfig;
+using Microsoft.Data.Sqlite;
 using Xunit;
 
 namespace Dyno.Core.Tests;
@@ -72,12 +73,33 @@ public class SysConfigCatalogTests
         var kp = SysConfigCatalog.Get(sysconfig_param_t.SYSCFG_K_P);
         Assert.True(kp.IsValid(-3.5));
         Assert.False(kp.IsValid(double.NaN));
-        Assert.False(kp.IsValid(2e6));
+        Assert.False(kp.IsValid(kp.Max * 2));
 
         var delay = SysConfigCatalog.Get(sysconfig_param_t.SYSCFG_PID_TASK_OSDELAY);
         Assert.True(delay.IsValid(10));
-        Assert.False(delay.IsValid(0), "firmware clamps osDelays to >= 1");
+        Assert.True(
+            delay.IsValid(delay.Min),
+            "the bottom of a range is reachable on purpose: a 0 ms delay is a task that stops "
+                + "yielding, which the range allows because it is representable"
+        );
+        Assert.False(delay.IsValid(delay.Max + 1));
         Assert.False(delay.IsValid(10.5), "uint32 parameters take integers only");
+    }
+
+    [Fact]
+    public void IntegerRangesAreWholeTypeWidths()
+    {
+        // Each integer parameter's range is the full range of the type the value logically is --
+        // a millisecond delay is a uint16_t, a retry count a uint8_t -- rather than what its
+        // consumer would find sensible. So any bound here that is not a type's width is a
+        // judgement call that has crept back into the schema. Enums are exempt: theirs is the
+        // last option code, which the generators derive from the option list.
+        double[] typeWidths = [byte.MaxValue, ushort.MaxValue, uint.MaxValue];
+        foreach (var def in SysConfigCatalog.Parameters.Where(p => !p.IsFloat && !p.IsEnum))
+        {
+            Assert.Equal(0, def.Min);
+            Assert.Contains(def.Max, typeWidths);
+        }
     }
 
     [Fact]
@@ -198,6 +220,89 @@ public class SysConfigStoreTests : IDisposable
         {
             File.Delete(_dbPath);
         }
+    }
+
+    /// <summary>
+    /// Wire ids are positional, so removing a parameter shifts every id after it. A database
+    /// written under the old numbering must not be read back by raw id — that would hand each
+    /// parameter its neighbour's value with nothing to show anything was wrong. The store re-keys
+    /// on the stored name when it opens.
+    /// </summary>
+    [Fact]
+    public void ValuesSavedUnderStaleIdsAreRekeyedByName()
+    {
+        // Write K_P's value under a deliberately wrong id, as a pre-renumbering file would hold it.
+        using (var connection = new SqliteConnection($"Data Source={_dbPath};Pooling=False"))
+        {
+            connection.Open();
+            using var create = connection.CreateCommand();
+            create.CommandText = """
+                CREATE TABLE sysconfig (
+                    param_id   INTEGER PRIMARY KEY,
+                    name       TEXT NOT NULL,
+                    value      REAL NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                INSERT INTO sysconfig VALUES (99, 'K_P', 4.25, '2026-01-01T00:00:00Z');
+                """;
+            create.ExecuteNonQuery();
+        }
+
+        using var store = new SysConfigStore(_dbPath);
+        var values = store.LoadAll();
+
+        Assert.Equal(4.25, values[sysconfig_param_t.SYSCFG_K_P]);
+        Assert.DoesNotContain((sysconfig_param_t)99, values.Keys);
+    }
+
+    /// <summary>A saved value whose parameter the catalog no longer has is dropped rather than
+    /// carried onto whichever id now sits in that slot.</summary>
+    [Fact]
+    public void ValuesForWithdrawnParametersAreForgotten()
+    {
+        using (var connection = new SqliteConnection($"Data Source={_dbPath};Pooling=False"))
+        {
+            connection.Open();
+            using var create = connection.CreateCommand();
+            create.CommandText = """
+                CREATE TABLE sysconfig (
+                    param_id   INTEGER PRIMARY KEY,
+                    name       TEXT NOT NULL,
+                    value      REAL NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                INSERT INTO sysconfig VALUES (0, 'MOMENT_OF_INERTIA_KG_M2', 7.5, '2026-01-01T00:00:00Z');
+                INSERT INTO sysconfig VALUES (1, 'K_P', 1.5, '2026-01-01T00:00:00Z');
+                """;
+            create.ExecuteNonQuery();
+        }
+
+        using var store = new SysConfigStore(_dbPath);
+        var values = store.LoadAll();
+
+        // The inertia moved to the app's PC constants; K_P keeps its value at its current id.
+        Assert.Equal(1.5, values[sysconfig_param_t.SYSCFG_K_P]);
+        Assert.DoesNotContain(7.5, values.Values);
+    }
+
+    [Fact]
+    public void PcConstantsRoundTripAndAreSeparateFromRuntimeValues()
+    {
+        using (var store = new SysConfigStore(_dbPath))
+        {
+            store.SavePcConstant("GEAR_RATIO", 3.5);
+            store.SavePcConstant("MOMENT_OF_INERTIA_KG_M2", 0.125);
+            store.SavePcConstant("GEAR_RATIO", 4.0); // overwrite
+            store.Save(sysconfig_param_t.SYSCFG_K_P, "K_P", 2.0);
+        }
+
+        using var reopened = new SysConfigStore(_dbPath);
+        var constants = reopened.LoadAllPcConstants();
+
+        Assert.Equal(4.0, constants["GEAR_RATIO"]);
+        Assert.Equal(0.125, constants["MOMENT_OF_INERTIA_KG_M2"]);
+        // Host-only: nothing about them leaks into what gets pushed to the device.
+        Assert.Equal(2.0, reopened.LoadAll()[sysconfig_param_t.SYSCFG_K_P]);
     }
 
     [Fact]

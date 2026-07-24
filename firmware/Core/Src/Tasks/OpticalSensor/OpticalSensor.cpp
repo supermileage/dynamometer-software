@@ -8,9 +8,11 @@ extern optical_encoder_output_data optical_encoder_circular_buffer[OPTICAL_ENCOD
 extern size_t task_error_circular_buffer_index_writer;
 extern task_error_data task_error_circular_buffer[TASK_ERROR_CIRCULAR_BUFFER_SIZE];
 
+// Written only by the encoder ISR, read only by the task inside a critical section. EXTI9_5 runs
+// at priority 5, which taskENTER_CRITICAL()'s BASEPRI masks, so the task reads the pair atomically
+// and no pulse is lost between reading the count and clearing it.
 static volatile uint32_t num_counts = 0;
-static volatile uint32_t num_overflows = 0;
-static volatile uint32_t timestamp = 0;
+static volatile uint32_t last_pulse_timestamp = 0;
 
 OpticalSensor::OpticalSensor(osMessageQueueId_t sessionControllerToOpticalSensorHandle) : 
 		// this comes directly from circular_buffers.h and config.h
@@ -28,7 +30,14 @@ bool OpticalSensor::Init()
 void OpticalSensor::Run(void)
 {
     optical_encoder_output_data outputData;
-    uint32_t prevTimestamp = 0;
+
+    // The reference edge: the pulse that ended the previous measurement interval. Until a first
+    // pulse has been seen there is nothing to measure against -- the old code used 0 here, so the
+    // first sample was divided by the entire time since boot (TIM2 free-runs), which is a wrong
+    // answer of unpredictable size and, after a counter wrap, a meaningless one.
+    uint32_t referenceTimestamp = 0;
+    bool haveReference = false;
+
     float prevAngularVelocity = 0.0f;
 
     while (1)
@@ -42,84 +51,85 @@ void OpticalSensor::Run(void)
             _opticalEncoderEnabled ? 0 : osWaitForever
         );
 
-        // Skip processing if the latest state says disabled
+        // Skip processing if the latest state says disabled. The reference is dropped with it: the
+        // ISR keeps counting while disabled, so resuming against a stale edge would attribute a
+        // whole idle period's pulses to one interval.
         if (!_opticalEncoderEnabled)
         {
-        	continue;
+            haveReference = false;
+            continue;
         }
 
-        // --- Copy critical data to avoid race conditions ---
+        // --- Copy the ISR's state atomically (see the note on the globals) ---
         taskENTER_CRITICAL();
         uint32_t num_counts_copy = num_counts;
         num_counts = 0;
-        uint32_t timestampCopy = get_timestamp();
+        uint32_t lastPulseCopy = last_pulse_timestamp;
+        uint32_t now = get_timestamp();
         taskEXIT_CRITICAL();
 
-        outputData.timestamp = timestampCopy;
-        outputData.raw_value = num_counts_copy; 
-        outputData.angular_velocity = CalculateAngularVelocity(num_counts_copy, prevTimestamp, timestampCopy);
-        outputData.angular_acceleration = CalculateAngularAcceleration(prevAngularVelocity, outputData.angular_velocity, prevTimestamp, timestampCopy);
+        float angularVelocity;
+        uint32_t sampleTimestamp;
+        uint32_t deltaTicks;
+
+        if (num_counts_copy > 0u && haveReference)
+        {
+            // Both ends of this interval are real pulse edges, so the angle is exactly
+            // num_counts_copy apertures and the only error is the timestamps' 1 us resolution.
+            // Unsigned subtraction is deliberate: it stays correct across a counter wrap.
+            deltaTicks = lastPulseCopy - referenceTimestamp;
+            angularVelocity = encoder_angular_velocity(
+                num_counts_copy, deltaTicks, sysconfig_get_u32(SYSCFG_NUM_APERTURES),
+                _timestampClockSpeedFreq);
+            sampleTimestamp = lastPulseCopy;
+        }
+        else if (num_counts_copy > 0u)
+        {
+            // First pulses since the task started or was re-enabled: adopt this edge as the
+            // reference and report nothing derived from it yet.
+            deltaTicks = 0u;
+            angularVelocity = 0.0f;
+            sampleTimestamp = lastPulseCopy;
+        }
+        else
+        {
+            // No pulse this pass. The shaft has not covered another aperture, so its speed is
+            // below one aperture per the elapsed silence -- a bound that decays toward zero on
+            // its own rather than snapping there. Never report faster than the last known speed.
+            deltaTicks = haveReference ? (now - referenceTimestamp) : 0u;
+            float bound = encoder_velocity_upper_bound(
+                deltaTicks, sysconfig_get_u32(SYSCFG_NUM_APERTURES), _timestampClockSpeedFreq);
+            angularVelocity = (haveReference && bound < prevAngularVelocity)
+                                  ? bound
+                                  : (haveReference ? prevAngularVelocity : 0.0f);
+            sampleTimestamp = now;
+        }
+
+        outputData.timestamp = sampleTimestamp;
+        outputData.raw_value = num_counts_copy;
+        outputData.angular_velocity = angularVelocity;
+        outputData.angular_acceleration = haveReference
+            ? encoder_angular_acceleration(prevAngularVelocity, angularVelocity, deltaTicks,
+                                           _timestampClockSpeedFreq)
+            : 0.0f;
 
         _data_buffer_writer.WriteElementAndIncrementIndex(outputData);
 
-        prevTimestamp = timestampCopy;
-        prevAngularVelocity = outputData.angular_velocity;
-
+        if (num_counts_copy > 0u)
+        {
+            referenceTimestamp = lastPulseCopy;
+            haveReference = true;
+        }
+        prevAngularVelocity = angularVelocity;
     }
-}
-
-
-
-float OpticalSensor::CalculateRPM(uint32_t numCounts, uint32_t prevTimestamp, uint32_t currTimestamp)
-{
-    // Return 0 immediately if no pulse was detected
-    if (numCounts == 0 || prevTimestamp == currTimestamp) {
-        return 0.0f;
-    }
-
-    float deltaTimeSec = static_cast<float>(currTimestamp - prevTimestamp) / _timestampClockSpeedFreq;
-
-    // RPM = revolutions per minute
-    float rpm = (static_cast<float>(numCounts) / static_cast<float>(sysconfig_get_u32(SYSCFG_NUM_APERTURES)) / deltaTimeSec) * 60.0f;
-
-    return rpm;
-}
-
-float OpticalSensor::CalculateAngularVelocity(uint32_t numCounts, uint32_t prevTimestamp, uint32_t currTimestamp)
-{
-    // Return 0 immediately if no pulse was detected
-    if (numCounts == 0 || prevTimestamp == currTimestamp) {
-        return 0.0f;
-    }
-    
-    // Time difference in seconds
-    float deltaTimeSec = static_cast<float>(currTimestamp - prevTimestamp) / _timestampClockSpeedFreq;
-
-    // Angular velocity in radians per second
-    float angularVelocity = (static_cast<float>(numCounts) / static_cast<float>(sysconfig_get_u32(SYSCFG_NUM_APERTURES))) * (2.0f * M_PI) / deltaTimeSec;
-
-    return angularVelocity;
-}
-
-float OpticalSensor::CalculateAngularAcceleration(float prevAngularVelocity, float currAngularVelocity, uint32_t prevTimestamp, uint32_t currTimestamp)
-{
-    // Return 0 if no time has passed
-    if (prevTimestamp == currTimestamp) {
-        return 0.0f;
-    }
-
-    // Time difference in seconds
-    float deltaTimeSec = static_cast<float>(currTimestamp - prevTimestamp) / _timestampClockSpeedFreq;
-
-    // Angular acceleration in radians per second squared
-    float angularAcceleration = (currAngularVelocity - prevAngularVelocity) / deltaTimeSec;
-
-    return angularAcceleration;
 }
 
 extern "C" void opticalsensor_input_interrupt()
 {
     num_counts = num_counts + 1;
+    // Stamping the edge here is what makes the measurement interval start and end on real pulses
+    // rather than on whenever the task happened to run -- see encoder_math.h.
+    last_pulse_timestamp = get_timestamp();
 }
 
 extern "C" void opticalsensor_main(osMessageQueueId_t sessionControllerToOpticalSensorHandle)
