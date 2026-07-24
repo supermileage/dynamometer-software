@@ -73,12 +73,33 @@ public class SysConfigCatalogTests
         var kp = SysConfigCatalog.Get(sysconfig_param_t.SYSCFG_K_P);
         Assert.True(kp.IsValid(-3.5));
         Assert.False(kp.IsValid(double.NaN));
-        Assert.False(kp.IsValid(2e6));
+        Assert.False(kp.IsValid(kp.Max * 2));
 
         var delay = SysConfigCatalog.Get(sysconfig_param_t.SYSCFG_PID_TASK_OSDELAY);
         Assert.True(delay.IsValid(10));
-        Assert.False(delay.IsValid(0), "firmware clamps osDelays to >= 1");
+        Assert.True(
+            delay.IsValid(delay.Min),
+            "the bottom of a range is reachable on purpose: a 0 ms delay is a task that stops "
+                + "yielding, which the range allows because it is representable"
+        );
+        Assert.False(delay.IsValid(delay.Max + 1));
         Assert.False(delay.IsValid(10.5), "uint32 parameters take integers only");
+    }
+
+    [Fact]
+    public void IntegerRangesAreWholeTypeWidths()
+    {
+        // Each integer parameter's range is the full range of the type the value logically is --
+        // a millisecond delay is a uint16_t, a retry count a uint8_t -- rather than what its
+        // consumer would find sensible. So any bound here that is not a type's width is a
+        // judgement call that has crept back into the schema. Enums are exempt: theirs is the
+        // last option code, which the generators derive from the option list.
+        double[] typeWidths = [byte.MaxValue, ushort.MaxValue, uint.MaxValue];
+        foreach (var def in SysConfigCatalog.Parameters.Where(p => !p.IsFloat && !p.IsEnum))
+        {
+            Assert.Equal(0, def.Min);
+            Assert.Contains(def.Max, typeWidths);
+        }
     }
 
     [Fact]

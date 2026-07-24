@@ -564,31 +564,48 @@ sections:
       # nothing on the device reads them now that the host derives torque and power, so they
       # are host-only settings kept in the app's own database. Removing them renumbered every
       # id below -- see the v6 note above.
-      - { name: K_P, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Proportional gain." }
-      - { name: K_I, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Integral gain." }
-      - { name: K_D, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Derivative gain." }
-      - { name: PID_MAX_OUTPUT, type: float, min: 1.0e-6, max: 1.0e6, category: "PID Controller", unit: "", description: "Normalization bound for the PID output before throttle/brake mixing." }
-      - { name: THROTTLE_GAIN, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Gain applied to the throttle half of the PID output mix." }
-      - { name: BRAKE_GAIN, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Gain applied to the brake half of the PID output mix." }
-      - { name: HORIZONTAL_BIAS, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Horizontal offset of the throttle/brake mixing curve." }
-      - { name: VERTICAL_BIAS, type: float, min: -1.0e6, max: 1.0e6, category: "PID Controller", unit: "", description: "Vertical offset of the throttle/brake mixing curve." }
+      #
+      # Every range below is the full range of the type the value logically is -- a millisecond
+      # delay is a uint16_t, so 0..65535; a retry count is a uint8_t, so 0..255. `type:` stays
+      # uint32/float because that is the *wire* encoding (each parameter is one 32-bit word);
+      # the min/max is where the narrower type is expressed. The point is that these bounds
+      # exist to stop a value that cannot be represented, not to stop one that is a bad idea:
+      # the extreme end of each range is reachable on purpose. A 0 ms delay does mean the task
+      # stops yielding, and that is allowed.
+      #
+      # Floats have no width to read a range off, so theirs is invented: +-1e9, wide enough not
+      # to be in anyone's way and finite so a typo still cannot get through as inf. The two duty
+      # cycles are the exception, because 0..1 *is* the type there -- they are a fraction of the
+      # PWM period, and BPM::SetDutyCycle multiplies by the timer's autoreload into a uint16_t,
+      # so a value above 1 does not mean "harder", it means the compare register wraps.
+      - { name: K_P, type: float, min: -1.0e9, max: 1.0e9, category: "PID Controller", unit: "", description: "Proportional gain." }
+      - { name: K_I, type: float, min: -1.0e9, max: 1.0e9, category: "PID Controller", unit: "", description: "Integral gain." }
+      - { name: K_D, type: float, min: -1.0e9, max: 1.0e9, category: "PID Controller", unit: "", description: "Derivative gain." }
+      - { name: PID_MAX_OUTPUT, type: float, min: -1.0e9, max: 1.0e9, category: "PID Controller", unit: "", description: "Normalization bound for the PID output before throttle/brake mixing." }
+      - { name: THROTTLE_GAIN, type: float, min: -1.0e9, max: 1.0e9, category: "PID Controller", unit: "", description: "Gain applied to the throttle half of the PID output mix." }
+      - { name: BRAKE_GAIN, type: float, min: -1.0e9, max: 1.0e9, category: "PID Controller", unit: "", description: "Gain applied to the brake half of the PID output mix." }
+      - { name: HORIZONTAL_BIAS, type: float, min: -1.0e9, max: 1.0e9, category: "PID Controller", unit: "", description: "Horizontal offset of the throttle/brake mixing curve." }
+      - { name: VERTICAL_BIAS, type: float, min: -1.0e9, max: 1.0e9, category: "PID Controller", unit: "", description: "Vertical offset of the throttle/brake mixing curve." }
       - { name: MIN_DUTY_CYCLE_PERCENT, type: float, min: 0.0, max: 1.0, category: "BPM", unit: "0–1", description: "Lower clamp on the brake PWM duty cycle." }
       - { name: MAX_DUTY_CYCLE_PERCENT, type: float, min: 0.0, max: 1.0, category: "BPM", unit: "0–1", description: "Upper clamp on the brake PWM duty cycle." }
-      - { name: MAX_FORCE_LBF, type: float, min: 1.0e-3, max: 1.0e5, category: "Force Sensor", subsection: "All", unit: "lbf", description: "Full-scale force of the load cell; scales raw ADC counts to newtons." }
-      - { name: SESSIONCONTROLLER_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "Session Controller", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
-      - { name: BPM_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "BPM", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
-      - { name: FORCESENSOR_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "Force Sensor", subsection: "All", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
-      - { name: FORCESENSOR_COMMAND_POLL_OSDELAY, type: uint32, min: 1, max: 60000, category: "Force Sensor", subsection: "All", unit: "ms", description: "Bounded wait on the enable queue while the sensor is idle, so USB commands still get serviced." }
-      - { name: FORCESENSOR_CONVERSION_TIMEOUT_MS, type: uint32, min: 1, max: 60000, category: "Force Sensor", subsection: "I2C", unit: "ms", description: "How long to wait for the ADS1115 conversion-ready alert before abandoning the sample." }
-      - { name: OPTICAL_ENCODER_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "Optical Encoder", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
-      - { name: NUM_APERTURES, type: uint32, min: 1, max: 100000, category: "Optical Encoder", unit: "", description: "Apertures on the encoder wheel (tied to the physical 3D-printed apparatus)." }
-      - { name: PID_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "PID Controller", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
-      - { name: USB_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "USB", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
-      - { name: USB_TX_FLUSH_MAX_RETRIES, type: uint32, min: 0, max: 1000, category: "USB", unit: "attempts", description: "Bounded retries when flushing a full TX buffer before dropping the batch." }
-      - { name: LCD_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "LCD", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
-      - { name: LED_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "LED", unit: "ms", description: "Blink half-period of the status LED task." }
-      - { name: TASK_WARNING_RETRY_OSDELAY, type: uint32, min: 1, max: 60000, category: "Tasks & Monitoring", unit: "ms", description: "Back-off a task sleeps after reporting a warning before retrying." }
-      - { name: TASK_MONITOR_TASK_OSDELAY, type: uint32, min: 1, max: 60000, category: "Tasks & Monitoring", unit: "ms", description: "How often the task monitor samples every task's state and free stack." }
+      - { name: MAX_FORCE_LBF, type: float, min: -1.0e9, max: 1.0e9, category: "Force Sensor", subsection: "All", unit: "lbf", description: "Full-scale force of the load cell; scales raw ADC counts to newtons." }
+      # Task loop periods and timeouts, all milliseconds: uint16_t, so 0 to 65535 (~65 s).
+      - { name: SESSIONCONTROLLER_TASK_OSDELAY, type: uint32, min: 0, max: 65535, category: "Session Controller", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
+      - { name: BPM_TASK_OSDELAY, type: uint32, min: 0, max: 65535, category: "BPM", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
+      - { name: FORCESENSOR_TASK_OSDELAY, type: uint32, min: 0, max: 65535, category: "Force Sensor", subsection: "All", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
+      - { name: FORCESENSOR_COMMAND_POLL_OSDELAY, type: uint32, min: 0, max: 65535, category: "Force Sensor", subsection: "All", unit: "ms", description: "Bounded wait on the enable queue while the sensor is idle, so USB commands still get serviced." }
+      - { name: FORCESENSOR_CONVERSION_TIMEOUT_MS, type: uint32, min: 0, max: 65535, category: "Force Sensor", subsection: "I2C", unit: "ms", description: "How long to wait for the ADS1115 conversion-ready alert before abandoning the sample." }
+      - { name: OPTICAL_ENCODER_TASK_OSDELAY, type: uint32, min: 0, max: 65535, category: "Optical Encoder", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
+      # A slot count on a wheel: uint16_t.
+      - { name: NUM_APERTURES, type: uint32, min: 0, max: 65535, category: "Optical Encoder", unit: "", description: "Apertures on the encoder wheel (tied to the physical 3D-printed apparatus)." }
+      - { name: PID_TASK_OSDELAY, type: uint32, min: 0, max: 65535, category: "PID Controller", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
+      - { name: USB_TASK_OSDELAY, type: uint32, min: 0, max: 65535, category: "USB", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
+      # A retry count: uint8_t.
+      - { name: USB_TX_FLUSH_MAX_RETRIES, type: uint32, min: 0, max: 255, category: "USB", unit: "attempts", description: "Bounded retries when flushing a full TX buffer before dropping the batch." }
+      - { name: LCD_TASK_OSDELAY, type: uint32, min: 0, max: 65535, category: "LCD", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
+      - { name: LED_TASK_OSDELAY, type: uint32, min: 0, max: 65535, category: "LED", unit: "ms", description: "Blink half-period of the status LED task." }
+      - { name: TASK_WARNING_RETRY_OSDELAY, type: uint32, min: 0, max: 65535, category: "Tasks & Monitoring", unit: "ms", description: "Back-off a task sleeps after reporting a warning before retrying." }
+      - { name: TASK_MONITOR_TASK_OSDELAY, type: uint32, min: 0, max: 65535, category: "Tasks & Monitoring", unit: "ms", description: "How often the task monitor samples every task's state and free stack." }
       # ADS1115 config registers (I2C force-sensor path). Appended here to keep wire ids stable;
       # the host groups them under Force Sensor > I2C by category/subsection, not by position. The
       # force-sensor task re-applies any change over I2C on its next loop (ReconcileConfig). Codes
