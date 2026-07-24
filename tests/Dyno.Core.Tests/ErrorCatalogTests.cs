@@ -62,7 +62,7 @@ public class ErrorCatalogTests
     {
         var firmware = FirmwareFaults().Select(f => f.Member).ToHashSet();
 
-        Assert.Empty(ByMemberName().Keys.Where(name => !firmware.Contains(name)));
+        Assert.DoesNotContain(ByMemberName().Keys, name => !firmware.Contains(name));
     }
 
     [Fact]
@@ -71,7 +71,7 @@ public class ErrorCatalogTests
         // Find() is a dictionary keyed on Code, so a duplicate is a generator bug that would
         // throw at type-initialization time rather than fail here — but it would throw inside a
         // TypeInitializationException on first use, in the app, at runtime. Say it plainly instead.
-        Assert.Empty(ErrorCatalog.All.GroupBy(f => f.Code).Where(g => g.Count() > 1));
+        Assert.DoesNotContain(ErrorCatalog.All.GroupBy(f => f.Code), g => g.Count() > 1);
     }
 
     /// <summary>A fault enum's <c>task:</c> is written by hand in the schema next to an enum
