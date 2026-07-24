@@ -45,6 +45,11 @@ public static class TelemetryExporter
         ArgumentNullException.ThrowIfNull(channels);
         ArgumentNullException.ThrowIfNull(formatTime);
 
+        // Pin the line ending so the file is byte-for-byte identical wherever the app runs, rather
+        // than following the host's Environment.NewLine — the file is the record, and its format is
+        // ours to decide, not the platform's.
+        writer.NewLine = "\n";
+
         var culture = CultureInfo.InvariantCulture;
         writer.WriteLine(
             string.Join(',', channels.Select(c => c.ColumnName).Prepend(timeColumnName))
