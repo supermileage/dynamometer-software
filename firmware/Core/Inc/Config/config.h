@@ -3,12 +3,20 @@
 
 #include "ADS1115_main.h"
 
+// Tunable quantities below (gains, task delays, thresholds) are *boot defaults*: they
+// seed the runtime sysconfig store (Config/sysconfig.h), which the host can rewrite live
+// over USB (USB_CMD_SET_SYSCONFIG) -- the host re-pushes its saved values after every
+// handshake. Buffer sizes are not runtime: they dimension static arrays on a heapless
+// firmware, so changing them still requires a rebuild.
+
 // Voltage Reference (should be 3V3)
 #define VREF 3.3f
 
-// Mechanical Power Calculation Constants
-#define DISTANCE_FROM_FORCE_SENSOR_TO_CENTER_OF_SHAFT_M 1.0f
-#define MOMENT_OF_INERTIA_KG_M2 1.0f
+// The torque constants (force-sensor lever arm, moment of inertia) and the gear ratio used to
+// live here. They are gone from the firmware entirely: the device streams what it measures and
+// the desktop app derives torque and power, so those constants are its to keep -- editable in
+// the app's PC Constants section and stored in its database. That way correcting a value
+// recomputes past runs, instead of needing a rebuild and reflash to fix the next one.
 
 // Main PID controller parameters
 #define K_P 1.0f
@@ -24,13 +32,17 @@
 #define USER_INPUT_CIRCULAR_BUFFER_SIZE 100u
 
 // Session Controller Config
-#define SESSIONCONTROLLER_TASK_OSDELAY 5
+// 10ms = 100 Hz torque/power. Task delays below are tuned as a set: at the old rates the four
+// streams totalled ~38 kB/s, which saturated the USB TX path once a session started (rising
+// heartbeat RTTs, dropped batches); these halve the load with no visible loss on the plots.
+#define SESSIONCONTROLLER_TASK_OSDELAY 10
 
 // BPM Config
 #define MIN_DUTY_CYCLE_PERCENT 0.0f
 #define MAX_DUTY_CYCLE_PERCENT 0.95f
 #define BPM_CIRCULAR_BUFFER_SIZE 100
-#define BPM_TASK_OSDELAY 3
+// 50 Hz: the brake duty changes far slower than the sensors; no reason to stream it at 333 Hz.
+#define BPM_TASK_OSDELAY 20
 
 // FORCE SENSOR Config
 #define MAX_FORCE_LBF 25.0f
@@ -45,15 +57,28 @@
 // which would otherwise starve host command servicing/acks.
 #define FORCESENSOR_CONVERSION_TIMEOUT_MS 250
 
-// ADS1115 I2C Config
-#define ADS1115_SAMPLE_SPEED ADS1115_RATE_475
+// ADS1115 I2C config registers -- runtime-tunable via sysconfig. The force-sensor task
+// re-applies a change over I2C on its next loop pass (ForceSensorADS1115::ReconcileConfig),
+// so these are the *boot defaults* like the quantities above, not the only place they live.
+// Each value is the register code from Drivers/ADS1115/ADS1115_main.h; the trailing comment
+// names the code this default maps to (kept numeric so the host catalog can read the default).
+#define ADS1115_MUX       4  // ADS1115_MUX_P0_NG            (AIN0 measured against GND)
+#define ADS1115_GAIN      0  // ADS1115_PGA_6P144            (+/-6.144 V full scale)
+#define ADS1115_MODE      1  // ADS1115_MODE_SINGLESHOT      (the read loop triggers each conversion)
+#define ADS1115_RATE      6  // ADS1115_RATE_475            (475 SPS)
+#define ADS1115_COMP_MODE 0  // ADS1115_COMP_MODE_HYSTERESIS
+#define ADS1115_COMP_POL  0  // ADS1115_COMP_POL_ACTIVE_LOW
+#define ADS1115_COMP_LAT  0  // ADS1115_COMP_LAT_NON_LATCHING
+#define ADS1115_COMP_QUE  3  // ADS1115_COMP_QUE_DISABLE
 
 
 // Optical Encoder Config
 #define OPTICAL_MAX_NUM_OVERFLOWS 3 // Meant to count overflows for optical encoder
 #define NUM_APERTURES 64 // Tied to physical 3D printed apparatus
 #define OPTICAL_ENCODER_CIRCULAR_BUFFER_SIZE 100 // Need to evaluate maximum possible size from STM32
-#define OPTICAL_ENCODER_TASK_OSDELAY 2
+// 10ms = 100 Hz velocity samples. Also improves low-RPM resolution: a 2ms window at 64 apertures
+// sees zero pulses below ~470 RPM and reported a string of zeros between real readings.
+#define OPTICAL_ENCODER_TASK_OSDELAY 10
 
 // PID config
 #define PID_INITIAL_STATUS false
@@ -61,11 +86,15 @@
 
 // USB config
 #define USB_TX_BUFFER_SIZE 512 // Buffer that is being sent to USB peripheral
-#define USB_TASK_OSDELAY 5
+// 2ms: drain in smaller, more frequent batches. At 5ms a busy session filled the 512-byte
+// buffer inside a couple of passes, hitting the mid-pass flush (and its give-up drop) often.
+#define USB_TASK_OSDELAY 2
 // Bounded retries when flushing a full TX buffer before giving up, so a host that
 // stops draining the IN endpoint can't block the USB task and starve RX/command
 // handling. Each retry waits ~1ms (rides out a prior packet still in flight).
-#define USB_TX_FLUSH_MAX_RETRIES 5
+// 20: a 512-byte CDC transfer can legitimately take several ms of BUSY at full-speed USB;
+// the old 5 gave up (and dropped the batch) during ordinary congestion, not just dead hosts.
+#define USB_TX_FLUSH_MAX_RETRIES 20
 
 // LCD config
 #define LCD_TASK_OSDELAY 20
@@ -75,7 +104,11 @@
 #define LED_TASK_OSDELAY 500
 
 // Error and Warning settings
-#define TASK_ERROR_CIRCULAR_BUFFER_SIZE 50
+// 100, matching the sensor buffers. This one has the least margin of any of them despite being the
+// smallest: every sensor buffer is drained each pass of the USB task, whereas errors are held back
+// until a host has handshaked (deliberately -- it is what lets a boot-time fault reach whoever
+// connects later), so this is the one buffer expected to hold a backlog rather than run near empty.
+#define TASK_ERROR_CIRCULAR_BUFFER_SIZE 100
 #define TASK_WARNING_RETRY_OSDELAY 100
 
 // Task Monitor config
@@ -84,5 +117,14 @@
 
 
 
+
+// Values changed on the desktop app's SysConfig page are written to config_overrides.h (which is
+// generated, git-ignored, and absent unless something is overridden) and applied last, so they win
+// over the defaults above. Nothing else in the firmware knows the difference: every consumer still
+// reads the plain names below. Delete the file, or build from a clean tree, and you are back to
+// exactly what this header says.
+#if __has_include("config_overrides.h")
+#include "config_overrides.h"
+#endif
 
 #endif /* INC_CONFIG_CONFIG_H_ */

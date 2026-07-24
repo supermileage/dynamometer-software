@@ -1,0 +1,475 @@
+<UserControl
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:vm="using:Dyno.App.ViewModels"
+  xmlns:core="using:Dyno.Core.SysConfig"
+  x:Class="Dyno.App.Views.SysConfigView"
+  x:DataType="vm:MainWindowViewModel"
+>
+  <Design.DataContext>
+    <vm:MainWindowViewModel />
+  </Design.DataContext>
+
+  <UserControl.Styles>
+    <!-- The parameter / #define name, as it appears in the firmware source. -->
+    <Style Selector="TextBlock.definename">
+      <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+      <Setter Property="FontSize" Value="12.5" />
+    </Style>
+    <Style Selector="TextBlock.paramdesc">
+      <Setter Property="FontSize" Value="11.5" />
+      <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style Selector="TextBox.definevalue">
+      <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+      <Setter Property="FontSize" Value="12.5" />
+      <Setter Property="MinWidth" Value="150" />
+      <Setter Property="HorizontalContentAlignment" Value="Right" />
+      <Setter Property="CornerRadius" Value="7" />
+    </Style>
+    <!-- A value the firmware would reject: out of range or not a number. -->
+    <Style Selector="TextBox.definevalue.invalid">
+      <Setter Property="BorderBrush" Value="#E5484D" />
+    </Style>
+    <Style Selector="ToggleSwitch.definevalue">
+      <Setter Property="OnContent" Value="{x:Null}" />
+      <Setter Property="OffContent" Value="{x:Null}" />
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="Margin" Value="0" />
+    </Style>
+    <!-- Badge naming where a section's settings live / how they apply. -->
+    <Style Selector="Border.filebadge">
+      <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+      <Setter Property="CornerRadius" Value="5" />
+      <Setter Property="Padding" Value="7,2" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Border.filebadge TextBlock">
+      <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+      <Setter Property="FontSize" Value="10.5" />
+      <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+    </Style>
+    <!-- Section divider between the runtime and compile-time halves of the page. -->
+    <Style Selector="TextBlock.sectiontitle">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="LetterSpacing" Value="1.2" />
+    </Style>
+    <!-- Sub-group label inside a category card (the force sensor's All / I2C / ADC). -->
+    <Style Selector="TextBlock.subsectionlabel">
+      <Setter Property="FontSize" Value="10.5" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="LetterSpacing" Value="1" />
+      <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+    </Style>
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="Auto,*" Margin="16" RowSpacing="14">
+    <!-- Toolbar: title + search + the page's single Apply. It lives here, outside the scroller, so
+         it stays reachable from either half of the page — both halves save to the same place. -->
+    <Border Grid.Row="0" Classes="card" Padding="12">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" ColumnSpacing="8">
+        <TextBlock
+          Grid.Column="0"
+          Classes="heading"
+          Text="SYSTEM CONFIGURATION"
+          VerticalAlignment="Center"
+          Margin="4,0,10,0"
+        />
+        <TextBox
+          Grid.Column="1"
+          Text="{Binding SysConfig.SearchText}"
+          Watermark="Search settings — name, category or description (e.g. PID, task enable)"
+          CornerRadius="7"
+        />
+        <TextBlock
+          Grid.Column="2"
+          Text="{Binding SysConfig.PendingSummary}"
+          IsVisible="{Binding SysConfig.PendingCount}"
+          Foreground="{StaticResource AccentBrush}"
+          FontSize="12"
+          VerticalAlignment="Center"
+          Margin="6,0"
+        />
+        <Button
+          Grid.Column="3"
+          Content="Import JSON"
+          Click="OnImportJsonClick"
+          ToolTip.Tip="Load every setting on this page from a JSON file. Anything the file does not mention goes back to its default, and the Errors / Events log says what that was. Nothing is saved or sent to the device until you press Apply."
+        />
+        <Button
+          Grid.Column="4"
+          Content="Export JSON"
+          Click="OnExportJsonClick"
+          ToolTip.Tip="Write every setting on this page to a JSON file — the values in force, not any edit you have staged but not applied."
+        />
+        <Button
+          Grid.Column="5"
+          Classes="accent"
+          Content="Apply"
+          Command="{Binding SysConfig.ApplyCommand}"
+          ToolTip.Tip="Save every change on this page to this computer. Runtime values are then written to the connected device, and re-applied automatically each time a device connects, since the board forgets them when it reboots. Compile-time settings are only remembered — the firmware still builds from the headers."
+        />
+      </Grid>
+    </Border>
+
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+      <StackPanel Spacing="12">
+        <!-- ===================== PC CONSTANTS ===================== -->
+        <!-- Host-only values. Nothing here is sent to the device: the firmware streams what it
+             measures and this app derives torque, power and the geared readouts from it, so these
+             are its own inputs. Editing one recomputes from the next sample, with no reflash. -->
+        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="10" Margin="4,0">
+          <TextBlock
+            Grid.Column="0"
+            Classes="sectiontitle"
+            Text="PC CONSTANTS"
+            VerticalAlignment="Center"
+          />
+          <Border Grid.Column="1" Classes="filebadge">
+            <TextBlock Text="used by this app · never sent to the device" />
+          </Border>
+        </Grid>
+        <TextBlock
+          Text="The dyno's physical constants, which this app derives torque and power from. Correcting one recomputes the readouts from the next sample — no rebuild, no reflash."
+          Classes="paramdesc"
+          Margin="4,-6,4,0"
+          TextWrapping="Wrap"
+        />
+        <!-- Only ever carries a warning or the result of an Apply; silent when all is well, so it
+             does not spend a line of the page restating where the values are kept. -->
+        <TextBlock
+          Text="{Binding SysConfig.PcStatusText}"
+          Classes="paramdesc"
+          Margin="4,-8,4,0"
+          TextWrapping="Wrap"
+          IsVisible="{Binding SysConfig.PcStatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+        />
+
+        <Border Classes="card">
+          <ItemsControl ItemsSource="{Binding SysConfig.PcConstants}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <StackPanel Spacing="10" />
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:PcConstantViewModel">
+                <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="10">
+                  <!-- Pending-change marker, as on a runtime parameter: these are staged for Apply
+                       too, and without it the box looks like it took effect as it was typed. -->
+                  <Ellipse
+                    Grid.Column="0"
+                    Width="7"
+                    Height="7"
+                    VerticalAlignment="Center"
+                    Fill="{StaticResource AccentBrush}"
+                    IsVisible="{Binding IsDirty}"
+                    ToolTip.Tip="Changed — not yet applied"
+                  />
+                  <StackPanel Grid.Column="1" Spacing="2">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                      <TextBlock Text="{Binding Label}" VerticalAlignment="Center" />
+                      <TextBlock
+                        Text="{Binding Unit}"
+                        Classes="paramdesc"
+                        VerticalAlignment="Center"
+                        IsVisible="{Binding HasUnit}"
+                      />
+                    </StackPanel>
+                    <TextBlock
+                      Text="{Binding Description}"
+                      Classes="paramdesc"
+                      TextWrapping="Wrap"
+                    />
+                    <TextBlock Classes="paramdesc" Text="{Binding RangeText}" FontSize="10.5" />
+                    <TextBlock
+                      Text="{Binding Error}"
+                      Foreground="#E5484D"
+                      FontSize="11"
+                      IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}"
+                    />
+                  </StackPanel>
+                  <TextBox
+                    Grid.Column="2"
+                    Classes="definevalue"
+                    Classes.invalid="{Binding IsInvalid}"
+                    Text="{Binding EditedText}"
+                    MinWidth="120"
+                    VerticalAlignment="Center"
+                  />
+                  <Button
+                    Grid.Column="3"
+                    Content="Reset"
+                    FontSize="11"
+                    Padding="9,4"
+                    VerticalAlignment="Center"
+                    IsVisible="{Binding CanReset}"
+                    Command="{Binding ResetCommand}"
+                    ToolTip.Tip="Put the default back in the box — press Apply to save it"
+                  />
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </Border>
+
+        <!-- ===================== DEVICE RUNTIME ===================== -->
+        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="10" Margin="4,0">
+          <TextBlock
+            Grid.Column="0"
+            Classes="sectiontitle"
+            Text="DEVICE RUNTIME"
+            VerticalAlignment="Center"
+          />
+          <Border Grid.Column="1" Classes="filebadge">
+            <TextBlock Text="applied over USB · saved on this PC" />
+          </Border>
+        </Grid>
+        <TextBlock
+          Text="{Binding SysConfig.RuntimeStatusText}"
+          Classes="paramdesc"
+          Margin="4,-6,4,0"
+        />
+
+        <!-- One card per runtime category. The force-sensor sample rate lives in the Force Sensor
+             card now (ADS1115_RATE under the I2C sub-header), like every other tunable. -->
+        <ItemsControl ItemsSource="{Binding SysConfig.FilteredRuntimeCategories}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <StackPanel Spacing="12" />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:RuntimeCategoryViewModel">
+              <Border Classes="card">
+                <StackPanel Spacing="4">
+                  <TextBlock Classes="heading" Text="{Binding Name}" Margin="0,0,0,6" />
+                  <!-- One block per subsection (force sensor: All / I2C / ADC). Categories with no
+                       subsection have a single untitled group, so its header is hidden and the card
+                       looks exactly as it did before. -->
+                  <ItemsControl ItemsSource="{Binding Subsections}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:RuntimeSubsectionViewModel">
+                        <StackPanel Spacing="2">
+                          <!-- Labelled divider naming the sensing path this group applies to. -->
+                          <Grid
+                            ColumnDefinitions="Auto,*"
+                            ColumnSpacing="8"
+                            Margin="0,8,0,2"
+                            IsVisible="{Binding HasTitle}"
+                          >
+                            <TextBlock
+                              Classes="subsectionlabel"
+                              Text="{Binding Title}"
+                              VerticalAlignment="Center"
+                            />
+                            <Border
+                              Grid.Column="1"
+                              Height="1"
+                              Background="{StaticResource StrokeBrush}"
+                              VerticalAlignment="Center"
+                            />
+                          </Grid>
+                          <ItemsControl ItemsSource="{Binding Parameters}">
+                            <ItemsControl.ItemTemplate>
+                              <DataTemplate x:DataType="vm:RuntimeParameterViewModel">
+                                <Grid
+                                  ColumnDefinitions="Auto,*,Auto,Auto,Auto"
+                                  ColumnSpacing="10"
+                                  Margin="0,5"
+                                >
+                                  <!-- Pending-change marker -->
+                                  <Ellipse
+                                    Grid.Column="0"
+                                    Width="7"
+                                    Height="7"
+                                    VerticalAlignment="Center"
+                                    Fill="{StaticResource AccentBrush}"
+                                    IsVisible="{Binding IsDirty}"
+                                    ToolTip.Tip="Changed — not yet applied"
+                                  />
+                                  <StackPanel
+                                    Grid.Column="1"
+                                    Spacing="2"
+                                    VerticalAlignment="Center"
+                                  >
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                      <TextBlock Classes="definename" Text="{Binding Name}" />
+                                      <Border Classes="filebadge" IsVisible="{Binding HasUnit}">
+                                        <TextBlock Text="{Binding Unit}" />
+                                      </Border>
+                                    </StackPanel>
+                                    <TextBlock
+                                      Classes="paramdesc"
+                                      Text="{Binding Description}"
+                                      MaxWidth="520"
+                                      HorizontalAlignment="Left"
+                                    />
+                                    <TextBlock
+                                      Classes="paramdesc"
+                                      Text="{Binding RangeText}"
+                                      FontSize="10.5"
+                                    />
+                                  </StackPanel>
+                                  <Panel Grid.Column="3" VerticalAlignment="Center">
+                                    <!-- Enum params (e.g. the ADS1115 registers) pick from labelled
+                                         codes; everything else is a free number box. -->
+                                    <ComboBox
+                                      IsVisible="{Binding IsEnum}"
+                                      ItemsSource="{Binding Options}"
+                                      SelectedItem="{Binding SelectedOption}"
+                                      MinWidth="150"
+                                      CornerRadius="7"
+                                    >
+                                      <ComboBox.ItemTemplate>
+                                        <DataTemplate x:DataType="core:SysConfigEnumOption">
+                                          <TextBlock Text="{Binding Label}" />
+                                        </DataTemplate>
+                                      </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                    <TextBox
+                                      Classes="definevalue"
+                                      Classes.invalid="{Binding IsInvalid}"
+                                      IsVisible="{Binding !IsEnum}"
+                                      Text="{Binding Text}"
+                                    />
+                                  </Panel>
+                                  <Button
+                                    Grid.Column="4"
+                                    Content="Reset"
+                                    FontSize="11"
+                                    Padding="9,4"
+                                    VerticalAlignment="Center"
+                                    IsVisible="{Binding IsOverride}"
+                                    Command="{Binding ResetCommand}"
+                                    ToolTip.Tip="Go back to the firmware default — press Apply to save it"
+                                  />
+                                </Grid>
+                              </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                          </ItemsControl>
+                        </StackPanel>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <!-- ===================== COMPILE-TIME ===================== -->
+        <!-- No Reload button: the firmware's settings are re-read whenever this page is opened
+             (MainWindowViewModel.Navigate), so there is nothing left for the user to ask for. -->
+        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="10" Margin="4,14,4,0">
+          <TextBlock
+            Grid.Column="0"
+            Classes="sectiontitle"
+            Text="COMPILE-TIME"
+            VerticalAlignment="Center"
+          />
+          <Border Grid.Column="1" Classes="filebadge">
+            <TextBlock Text="saved on this PC · takes a rebuild and a flash to reach the board" />
+          </Border>
+        </Grid>
+        <TextBlock Text="{Binding SysConfig.StatusText}" Classes="paramdesc" Margin="4,-6,4,0" />
+
+        <!-- One card per section of config.h / debug.h (buffer sizes, task/peripheral gates). -->
+        <ItemsControl ItemsSource="{Binding SysConfig.FilteredCategories}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <StackPanel Spacing="12" />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:ConfigCategoryViewModel">
+              <Border Classes="card">
+                <StackPanel Spacing="4">
+                  <!-- No file badge: which header a setting is declared in is not something the
+                       user of this page can act on, and the badge took the width these section
+                       names need (the longest, "Voltage Reference (should be 3V3)", was clipped). -->
+                  <TextBlock
+                    Classes="heading"
+                    Text="{Binding Name}"
+                    VerticalAlignment="Center"
+                    TextWrapping="Wrap"
+                    Margin="0,0,0,6"
+                  />
+                  <ItemsControl ItemsSource="{Binding Parameters}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:ConfigParameterViewModel">
+                        <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="10" Margin="0,5">
+                          <!-- Pending-change marker -->
+                          <Ellipse
+                            Grid.Column="0"
+                            Width="7"
+                            Height="7"
+                            VerticalAlignment="Center"
+                            Fill="{StaticResource AccentBrush}"
+                            IsVisible="{Binding IsDirty}"
+                            ToolTip.Tip="Changed — not yet applied"
+                          />
+                          <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                            <TextBlock Classes="definename" Text="{Binding Name}" />
+                            <TextBlock
+                              Classes="paramdesc"
+                              Text="{Binding Description}"
+                              IsVisible="{Binding HasDescription}"
+                              MaxWidth="560"
+                              HorizontalAlignment="Left"
+                            />
+                            <!-- Only while the saved value differs from the built firmware's, which
+                                 is the one case where the number on screen can mislead. -->
+                            <TextBlock
+                              Classes="paramdesc"
+                              Text="{Binding HeaderText}"
+                              IsVisible="{Binding IsOverride}"
+                              FontSize="10.5"
+                            />
+                          </StackPanel>
+                          <Panel Grid.Column="2" VerticalAlignment="Center">
+                            <ToggleSwitch
+                              Classes="definevalue"
+                              IsChecked="{Binding IsOn}"
+                              IsVisible="{Binding IsBool}"
+                            />
+                            <TextBox
+                              Classes="definevalue"
+                              Classes.invalid="{Binding IsInvalid}"
+                              Text="{Binding Text}"
+                              IsVisible="{Binding IsText}"
+                            />
+                          </Panel>
+                          <Button
+                            Grid.Column="3"
+                            Content="Reset"
+                            FontSize="11"
+                            Padding="9,4"
+                            VerticalAlignment="Center"
+                            IsVisible="{Binding IsOverride}"
+                            Command="{Binding ResetCommand}"
+                            ToolTip.Tip="Go back to what the header says — press Apply to save it"
+                          />
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <TextBlock
+          Text="No settings match your search."
+          IsVisible="{Binding SysConfig.HasNoMatches}"
+          Foreground="{StaticResource TextMutedBrush}"
+          HorizontalAlignment="Center"
+          Margin="0,24"
+        />
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
+</UserControl>

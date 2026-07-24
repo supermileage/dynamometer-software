@@ -45,6 +45,12 @@ public class DeviceClientTests
         public void DeviceSend(ReadOnlySpan<byte> data) =>
             _deviceToHost.Writer.WriteAsync(data.ToArray()).AsTask().GetAwaiter().GetResult();
 
+        /// <summary>Ends the device→host direction the way a vanished port does: the pending read
+        /// fails outright with <paramref name="failure"/>, or reaches end of stream when there is
+        /// none. Both are what a real unplug can produce, and the client must not tell them apart —
+        /// either way the handle refers to a device that is no longer there.</summary>
+        public void Unplug(Exception? failure = null) => _deviceToHost.Writer.Complete(failure);
+
         public void Dispose() { }
     }
 
@@ -131,6 +137,30 @@ public class DeviceClientTests
                 }
             )
         );
+
+    /// <summary>Acks every command the host sends, so the handshake completes and stays completed —
+    /// for tests whose subject is what happens to a healthy link, not how one is established.</summary>
+    private static void AnswerEveryCommand(FakeSerial serial) =>
+        serial.OnWrite = frame =>
+        {
+            var cmd = ReadCommandHeader(frame);
+            serial.DeviceSend(
+                Wire.Message(
+                    usb_msg_type_t.USB_MSG_RESPONSE,
+                    task_offset_t.TASK_OFFSET_USB_CONTROLLER,
+                    new usb_response_data_t
+                    {
+                        opcode = cmd.opcode,
+                        msg_id = cmd.msg_id,
+                        status = (uint)usb_response_status_t.USB_RSP_OK,
+                    }
+                )
+            );
+        };
+
+    /// <summary>Waits for a condition the read loop reaches on its own thread.</summary>
+    private static bool SpinUntil(Func<bool> condition) =>
+        SpinWait.SpinUntil(condition, TimeSpan.FromSeconds(5));
 
     /// <summary>A client whose heartbeat runs fast enough to assert on in a test.</summary>
     private static DeviceClient FastHeartbeatClient(FakeSerial serial) =>
@@ -380,13 +410,113 @@ public class DeviceClientTests
         };
 
         using var lost = new ManualResetEventSlim();
-        client.ConnectionLost += () => lost.Set();
+        LinkLoss how = default;
+        client.ConnectionLost += reason =>
+        {
+            how = reason;
+            lost.Set();
+        };
 
         client.Start();
         AnnounceReady(serial);
 
         Assert.True(lost.Wait(TimeSpan.FromSeconds(5)), "a silent device was never reported lost");
         Assert.False(client.IsHandshaked);
+        // A board behind a port that is still open and still there: silence is all we know.
+        Assert.Equal(LinkLoss.Unresponsive, how);
+    }
+
+    /// <summary>The heartbeat is the slow path to the same verdict — two misses of a five-second
+    /// beat, so five to ten seconds of a link the port already knows is dead. These two assert the
+    /// read loop reports it on the spot instead, which is the whole point of it reporting at all.
+    /// A default client is used deliberately: with the real heartbeat interval, nothing but the read
+    /// loop can produce this event inside the test's timeout.</summary>
+    [Fact]
+    public void ReadLoop_ReportsConnectionLost_WhenThePortFails()
+    {
+        using var serial = new FakeSerial();
+        using var client = new DeviceClient(serial);
+        AnswerEveryCommand(serial);
+
+        using var lost = new ManualResetEventSlim();
+        LinkLoss how = default;
+        client.ConnectionLost += reason =>
+        {
+            how = reason;
+            lost.Set();
+        };
+
+        client.Start();
+        AnnounceReady(serial);
+        Assert.True(SpinUntil(() => client.IsHandshaked), "the link never handshaked");
+
+        serial.Unplug(new IOException("device removed"));
+
+        Assert.True(
+            lost.Wait(TimeSpan.FromSeconds(2)),
+            "a port that failed outright was not reported lost"
+        );
+        Assert.False(client.IsHandshaked);
+        // Not merely silent: the consumer must be told this link is over, because a port that is
+        // still listed for the moment would otherwise read as a board that might yet answer.
+        Assert.Equal(LinkLoss.PortFailed, how);
+    }
+
+    [Fact]
+    public void ReadLoop_ReportsConnectionLost_WhenThePortReachesEndOfStream()
+    {
+        using var serial = new FakeSerial();
+        using var client = new DeviceClient(serial);
+        AnswerEveryCommand(serial);
+
+        using var lost = new ManualResetEventSlim();
+        LinkLoss how = default;
+        client.ConnectionLost += reason =>
+        {
+            how = reason;
+            lost.Set();
+        };
+
+        client.Start();
+        AnnounceReady(serial);
+        Assert.True(SpinUntil(() => client.IsHandshaked), "the link never handshaked");
+
+        serial.Unplug();
+
+        Assert.True(
+            lost.Wait(TimeSpan.FromSeconds(2)),
+            "a port at end of stream was not reported lost"
+        );
+        Assert.False(client.IsHandshaked);
+        // Not merely silent: the consumer must be told this link is over, because a port that is
+        // still listed for the moment would otherwise read as a board that might yet answer.
+        Assert.Equal(LinkLoss.PortFailed, how);
+    }
+
+    /// <summary>Stopping the link kills the read loop too — by closing the port under it, which is
+    /// the same failure an unplug produces. Only the cancellation that preceded it says which one
+    /// happened, so this asserts the difference is actually drawn: a Disconnect the user asked for
+    /// must not be reported back to them as the board disappearing.</summary>
+    [Fact]
+    public void ReadLoop_ReportsNothing_WhenTheLinkIsStoppedOnPurpose()
+    {
+        using var serial = new FakeSerial();
+        using var client = new DeviceClient(serial);
+        AnswerEveryCommand(serial);
+
+        int lost = 0;
+        client.ConnectionLost += _ => Interlocked.Increment(ref lost);
+
+        client.Start();
+        AnnounceReady(serial);
+        Assert.True(SpinUntil(() => client.IsHandshaked), "the link never handshaked");
+
+        client.Stop();
+        // Stop() joins the read loop, so by here it has already exited; the wait is for a report
+        // posted from it on the way out, which would arrive just after.
+        Thread.Sleep(100);
+
+        Assert.Equal(0, Volatile.Read(ref lost));
     }
 
     [Fact]
@@ -421,7 +551,7 @@ public class DeviceClientTests
 
         using var lost = new ManualResetEventSlim();
         using var handshaked = new CountdownEvent(2); // initial handshake, then the recovery
-        client.ConnectionLost += () => lost.Set();
+        client.ConnectionLost += _ => lost.Set();
         client.Handshaked += () =>
         {
             if (!handshaked.IsSet)
@@ -441,55 +571,6 @@ public class DeviceClientTests
             "the returning device was never picked back up"
         );
         Assert.True(client.IsHandshaked);
-    }
-
-    [Fact]
-    public async Task SetForceSensorSampleRate_SendsCommand_AndReturnsStatus()
-    {
-        using var serial = new FakeSerial();
-        using var client = new DeviceClient(serial);
-
-        // Echo any host command back as an OK RESPONSE so the awaited round-trip closes.
-        serial.OnWrite = frame =>
-        {
-            var msg = ReadMessageHeader(frame);
-            if (msg.msg_type != usb_msg_type_t.USB_MSG_COMMAND)
-            {
-                return;
-            }
-            var cmd = ReadCommandHeader(frame);
-            serial.DeviceSend(
-                Wire.Message(
-                    usb_msg_type_t.USB_MSG_RESPONSE,
-                    msg.task_offset,
-                    new usb_response_data_t
-                    {
-                        opcode = cmd.opcode,
-                        msg_id = cmd.msg_id,
-                        status = (uint)usb_response_status_t.USB_RSP_OK,
-                    }
-                )
-            );
-        };
-
-        client.Start();
-        var response = await client.SetForceSensorSampleRateAsync(ForceSensorSampleRate.Sps250);
-
-        Assert.Equal((uint)usb_response_status_t.USB_RSP_OK, response.status);
-
-        // The one frame the host wrote is a COMMAND to the ADS1115 with the rate code as its body.
-        byte[] sent = Assert.Single(serial.Writes);
-        var msgHeader = ReadMessageHeader(sent);
-        var cmdHeader = ReadCommandHeader(sent);
-        Assert.Equal(usb_msg_type_t.USB_MSG_COMMAND, msgHeader.msg_type);
-        Assert.Equal(task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115, msgHeader.task_offset);
-        Assert.Equal(
-            (ushort)force_sensor_command_opcode.FORCE_SENSOR_CMD_SET_DATA_RATE,
-            cmdHeader.opcode
-        );
-
-        byte body = sent[sizeof(ushort) + UsbFrame.HeaderSize + UsbFrame.CommandHeaderSize];
-        Assert.Equal((byte)ForceSensorSampleRate.Sps250, body);
     }
 
     [Fact]
@@ -617,20 +698,6 @@ public class DeviceClientTests
     }
 
     [Fact]
-    public async Task SetForceSensorSampleRate_ThrowsDeviceCommandException_OnNonOkAck()
-    {
-        using var serial = new FakeSerial();
-        using var client = new DeviceClient(serial);
-        ReplyWithStatus(serial, usb_response_status_t.USB_RSP_DEVICE_ERROR);
-
-        client.Start();
-        var ex = await Assert.ThrowsAsync<DeviceCommandException>(() =>
-            client.SetForceSensorSampleRateAsync(ForceSensorSampleRate.Sps128)
-        );
-        Assert.Equal(usb_response_status_t.USB_RSP_DEVICE_ERROR, ex.Status);
-    }
-
-    [Fact]
     public void ReadLoop_SurvivesAThrowingConsumer_AndKeepsDelivering()
     {
         using var serial = new FakeSerial();
@@ -694,7 +761,7 @@ public class DeviceClientTests
         await Assert.ThrowsAsync<IOException>(() =>
             client.SendCommandAsync(
                 task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115,
-                (ushort)force_sensor_command_opcode.FORCE_SENSOR_CMD_SET_DATA_RATE,
+                (ushort)0,
                 [0],
                 timeout: TimeSpan.FromMilliseconds(200)
             )
@@ -706,7 +773,7 @@ public class DeviceClientTests
         ReplyWithStatus(serial, usb_response_status_t.USB_RSP_OK);
         var response = await client.SendCommandAsync(
             task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115,
-            (ushort)force_sensor_command_opcode.FORCE_SENSOR_CMD_SET_DATA_RATE,
+            (ushort)0,
             [0]
         );
         Assert.Equal((uint)usb_response_status_t.USB_RSP_OK, response.status);
@@ -723,7 +790,7 @@ public class DeviceClientTests
         // Default (throwOnError: false) surfaces the status to the caller instead of throwing.
         var response = await client.SendCommandAsync(
             task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115,
-            (ushort)force_sensor_command_opcode.FORCE_SENSOR_CMD_SET_DATA_RATE,
+            (ushort)0,
             [0]
         );
         Assert.Equal((uint)usb_response_status_t.USB_RSP_MALFORMED, response.status);
@@ -769,7 +836,7 @@ public class DeviceClientTests
         client.Start();
         var response = await client.SendCommandAsync(
             task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115,
-            (ushort)force_sensor_command_opcode.FORCE_SENSOR_CMD_SET_DATA_RATE,
+            (ushort)0,
             [0],
             timeout: TimeSpan.FromMilliseconds(150),
             retries: 1
@@ -794,11 +861,7 @@ public class DeviceClientTests
         client.Start();
         var started = System.Diagnostics.Stopwatch.StartNew();
         await Assert.ThrowsAsync<TimeoutException>(() =>
-            client.SendCommandAsync(
-                task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115,
-                (ushort)force_sensor_command_opcode.FORCE_SENSOR_CMD_SET_DATA_RATE,
-                [0]
-            )
+            client.SendCommandAsync(task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115, (ushort)0, [0])
         );
 
         // Well inside the 2s default, so the property is what bounded the wait, not a literal.
@@ -819,7 +882,7 @@ public class DeviceClientTests
         using var cts = new CancellationTokenSource();
         var task = client.SendCommandAsync(
             task_offset_t.TASK_OFFSET_FORCE_SENSOR_ADS1115,
-            (ushort)force_sensor_command_opcode.FORCE_SENSOR_CMD_SET_DATA_RATE,
+            (ushort)0,
             [0],
             timeout: TimeSpan.FromSeconds(5),
             retries: 3,
@@ -864,6 +927,90 @@ public class DeviceClientTests
         Assert.True(states.TryTake(out bool stopped, TimeSpan.FromSeconds(5)));
         Assert.False(stopped);
         Assert.False(client.IsSessionActive);
+    }
+
+    /// <summary>
+    /// A board that is idle when the host connects has to say so, and the host has to hear it. The
+    /// firmware states the session state after every ack precisely so a host arriving at a steady
+    /// board learns it without waiting for an edge — but the client starts out believing there is no
+    /// session, so treating "no session" as the value it already held would swallow that first
+    /// statement and leave the host merely *assuming* idle, indistinguishable from having checked.
+    /// </summary>
+    [Fact]
+    public void FirstSessionAnnouncement_IsRaisedEvenWhenIdle()
+    {
+        using var serial = new FakeSerial();
+        using var client = new DeviceClient(serial);
+
+        var states = new BlockingCollection<bool>();
+        client.SessionStateChanged += states.Add;
+
+        client.Start();
+        Assert.False(client.IsSessionStateKnown);
+
+        AnnounceSession(serial, false);
+
+        Assert.True(states.TryTake(out bool idle, TimeSpan.FromSeconds(5)));
+        Assert.False(idle);
+        Assert.True(client.IsSessionStateKnown);
+        Assert.False(client.IsSessionActive);
+    }
+
+    /// <summary>
+    /// Losing the link is not evidence that the session ended — the board may well still be running
+    /// one, unobserved. Recording it as a known idle would make the restatement that arrives with
+    /// the next good ack look like a repeat, so a session that had been running all along would
+    /// never be announced again and would read as idle for the life of the link.
+    /// </summary>
+    [Fact]
+    public void LosingTheLink_ForgetsTheSessionStateRatherThanCallingItIdle()
+    {
+        using var serial = new FakeSerial();
+        using var client = FastHeartbeatClient(serial);
+
+        // Answer the handshake, then go silent — the device is still there and still mid-session,
+        // we have simply stopped being able to ask.
+        int acks = 0;
+        serial.OnWrite = frame =>
+        {
+            var cmd = ReadCommandHeader(frame);
+            if (Interlocked.Increment(ref acks) > 1)
+            {
+                return;
+            }
+            serial.DeviceSend(
+                Wire.Message(
+                    usb_msg_type_t.USB_MSG_RESPONSE,
+                    task_offset_t.TASK_OFFSET_USB_CONTROLLER,
+                    new usb_response_data_t
+                    {
+                        opcode = cmd.opcode,
+                        msg_id = cmd.msg_id,
+                        status = (uint)usb_response_status_t.USB_RSP_OK,
+                    }
+                )
+            );
+        };
+
+        var states = new BlockingCollection<bool>();
+        client.SessionStateChanged += states.Add;
+
+        client.Start();
+        AnnounceReady(serial);
+        AnnounceSession(serial, true);
+        Assert.True(states.TryTake(out bool started, TimeSpan.FromSeconds(5)));
+        Assert.True(started);
+
+        // Nothing answers the keep-alive from here, so the client declares the link lost.
+        Assert.True(states.TryTake(out bool dropped, TimeSpan.FromSeconds(5)));
+        Assert.False(dropped); // consumers stop showing a session they can no longer observe
+        Assert.False(client.IsSessionStateKnown); // but we do not claim to know it stopped
+
+        // The board comes back still mid-session and restates it. That has to register as news.
+        AnnounceSession(serial, true);
+        Assert.True(states.TryTake(out bool resumed, TimeSpan.FromSeconds(5)));
+        Assert.True(resumed);
+        Assert.True(client.IsSessionActive);
     }
 
     [Fact]
@@ -969,6 +1116,47 @@ public class DeviceClientTests
         Assert.False(
             after.InSession,
             "a sample after the stop was delivered with the flag still on"
+        );
+    }
+
+    [Fact]
+    public void ReadLoop_LosesNothingFromABurstOfSends()
+    {
+        // Bytes pile up in the port faster than the loop can take them out, and the one thing that
+        // must not happen is losing any. This began as a test of the read-settle delay, at both
+        // ends of that setting; the delay is gone but the invariant it was protecting is not.
+        using var serial = new FakeSerial();
+        using var client = new DeviceClient(serial);
+
+        const int samples = 20;
+        var received = new ConcurrentQueue<DeviceMessage>();
+        using var all = new CountdownEvent(samples);
+        client.MessageReceived += m =>
+        {
+            received.Enqueue(m);
+            all.Signal();
+        };
+
+        client.Start();
+        for (uint i = 0; i < samples; i++)
+        {
+            serial.DeviceSend(
+                Wire.Message(
+                    usb_msg_type_t.USB_MSG_STREAM,
+                    task_offset_t.TASK_OFFSET_OPTICAL_ENCODER,
+                    new optical_encoder_output_data { timestamp = i, angular_velocity = i }
+                )
+            );
+        }
+
+        Assert.True(
+            all.Wait(TimeSpan.FromSeconds(10)),
+            $"only {received.Count} of {samples} arrived"
+        );
+        // In order, and each exactly once: the loop must not reorder or duplicate either.
+        Assert.Equal(
+            Enumerable.Range(0, samples).Select(i => (uint)i),
+            received.Cast<OpticalEncoderSample>().Select(s => s.Data.timestamp)
         );
     }
 }

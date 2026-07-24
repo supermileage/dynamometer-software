@@ -7,6 +7,18 @@
 #include <stddef.h>
 #include <assert.h>
 
+// Compile-time assertions: C spells them _Static_assert, C++ spells them static_assert,
+// and not every compiler/libc pair maps one spelling to the other (newlib's C++ headers
+// do, glibc's don't). Spelled per language under a name of our own so this header
+// compiles as either language everywhere — the ARM firmware and the host-compiled unit
+// tests in firmware/tests/ alike. (Benign redefinition when both generated headers are
+// included: the definitions are identical.)
+#ifdef __cplusplus
+#define DYNO_STATIC_ASSERT(expr, msg) static_assert(expr, msg)
+#else
+#define DYNO_STATIC_ASSERT(expr, msg) _Static_assert(expr, msg)
+#endif
+
 // A task error/warning is reported as a single 32-bit code:
 //   bits 31..16 : task offset (unique per task, see task_offset_t)
 //   bit  15     : warning flag (set => warning, clear => error)
@@ -52,7 +64,7 @@ typedef struct __attribute__((packed)) {
     uint32_t error_code;   // task_offset | (warning ? WARNING_FLAG : 0) | error number
 } task_error_data;
 
-_Static_assert(sizeof(task_error_data) == 4 + 4, "Size of task_error_data must be 8 bytes");
+DYNO_STATIC_ASSERT(sizeof(task_error_data) == 4 + 4, "Size of task_error_data must be 8 bytes");
 
 static inline task_error_data PopulateTaskErrorDataStruct(uint32_t timestamp, task_offset_t task_offset, uint32_t error_id)
 {
@@ -62,7 +74,7 @@ static inline task_error_data PopulateTaskErrorDataStruct(uint32_t timestamp, ta
     return error_data;
 }
 
-_Static_assert(sizeof(task_offset_t) == 4, "Size of task_offset_t must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(task_offset_t) == 4, "Size of task_offset_t must be 4 bytes");
 
 typedef enum : uint32_t
 {
@@ -71,7 +83,7 @@ typedef enum : uint32_t
     ERROR_SESSION_CONTROLLER_INVALID_UART1_MUTEX_POINTER
 } session_controller_task_error_ids;
 
-_Static_assert(sizeof(session_controller_task_error_ids) == 4, "Size of session_controller_task_error_ids must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(session_controller_task_error_ids) == 4, "Size of session_controller_task_error_ids must be 4 bytes");
 
 typedef enum : uint32_t
 {
@@ -79,44 +91,71 @@ typedef enum : uint32_t
     ERROR_BPM_PWM_STOP_FAILURE
 } bpm_task_error_ids;
 
-_Static_assert(sizeof(bpm_task_error_ids) == 4, "Size of bpm_task_error_ids must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(bpm_task_error_ids) == 4, "Size of bpm_task_error_ids must be 4 bytes");
 
 typedef enum : uint32_t
 {
     ERROR_LUMEX_LCD_TIMER_START_FAILURE = 0
 } lumex_lcd_task_error_ids;
 
-_Static_assert(sizeof(lumex_lcd_task_error_ids) == 4, "Size of lumex_lcd_task_error_ids must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(lumex_lcd_task_error_ids) == 4, "Size of lumex_lcd_task_error_ids must be 4 bytes");
 
 typedef enum : uint32_t
 {
     ERROR_TASK_MONITOR_INVALID_THREAD_ID_POINTER = 0
 } task_monitor_task_error_ids;
 
-_Static_assert(sizeof(task_monitor_task_error_ids) == 4, "Size of task_monitor_task_error_ids must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(task_monitor_task_error_ids) == 4, "Size of task_monitor_task_error_ids must be 4 bytes");
 
 typedef enum : uint32_t
 {
     WARNING_PID_CONTROLLER_MESSAGE_QUEUE_FULL = WARNING_FLAG
 } pid_controller_task_error_ids;
 
-_Static_assert(sizeof(pid_controller_task_error_ids) == 4, "Size of pid_controller_task_error_ids must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(pid_controller_task_error_ids) == 4, "Size of pid_controller_task_error_ids must be 4 bytes");
+
+// The TX path drops telemetry batches rather than stall when the CDC endpoint stays busy
+// (bounded retries, then give up). That loss used to be silent; this warning is emitted at
+// most once per second while it is happening, so a saturated link shows up in the host's
+// event log instead of masquerading as a quiet stream.
+// 
+// The _BUFFER_OVERFLOW warnings below are the same idea one stage earlier, on the read side.
+// Each names a circular buffer whose producer lapped this task's reader -- a full lap, so
+// samples that were never read have been overwritten. Reported per buffer, because which one
+// it is says what went wrong: one stream means that producer outran the drain, all of them at
+// once means the USB task itself stalled. They are warnings, matching TX_BATCH_DROPPED: data
+// is lost but the link and the session carry on. Rate-limited the same way, since a reader
+// that has fallen a lap behind usually stays behind for a while.
+// 
+// Only buffers this task reads are covered. An osMessageQueue that fills is rejected at the
+// *writer*, which is a different report belonging to the task that was pushing.
+typedef enum : uint32_t
+{
+    WARNING_USB_TX_BATCH_DROPPED = WARNING_FLAG,
+    WARNING_USB_OPTICAL_ENCODER_BUFFER_OVERFLOW,
+    WARNING_USB_FORCE_SENSOR_BUFFER_OVERFLOW,
+    WARNING_USB_BPM_BUFFER_OVERFLOW,
+    WARNING_USB_TASK_ERROR_BUFFER_OVERFLOW
+} usb_controller_task_error_ids;
+
+DYNO_STATIC_ASSERT(sizeof(usb_controller_task_error_ids) == 4, "Size of usb_controller_task_error_ids must be 4 bytes");
 
 typedef enum : uint32_t
 {
     ERROR_FORCE_SENSOR_ADC_START_FAILURE = 0
 } force_sensor_adc_task_error_ids;
 
-_Static_assert(sizeof(force_sensor_adc_task_error_ids) == 4, "Size of force_sensor_adc_task_error_ids must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(force_sensor_adc_task_error_ids) == 4, "Size of force_sensor_adc_task_error_ids must be 4 bytes");
 
 typedef enum : uint32_t
 {
     ERROR_FORCE_SENSOR_ADS1115_INIT_FAILURE = 0,
     WARNING_FORCE_SENSOR_ADS1115_TRIGGER_CONVERSION_FAILURE = WARNING_FLAG,
-    WARNING_FORCE_SENSOR_ADS1115_GET_CONVERSION_FAILURE
+    WARNING_FORCE_SENSOR_ADS1115_GET_CONVERSION_FAILURE,
+    WARNING_FORCE_SENSOR_ADS1115_CONFIG_FAILURE
 } force_sensor_ads1115_error_ids;
 
-_Static_assert(sizeof(force_sensor_ads1115_error_ids) == 4, "Size of force_sensor_ads1115_error_ids must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(force_sensor_ads1115_error_ids) == 4, "Size of force_sensor_ads1115_error_ids must be 4 bytes");
 
 // ****************************************************
 // USB AND PUBLIC MESSAGES
@@ -137,7 +176,7 @@ typedef enum : uint32_t
     USB_MSG_WARNING   // STM32 -> PC (warning report)
 } usb_msg_type_t;
 
-_Static_assert(sizeof(usb_msg_type_t) == 4, "Size of usb_msg_type_t must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(usb_msg_type_t) == 4, "Size of usb_msg_type_t must be 4 bytes");
 
 typedef struct __attribute__((packed)) {
     usb_msg_type_t msg_type;   // protocol-level intent
@@ -145,16 +184,19 @@ typedef struct __attribute__((packed)) {
     uint32_t payload_len;   // bytes following header
 } usb_msg_header_t;
 
-_Static_assert(sizeof(usb_msg_header_t) == 12, "Size of usb_msg_header_t must be 12 bytes");
+DYNO_STATIC_ASSERT(sizeof(usb_msg_header_t) == 12, "Size of usb_msg_header_t must be 12 bytes");
 
-// ---- Host -> device framed command envelope -------------------------------
-// Inbound (PC -> STM32) frames are wrapped so the parser can resync after a ring
-// overflow drops bytes mid-stream:
+// ---- Framed envelope (both directions, as of v5) ---------------------------
+// Every frame on the wire -- PC -> STM32 commands and, since v5, the STM32 -> PC
+// stream too -- is wrapped so the receiver can detect corruption and resync after
+// bytes are lost mid-stream:
 //   [uint16_t USB_FRAME_SOF][usb_msg_header_t header][payload bytes][uint16_t crc]
 // crc is CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF) computed over the header
 // bytes followed by the payload bytes (the SOF marker and crc field themselves are
 // excluded). Multi-byte fields are little-endian, matching both the STM32 and the
-// x86 host. The same envelope is reused for the host-side parser.
+// x86 host. A receiver scans to the SOF, checks the CRC, and on a mismatch treats
+// the SOF as spurious -- so a cut-off record is *detected*, not inferred from
+// implausible header bytes as the unframed v4 stream had to.
 
 #define USB_FRAME_SOF 0xA55Au
 
@@ -177,8 +219,37 @@ _Static_assert(sizeof(usb_msg_header_t) == 12, "Size of usb_msg_header_t must be
 // shows sensor data only while it believes a session is running, so against v1 firmware
 // -- which never announces session state -- it would sit blank forever. Refusing the
 // handshake says why, instead of looking like a dead sensor.
+// 
+// v3 added the runtime sysconfig protocol (sysconfig_param_t / USB_CMD_SET_SYSCONFIG).
+// A v3 host pushes its saved settings after every handshake and trusts they applied;
+// against v2 firmware those pushes would be silently unknown commands and the dyno
+// would run defaults while the host displays the values it believes it set.
+// 
+// v4 added session_controller_output_data (torque / power stream). A v4 host expects
+// those readouts during a session; against v3 firmware they would simply never arrive
+// and torque/power would sit blank next to live sensor data with nothing saying why.
+// 
+// v5 framed the device->host stream with the SOF+CRC envelope the other direction
+// already used. A v5 host scans for SOF markers and verifies CRCs; against unframed
+// v4 firmware nothing it receives would carry a SOF and the whole stream would be
+// skipped as garbage -- and v4 hosts would misread v5's SOF/CRC bytes as data.
+// 
+// v6 removed session_controller_output_data again: torque and power are derived on
+// the host from the raw force and velocity streams, so the constants behind them
+// (moment of inertia, force-sensor lever arm, gear ratio) live on the PC and can be
+// corrected after a run instead of being baked into the recording. Their sysconfig
+// ids went with them, which renumbers every parameter after them -- a v6 host pushing
+// to v5 firmware would write PID gains into mechanical constants. Hence the version
+// bump: the handshake refuses the link rather than letting that happen.
+// 
+// v7 added usb_tx_batch_trailer, which closes every CDC transfer. A v7 host uses it to
+// account for the bytes in each transfer, so it can tell a transfer that arrived short
+// from one that never left; against v6 firmware no trailer ever arrives and the host's
+// accounting would report the whole stream as unaccounted-for. In the other direction a
+// v6 host would decode the trailer as an unknown STATUS record and log it a few hundred
+// times a second.
 
-#define USB_PROTOCOL_VERSION 2u
+#define USB_PROTOCOL_VERSION 7u
 
 // Shared CRC so firmware and host compute identical checksums over a frame body.
 
@@ -210,7 +281,7 @@ typedef struct __attribute__((packed)) {
     uint16_t msg_id;
 } usb_cmd_header_t;
 
-_Static_assert(sizeof(usb_cmd_header_t) == 4, "Size of usb_cmd_header_t must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(usb_cmd_header_t) == 4, "Size of usb_cmd_header_t must be 4 bytes");
 
 // RESPONSE frame payload (STM32 -> PC): echoes the command's opcode + msg_id and
 // reports a status. Sent with task_offset set to the module that completed it, so
@@ -224,7 +295,7 @@ typedef struct __attribute__((packed)) {
     uint32_t status;   // usb_response_status_t
 } usb_response_data_t;
 
-_Static_assert(sizeof(usb_response_data_t) == 8, "Size of usb_response_data_t must be 8 bytes");
+DYNO_STATIC_ASSERT(sizeof(usb_response_data_t) == 8, "Size of usb_response_data_t must be 8 bytes");
 
 typedef enum : uint32_t
 {
@@ -240,7 +311,8 @@ typedef enum : uint32_t
 // USB-controller-local commands: frames addressed to TASK_OFFSET_USB_CONTROLLER.
 typedef enum : uint16_t
 {
-    USB_CMD_ACK = 0   // host acks the device-ready announce; body = uint32 protocol_version. Firmware replies USB_RSP_OK or USB_RSP_VERSION_MISMATCH
+    USB_CMD_ACK = 0,   // host acks the device-ready announce; body = uint32 protocol_version. Firmware replies USB_RSP_OK or USB_RSP_VERSION_MISMATCH
+    USB_CMD_SET_SYSCONFIG = 1   // body = sysconfig_set_param_body; writes one runtime parameter into the sysconfig store. Applied by the USB task itself (the store is plain RAM), so the OK is still a full-path ack
 } usb_controller_command_t;
 
 // Device-ready announcement (STM32 -> PC): emitted as USB_MSG_EVENT with task_offset
@@ -252,7 +324,7 @@ typedef struct {
     uint32_t protocol_version;   // == USB_PROTOCOL_VERSION
 } usb_device_ready_event;
 
-_Static_assert(sizeof(usb_device_ready_event) == 4, "Size of usb_device_ready_event must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(usb_device_ready_event) == 4, "Size of usb_device_ready_event must be 4 bytes");
 
 // Session start/stop announcement (STM32 -> PC): emitted as USB_MSG_EVENT with task_offset
 // TASK_OFFSET_SESSION_CONTROLLER whenever the dyno enters or leaves a session, and once more
@@ -266,13 +338,106 @@ typedef struct {
     uint32_t in_session;   // 1 = session running, 0 = idle
 } session_state_event;
 
-_Static_assert(sizeof(session_state_event) == 4 + 4, "Size of session_state_event must be 8 bytes");
+DYNO_STATIC_ASSERT(sizeof(session_state_event) == 4 + 4, "Size of session_state_event must be 8 bytes");
 
-// Force-sensor (ADS1115) commands: frames addressed to TASK_OFFSET_FORCE_SENSOR_ADS1115.
+// Transfer accounting (STM32 -> PC): emitted as USB_MSG_STATUS with task_offset
+// TASK_OFFSET_USB_CONTROLLER as the *last* record of every CDC transfer, describing the
+// transfer it closes. It is a framing-layer record, not telemetry: the host's parser
+// consumes it for accounting and never publishes it as a message.
+// 
+// This exists to make a short transfer distinguishable from a lost one. The framed
+// envelope already tells the host that bytes went missing (a record whose CRC fails, or
+// whose SOF never arrives), but not *where* they went missing -- and the two answers point
+// at opposite halves of the link. batch_len is the exact byte count the device handed to
+// CDC_Transmit_FS, including this trailer, so a host that counts the bytes it actually
+// decoded and skipped between two trailers learns which it is:
+// 
+//   observed == batch_len, seq contiguous   the transfer arrived whole; any loss the
+//                                           parser reported happened inside a record the
+//                                           device itself framed wrong
+//   observed <  batch_len, seq contiguous   the transfer arrived short -- the device
+//                                           framed and submitted bytes that never landed
+//   seq gap                                 an entire transfer the device believes it
+//                                           sent never arrived
+// 
+// seq counts transfers the driver *accepted*: it advances only when CDC_Transmit_FS
+// returns something other than USBD_BUSY, so a batch the firmware gave up on (and reported
+// as WARNING_USB_TX_BATCH_DROPPED) never burns a number and never shows up here as a gap.
+
+typedef struct {
+    uint32_t batch_seq;   // monotonic per accepted transfer; a gap = a whole transfer lost
+    uint32_t batch_len;   // bytes in this transfer, including this trailer record
+} usb_tx_batch_trailer;
+
+DYNO_STATIC_ASSERT(sizeof(usb_tx_batch_trailer) == 4 + 4, "Size of usb_tx_batch_trailer must be 8 bytes");
+
+// ---- Runtime system configuration -----------------------------------------
+// The tunable quantities from Config/config.h (gains, task delays, thresholds)
+// live in a RAM store (Config/sysconfig.h) seeded from those #defines at boot;
+// tasks read the store every loop iteration, so a write takes effect on the
+// next pass. The host owns persistence: it keeps the values on the PC and
+// re-pushes them after every handshake (the board has no settings storage, so
+// a reboot returns to the config.h defaults until then).
+// 
+// Parameter ids are wire contract: append new ones, never renumber. Compile-time
+// settings (circular-buffer sizes -- static array dimensions on a heapless
+// firmware -- and debug.h's task/peripheral gates) have no ids here on purpose.
+
+// One id per runtime-tunable parameter. The name matches the config.h #define
+// that provides its boot default. Ids are positional: append only.
 typedef enum : uint16_t
 {
-    FORCE_SENSOR_CMD_SET_DATA_RATE = 0   // body[0] = ADS1115_RATE_* code (0..7)
-} force_sensor_command_opcode;
+    SYSCFG_K_P = 0,   // float
+    SYSCFG_K_I = 1,   // float
+    SYSCFG_K_D = 2,   // float
+    SYSCFG_PID_MAX_OUTPUT = 3,   // float
+    SYSCFG_THROTTLE_GAIN = 4,   // float
+    SYSCFG_BRAKE_GAIN = 5,   // float
+    SYSCFG_HORIZONTAL_BIAS = 6,   // float
+    SYSCFG_VERTICAL_BIAS = 7,   // float
+    SYSCFG_MIN_DUTY_CYCLE_PERCENT = 8,   // float, 0–1
+    SYSCFG_MAX_DUTY_CYCLE_PERCENT = 9,   // float, 0–1
+    SYSCFG_MAX_FORCE_LBF = 10,   // float, lbf
+    SYSCFG_SESSIONCONTROLLER_TASK_OSDELAY = 11,   // uint32, ms
+    SYSCFG_BPM_TASK_OSDELAY = 12,   // uint32, ms
+    SYSCFG_FORCESENSOR_TASK_OSDELAY = 13,   // uint32, ms
+    SYSCFG_FORCESENSOR_COMMAND_POLL_OSDELAY = 14,   // uint32, ms
+    SYSCFG_FORCESENSOR_CONVERSION_TIMEOUT_MS = 15,   // uint32, ms
+    SYSCFG_OPTICAL_ENCODER_TASK_OSDELAY = 16,   // uint32, ms
+    SYSCFG_NUM_APERTURES = 17,   // uint32
+    SYSCFG_PID_TASK_OSDELAY = 18,   // uint32, ms
+    SYSCFG_USB_TASK_OSDELAY = 19,   // uint32, ms
+    SYSCFG_USB_TX_FLUSH_MAX_RETRIES = 20,   // uint32, attempts
+    SYSCFG_LCD_TASK_OSDELAY = 21,   // uint32, ms
+    SYSCFG_LED_TASK_OSDELAY = 22,   // uint32, ms
+    SYSCFG_TASK_WARNING_RETRY_OSDELAY = 23,   // uint32, ms
+    SYSCFG_TASK_MONITOR_TASK_OSDELAY = 24,   // uint32, ms
+    SYSCFG_ADS1115_RATE = 25,   // enum
+    SYSCFG_ADS1115_GAIN = 26,   // enum
+    SYSCFG_ADS1115_MUX = 27,   // enum
+    SYSCFG_ADS1115_MODE = 28,   // enum
+    SYSCFG_ADS1115_COMP_MODE = 29,   // enum
+    SYSCFG_ADS1115_COMP_POL = 30,   // enum
+    SYSCFG_ADS1115_COMP_LAT = 31,   // enum
+    SYSCFG_ADS1115_COMP_QUE = 32,   // enum
+    SYSCFG_USB_MOCK_MESSAGES = 33,   // enum
+} sysconfig_param_t;
+
+#define SYSCFG_PARAM_COUNT 34u              // one past the highest sysconfig_param_t id; sizes the firmware store
+
+DYNO_STATIC_ASSERT(sizeof(sysconfig_param_t) == 2, "Size of sysconfig_param_t must be 2 bytes");
+
+// Body of USB_CMD_SET_SYSCONFIG (after the usb_cmd_header_t). raw_value carries the
+// parameter's 32 bits: IEEE-754 bits for float parameters, the plain value for
+// uint32 ones -- which is which is fixed per id (see sysconfig_param_t comments),
+// so the store can validate range before applying.
+
+typedef struct __attribute__((packed)) {
+    uint16_t param_id;   // sysconfig_param_t
+    uint32_t raw_value;   // value bits (float or uint32 per param)
+} sysconfig_set_param_body;
+
+DYNO_STATIC_ASSERT(sizeof(sysconfig_set_param_body) == 2 + 4, "Size of sysconfig_set_param_body must be 6 bytes");
 
 typedef struct {
     uint32_t timestamp;   // Timestamp of the reading
@@ -281,7 +446,7 @@ typedef struct {
     float angular_acceleration;   // Measured angular acceleration
 } optical_encoder_output_data;
 
-_Static_assert(sizeof(optical_encoder_output_data) == 4 + 4 + 4 + 4, "Size of optical_encoder_output_data must be 16 bytes");
+DYNO_STATIC_ASSERT(sizeof(optical_encoder_output_data) == 4 + 4 + 4 + 4, "Size of optical_encoder_output_data must be 16 bytes");
 
 typedef struct {
     uint32_t timestamp;
@@ -289,7 +454,7 @@ typedef struct {
     uint32_t raw_value;
 } forcesensor_output_data;
 
-_Static_assert(sizeof(forcesensor_output_data) == 4 + 4 + 4, "Size of forcesensor_output_data must be 12 bytes");
+DYNO_STATIC_ASSERT(sizeof(forcesensor_output_data) == 4 + 4 + 4, "Size of forcesensor_output_data must be 12 bytes");
 
 typedef struct {
     uint32_t timestamp;
@@ -297,7 +462,7 @@ typedef struct {
     uint32_t raw_value;   // Really just padding to match the other output data types
 } bpm_output_data;
 
-_Static_assert(sizeof(bpm_output_data) == 4 + 4 + 4, "Size of bpm_output_data must be 12 bytes");
+DYNO_STATIC_ASSERT(sizeof(bpm_output_data) == 4 + 4 + 4, "Size of bpm_output_data must be 12 bytes");
 
 typedef struct {
     uint32_t timestamp;
@@ -306,7 +471,7 @@ typedef struct {
     uint32_t free_bytes;
 } task_monitor_output_data;
 
-_Static_assert(sizeof(task_monitor_output_data) == 4 + 4 + 4 + 4, "Size of task_monitor_output_data must be 16 bytes");
+DYNO_STATIC_ASSERT(sizeof(task_monitor_output_data) == 4 + 4 + 4 + 4, "Size of task_monitor_output_data must be 16 bytes");
 
 #ifdef __cplusplus
 }

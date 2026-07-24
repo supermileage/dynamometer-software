@@ -1,5 +1,6 @@
 #include <Tasks/PID/pid_main.h>
 #include <Tasks/PID/PID.hpp>
+#include <Config/sysconfig.h>
 
 extern UART_HandleTypeDef huart1;
 
@@ -73,7 +74,7 @@ void PIDController::Run()
         if (!_enabled)
         {
             EmptyQueue(_pidToBpmHandle, sizeof(session_controller_to_bpm));
-            osDelay(PID_TASK_OSDELAY);
+            osDelay(sysconfig_get_u32(SYSCFG_PID_TASK_OSDELAY));
             continue;
         }
 
@@ -81,7 +82,7 @@ void PIDController::Run()
         if (!_data_buffer_reader.GetElementAndIncrementIndex(latestOpticalEncoderData))
         {
             // Nothing new, skip loop
-            osDelay(PID_TASK_OSDELAY);
+            osDelay(sysconfig_get_u32(SYSCFG_PID_TASK_OSDELAY));
             continue;
         }
 
@@ -100,16 +101,20 @@ void PIDController::Run()
         derivative = (_error - _prevError) / static_cast<float>(timeDelta);
         integral += _error * static_cast<float>(timeDelta);
 
-        float pidOutput = K_P * _error + K_D * derivative + K_I * integral;
+        float pidOutput = sysconfig_get_float(SYSCFG_K_P) * _error
+                          + sysconfig_get_float(SYSCFG_K_D) * derivative
+                          + sysconfig_get_float(SYSCFG_K_I) * integral;
 
         // TODO: Figure out how to merge this single input duo output PID controller
-        // pidOutput = Clamp(pidOutput / PID_MAX_OUTPUT, -1.0f, 1.0f); // Normalize and clamp to [-1, 1]
+        // pidOutput = Clamp(pidOutput / sysconfig_get_float(SYSCFG_PID_MAX_OUTPUT), -1.0f, 1.0f); // Normalize and clamp to [-1, 1]
 
         // // Linear, branchless mixing
+        // float horizontalBias = sysconfig_get_float(SYSCFG_HORIZONTAL_BIAS);
+        // float verticalBias = sysconfig_get_float(SYSCFG_VERTICAL_BIAS);
         // float throttleOutput =
-        //     Clamp(THROTTLE_GAIN * (0.5f * (1.0f - (pidOutput-HORIZONTAL_BIAS)) - VERTICAL_BIAS), 0.0f, 1.0f);
+        //     Clamp(sysconfig_get_float(SYSCFG_THROTTLE_GAIN) * (0.5f * (1.0f - (pidOutput-horizontalBias)) - verticalBias), 0.0f, 1.0f);
         // float brakeOutput =
-        //     Clamp(BRAKE_GAIN * (0.5f * (1.0f + (pidOutput-HORIZONTAL_BIAS)) - VERTICAL_BIAS), 0.0f, 1.0f);
+        //     Clamp(sysconfig_get_float(SYSCFG_BRAKE_GAIN) * (0.5f * (1.0f + (pidOutput-horizontalBias)) - verticalBias), 0.0f, 1.0f);
 
         // PID Graph
         // https://www.desmos.com/calculator/s3sjvmcamd
@@ -123,7 +128,7 @@ void PIDController::Run()
         _prevError = _error;
 
         // --- Yield to other tasks ---
-        osDelay(PID_TASK_OSDELAY);
+        osDelay(sysconfig_get_u32(SYSCFG_PID_TASK_OSDELAY));
     }
 }
 
@@ -180,7 +185,7 @@ void PIDController::SendBrakeDutyCycle(float new_duty_cycle_percent)
             static_cast<uint32_t>(WARNING_PID_CONTROLLER_MESSAGE_QUEUE_FULL)
         );
         _task_error_buffer_writer.WriteElementAndIncrementIndex(error_data);
-        osDelay(TASK_WARNING_RETRY_OSDELAY);
+        osDelay(sysconfig_get_u32(SYSCFG_TASK_WARNING_RETRY_OSDELAY));
         return;
 	}
 

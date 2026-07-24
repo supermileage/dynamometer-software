@@ -6,5 +6,9 @@
   <ItemGroup>
     <PackageReference Include="System.IO.Ports" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
+    <!-- Override Microsoft.Data.Sqlite's transitive SQLitePCLRaw 2.1.11 native bundle
+         (GHSA-2m69-gcr7-jv3q); 3.0.x carries the patched SQLite. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
   </ItemGroup>
 </Project>

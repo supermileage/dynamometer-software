@@ -20,24 +20,93 @@ unit-testable and headless-runnable. The Avalonia app ([[Dyno.App]]) is a thin s
 | Area | Type | Role |
 |---|---|---|
 | `Serial/` | `ISerialConnection`, `SerialConnection` | `System.IO.Ports` wrapper (115200 8-N-1); `COM3` ↔ `/dev/ttyACM0`. The interface lets tests inject a fake. |
-| `Protocol/` | `StreamParser` | Decodes the **unframed** STM32 → PC stream into typed `DeviceMessage`s. |
+| `Protocol/` | `StreamParser` | Decodes the **framed** STM32 → PC stream into typed `DeviceMessage`s; resyncs on loss and audits each transfer. |
 | `Protocol/` | `UsbFrame` | Builds **framed** PC → STM32 commands (`[SOF][header][payload][crc16]`) and ports the CRC. |
 | `Protocol/` | `ErrorDecoder` | Unpacks the 32-bit `error_code` (task / number / warning-flag). |
 | `Messages/Generated/` | `Messages.cs` | Enums, packed structs and constants — **generated** from the firmware schema by [[message_gen]]. Do not hand-edit. |
 | (root) | `DeviceClient` | Owns the connection, pumps bytes through the parser on a background loop, and correlates command RESPONSEs by `msg_id`. |
 
 ## Receive path (STM32 → PC)
-The firmware emits `usb_msg_header_t`(12 B) + payload back-to-back with **no SOF/CRC** (USB
-CDC is already reliable). `StreamParser.Append` accumulates bytes, reads each header, waits
-for `payload_len` bytes, then dispatches on `(msg_type, task_offset)` to an
+Since v5 the firmware frames this direction too: each record travels as
+`[uint16 SOF][usb_msg_header_t (12 B)][payload][uint16 crc16]` — the same envelope the PC → STM32
+direction always used. `StreamParser.Append` accumulates bytes, scans to a SOF, verifies the CRC over
+header + payload, then dispatches one `DeviceMessage` per valid frame on `(msg_type, task_offset)` to an
 `OpticalEncoderSample` / `ForceSensorSample` / `BpmSample` / `TaskMonitorSample` /
-`DeviceFault` / `CommandResponse` / `DeviceReady` / `SessionState` / `UnknownMessage`. A header
-plausibility check gives best-effort resync if the stream is ever corrupted.
+`DeviceFault` / `CommandResponse` / `DeviceReady` / `SessionState` / `UnknownMessage`.
+
+`msg_type` is the protocol-level intent and decides the direction: `COMMAND` and `CONFIG` only ever
+go PC → STM32; `RESPONSE` (a reply to one of those), `EVENT` (an async announcement — device-ready,
+session start/stop), `STREAM` (continuous sensor data), `STATUS`, `ERROR` and `WARNING` only ever
+come back. `task_offset` says which module the payload belongs to, and the two together pick the
+record: `EVENT` + `USB_CONTROLLER` is a device-ready announce, `STREAM` + `OPTICAL_ENCODER` is an
+encoder sample, and so on.
+
+### Resync — detected, not guessed
+The envelope is what makes loss **detectable** rather than inferred. Bytes cut from a record leave a
+frame whose CRC fails, or whose SOF never arrives; either way the parser skips a byte and rescans to
+the next SOF. A spurious SOF *inside* payload data is caught the same way — its CRC cannot match — at
+the cost of rescanning from one byte past it. A claimed `payload_len` beyond `MaxPayload` marks the
+SOF as spurious without waiting for bytes that will never come.
+
+This replaced byte-by-byte header-plausibility guessing (`IsPlausible`), which was as strict as an
+unframed format allowed and still not enough: **any 12 bytes that looked like a header were a
+header**, so a window onto the middle of one record could pass for the start of another. A real link
+produced `RESPONSE / task 252 / len 4` — impossible twice over — and the parser had to reject it on
+per-record size rules rather than on a checksum. With a CRC the question is answered instead of
+argued, and `UnknownMessage` now means only what it says: a well-formed record this host has no
+decoder for.
+
+Bytes skipped to regain alignment are counted and raised on `Resynced` **once alignment is regained**
+(not per read — one lost record is re-scanned across several serial chunks, and reporting per chunk
+turns one fault into a stutter of warnings). `DeviceClient` re-raises it as `StreamResynced`, and the
+app logs it as a warning: dropped bytes are the *only* evidence this link ever loses data, so they
+are a link fault to surface, not noise to swallow.
+
+### Transfer accounting, and why a resync alone is not enough
+A resync proves bytes were lost. It cannot say *whose* bytes — whether the firmware failed to send
+them or this host failed to receive them — and those point at opposite halves of the link. Since v7
+each CDC transfer closes with a `usb_tx_batch_trailer` carrying the byte count the device handed to
+its USB driver, so the parser can weigh what arrived against what was sent. It counts every byte
+between two trailers, **decoded and skipped alike**: the question is what reached us, not what we
+could make sense of, and excluding skipped bytes would turn every resync into a phantom shortfall.
+
+| what the trailer shows | what it means |
+|---|---|
+| counts match, sequence contiguous | the transfer arrived whole; a resync here means the device framed a record wrong |
+| `ObservedBytes < DeclaredBytes` | the device framed and submitted those bytes and they did not land — the loss is below the firmware |
+| `batch_seq` gap | an entire transfer the driver accepted never arrived |
+
+Discrepancies raise `BatchMisaccounted` (`BatchAccounting`), which `DeviceClient` re-raises and the
+app logs beside the resync warning. It is **silent when the link is healthy**, so the absence of it
+next to a resync is itself a finding. The trailer is framing, not telemetry: the parser consumes it
+and never publishes it as a `DeviceMessage`, so it costs consumers nothing at a few hundred
+transfers a second. The first trailer after connect only establishes a baseline — it closes a
+transfer we joined partway through, and reporting its short count would be reporting our own late
+start.
 
 ## Transmit path (PC → STM32)
 `UsbFrame.BuildCommandFrame` wraps a `usb_cmd_header_t` (opcode + msg_id) + body in the
 framed envelope with a CRC-16/CCITT-FALSE over header+payload. `DeviceClient.SendCommandAsync`
 allocates a `msg_id`, writes the frame, and awaits the matching `USB_MSG_RESPONSE`.
+
+### Saying what a command was
+A `USB_MSG_RESPONSE` carries only an opcode, the `msg_id` it echoes, and a status — so it cannot,
+on its own, say *which* sysconfig parameter a write set or to what. Only the sender knows that, and
+only until it stops caring. `SendCommandAsync` therefore takes a `description` ("sysconfig
+K_P = 2.5", built from `SysConfigCatalog`), holds it with the pending request, and reports the
+command's whole life against it:
+
+- `CommandSent` as it goes out (once per command, not per retry),
+- `CommandResponse.Request` on the reply that matches its `msg_id` — so a subscriber sees the ack
+  next to what it acks, and a non-OK status is a *named* parameter being refused,
+- `CommandFailed` if it runs out of attempts unanswered. A firmware *rejection* is not this: the
+  device replied, and the reply speaks for itself.
+
+The reply is published to `MessageReceived` **before** the pending command completes, so a sender
+cannot resume — and announce its next write — ahead of the ack for its last one. Applying a page of
+sysconfig edits is exactly that: one write after another, whose acks would otherwise log a beat late
+and read as the following parameter's. Undescribed commands (the handshake ack, the heartbeats built
+on it) raise neither event, which is what keeps routine link traffic out of the app's event log.
 
 ## Handshake (device-announced)
 The firmware streams **nothing** until the host acknowledges it. On connect it repeatedly
@@ -71,6 +140,89 @@ raises `ProtocolMismatch(null)` — the device rejected us without saying what i
 *The firmware fix (clear `_appReady` on DTR deassert, so the board resumes announcing) is still
 worth doing; the probe means the host works against boards already in the field.*
 
+## Sysconfig: the host is the memory
+The firmware's runtime-tunable parameters (`SysConfigCatalog`, generated from the schema) live on the
+board in **RAM with no flash behind it**. It boots on its config.h defaults, keeps whatever the host
+wrote only while it stays powered, and cannot tell anyone what it currently holds. So the PC's SQLite
+store is not a cache of the device's settings — it is the only copy, and the device is the copy.
+
+That splits saving from applying. Saving is the app's Apply button — the **only** thing that writes
+to `SysConfigStore`, and it touches no device. Every edit on the page is staged until it: typing a
+value, and Reset too, which stages the firmware default rather than committing it (a reset that wrote
+straight through would be the one edit that bypassed the button, and would leave Apply greyed out on
+a change the user had just made). Applying is a reconciliation pass over `SysConfigDeviceMirror`,
+which tracks what the board is *believed* to hold and yields the parameters whose saved value it
+isn't known to have. One pass therefore serves both cases:
+
+- **A value changed** → the mirror is current except for that one parameter, so exactly one write
+  goes out (announced, so the event log names it).
+- **A device connected** → `Forget()` first, because a link that dropped may have dropped *because*
+  the board reset. Nothing is believed, so the whole catalog goes out — **defaults included**, since
+  a board that stayed powered through a host restart is still holding the last session's values, and
+  a parameter the user never overrode is exactly the one nobody would think to re-send. The whole
+  catalog is written unannounced and reported as a single summary line.
+
+A write that is never acked is simply never confirmed, so it stays outstanding and goes out again on
+the next pass — which is the only recovery available to a board that cannot remember anything.
+
+### Compile-time settings are saved here, and applied by a build
+The same page also lists the `#define`s from `config.h` / `debug.h` (`FirmwareConfigFile` parses
+them). These *cannot* be applied to a running board — buffer sizes dimension static arrays on a
+heapless firmware, and debug.h decides what code is compiled in at all — so Apply saves them to the
+store's second table (`compiletime`, keyed by define name, values kept as text because
+`ADS1115_RATE_475` and `16 + 1` are as much a `#define` value as `100u`), and the **Firmware page's
+Build** is what carries them into a compiler. See below.
+
+The page shows what the header actually has beside any setting whose saved value differs, and offers
+Reset to drop the row. A value equal to the header's is stored as no row at all: wanting what you
+already have is not worth remembering, and that is how the row a Reset undid actually disappears.
+
+## Firmware: build and flash
+`firmware/Scripts/` already knows how this board is built and programmed — the tool matrix, the
+ROM-bootloader rules, which build tree holds the newer image — and it is what CI and the terminal
+use. So the app **drives those scripts** rather than reimplementing any of it: `FirmwareCommands`
+constructs the exact invocation (bash on Linux/macOS, PowerShell on Windows) and `ProcessRunner`
+streams its output line by line, unbuffered, because a Docker build takes minutes and both jobs fail
+in ways only their own output explains. The command is echoed before it runs, so what the app did is
+always something the user could have typed.
+
+The app adds only what a script can't: which tools go with which method (`ToolsFor` — and never
+`cubeprog` first, since it is the one tool needing an ST account), whether the board must be put into
+its bootloader by hand (`NeedsBootloader` — everything but SWD), and which device-selection arguments
+a given method/tool pair actually reads. A DFU index is passed to `cubeprog` and to nothing else,
+because `dfu-util` has no such notion and would ignore it while the user believed it had taken
+effect.
+
+### Getting the compile-time settings into the compiler
+The firmware's `#define`s are not `#ifndef`-guarded, so a `-D` on the command line loses to the
+header. Rather than rewrite the committed headers (which would make every build dirty the working
+tree), `config.h` and `debug.h` each end with:
+
+```c
+#if __has_include("config_overrides.h")
+#include "config_overrides.h"
+#endif
+```
+
+`ConfigOverrides` generates that file — one `#undef`/`#define` pair per changed setting, nothing else
+— immediately before a build. Being included **last**, it wins; the C sources are untouched and still
+read the plain names; and a clean checkout builds exactly what the headers say, because the file is
+absent and `__has_include` is false. It is git-ignored: an override is one machine's intent, not the
+project's.
+
+Three details the tests pin down:
+- **Both files are always written**, even with nothing to override. A file left over from an earlier
+  build would otherwise keep applying a setting the user had since reset — the board would come back
+  holding it, with nothing on screen saying so.
+- **The text is stable and only written when it changes.** Ninja keys off mtimes, so a file that
+  churned would recompile the whole firmware on every build.
+- **A value that could rewrite the header around it is refused.** The generated file is C that nobody
+  reviews; a value carrying `//` or a newline could define anything it liked.
+
+Bad *combinations* are not the app's business: the firmware already enforces them itself (`#error
+"Cannot enable both ADS1115 and ADC Force Sensor modules at the same time!"` and ~19 others), and an
+override that trips one fails the build with that message, which is the right one.
+
 ## Session state
 The dyno streams sensor data **only while a session is running**, so the absence of samples means
 nothing on its own — an idle board and a dead one look the same. The device therefore announces a
@@ -80,11 +232,20 @@ nothing on its own — an idle board and a dead one look the same. The device th
 the value actually moves**, since the firmware re-states it on every 5 s heartbeat and the repeats
 are not news.
 
+The state is held as a *tri-state* (`IsSessionStateKnown` reports which): null until the device has
+said, and only then false or true. "Not told" and "told there is no session" are different facts,
+and collapsing them is what would make an idle board's first announcement look like a repeat of
+what the client already assumed — swallowed, leaving the host merely *presuming* idle with no way
+to tell that apart from having checked. The first statement on a link therefore always raises,
+including an idle one; the repeats behind it do not.
+
 That per-ack repeat is what makes the state recoverable rather than merely observable: a host
 connecting to a steady board (idle, or already mid-session) learns the state without waiting for an
-edge, and a host that declared the link lost — which clears `IsSessionActive`, since a device we
-cannot reach is not one we can claim is running a session — has it restored by the ack that answers
-the next heartbeat, with no reconnect.
+edge, and a host that declared the link lost has it restored by the ack that answers the next
+heartbeat, with no reconnect. Losing the link returns the state to *unknown* rather than idle — the
+board may still be running a session we can no longer see, and recording a known-idle would make
+that restatement look like a repeat and never reach the host. Consumers are still told to stop
+showing a session, because one we cannot observe is one whose readings have stopped being current.
 
 Because `StreamParser` decodes in wire order and `DeviceClient` applies the session state *before*
 re-publishing each message, `IsSessionActive` is already correct when the samples framed behind an

@@ -41,9 +41,36 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# Map a tool keyword to its executable name and resolve it (no fallback).
+# Bundled tools (Scripts\tools\windows-x86_64\, populated by get-tools.ps1) are preferred over PATH,
+# so a machine with nothing installed still flashes. A bundled .exe finds the DLLs shipped beside it
+# automatically (Windows searches the app directory first), so there is nothing like LD_LIBRARY_PATH
+# to set. cubeprog is never bundled (proprietary), so it always comes from PATH or its install dir.
+$script:VendorDir = Join-Path $PSScriptRoot 'tools\windows-x86_64'
+
+# What to tell the user when a tool is missing. cubeprog is the one we cannot ship (proprietary);
+# the OSS tools are bundled, so a miss there means an unsupported platform.
+function Get-InstallHint($tool) {
+    switch ($tool) {
+        'cubeprog' {
+            @(
+                "  STM32CubeProgrammer is proprietary, so it cannot be bundled with this repo. To use it:",
+                "    1. Download it from https://www.st.com/en/development-tools/stm32cubeprog.html",
+                "       (a free ST 'myST' account is required).",
+                "    2. Install it, then either add its bin\ folder to PATH or use its default location.",
+                "  Or skip it entirely - every method has a bundled open-source tool that needs no install:",
+                "    swd -> -Tool st-flash,  dfu -> -Tool dfu-util,  uart -> -Tool stm32flash."
+            ) -join "`n"
+        }
+        'openocd' { "  openocd is not bundled. Install it (no account) - an xpack OpenOCD build, or 'choco install openocd' - and put it on PATH. Or use the bundled swd tool: -Tool st-flash." }
+        default   { "  '$tool' ships bundled for windows-x86_64, but wasn't found. Reinstall it with .\Scripts\get-tools.ps1, or install it yourself and put it on PATH." }
+    }
+}
+
+# Map a tool keyword to its executable name and resolve it: bundled, then PATH.
 function Resolve-Tool($tool) {
     $exe = if ($tool -eq 'cubeprog') { 'STM32_Programmer_CLI' } else { $tool }
+    $bundled = Join-Path $script:VendorDir "$exe.exe"
+    if (Test-Path $bundled) { return $bundled }
     $cmd = Get-Command $exe -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
     # STM32CubeProgrammer usually isn't on PATH on Windows; check its default dir.
@@ -52,7 +79,7 @@ function Resolve-Tool($tool) {
             'STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe'
         if (Test-Path $def) { return $def }
     }
-    throw "'$exe' not found. Install it (see README)."
+    throw "'$exe' is not available (not bundled, not on PATH).`n$(Get-InstallHint $tool)"
 }
 
 $valid = @{ swd = @('cubeprog','st-flash','openocd'); dfu = @('cubeprog','dfu-util'); uart = @('cubeprog','stm32flash') }
@@ -64,9 +91,10 @@ if ($List) {
             switch ($(if ($Tool) { $Tool } else { 'cubeprog' })) {
                 'cubeprog' { & (Resolve-Tool 'cubeprog') -l }
                 'st-flash' {
-                    # st-info (ships with stlink) is the universal probe lister.
-                    $si = Get-Command st-info -ErrorAction SilentlyContinue
-                    if ($si) { & $si.Source --probe } else { & (Resolve-Tool 'st-flash') --list }
+                    # st-info (ships with stlink) is the universal probe lister — bundled first.
+                    $si = Join-Path $script:VendorDir 'st-info.exe'
+                    if (-not (Test-Path $si)) { $si = (Get-Command st-info -ErrorAction SilentlyContinue).Source }
+                    if ($si) { & $si --probe } else { & (Resolve-Tool 'st-flash') --list }
                 }
                 default    { Write-Host "openocd has no list mode; use -Tool st-flash -List" }
             }
@@ -125,5 +153,31 @@ $cmdArgs = switch ("$Method`:$Tool") {
 }
 
 Write-Host "Flashing $Config via $Tool ($Method)..."
+
+# dfu-util with ':leave' (see the dfu:dfu-util case above) tells the board to exit DFU and boot the
+# app the instant the download completes - so dfu-util's final get_status read hits a device that is
+# already gone and it exits non-zero, even though the write itself succeeded ("File downloaded
+# successfully"). That is the one tool/exit combination where a good flash looks like a failure, so
+# special-case it: report success when the download is confirmed, but keep the real exit code for a
+# genuine failure - which never prints that line. Mirrors the same handling in flash.sh.
+if ($Method -eq 'dfu' -and $Tool -eq 'dfu-util') {
+    # dfu-util reports its progress on stderr. Under this script's $ErrorActionPreference = 'Stop',
+    # the 2>&1 redirect would turn that first stderr line into a terminating error in Windows
+    # PowerShell and kill the wrapper mid-flash — so relax it for just this native call, and
+    # stringify the stream so ErrorRecords come out as their text.
+    $ErrorActionPreference = 'Continue'
+    & $exe @cmdArgs 2>&1 | ForEach-Object { "$_" } | Tee-Object -Variable captured
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    if ($code -ne 0 -and ($captured -match 'File downloaded successfully')) {
+        Write-Host ''
+        Write-Host "Note: dfu-util exited $code on its post-download status read, which fails because"
+        Write-Host "':leave' already reset the board out of DFU. The 'File downloaded successfully' above"
+        Write-Host 'is dfu-util confirming the write - this flash succeeded.'
+        exit 0
+    }
+    exit $code
+}
+
 & $exe @cmdArgs
 exit $LASTEXITCODE

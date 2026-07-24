@@ -36,9 +36,11 @@ Each iteration:
    - `optical_encoder_output_data` (`USB_MSG_STREAM`, `TASK_OFFSET_OPTICAL_ENCODER`)
    - `forcesensor_output_data` (`USB_MSG_STREAM`, active force-sensor offset)
    - `bpm_output_data`
-7. **Health + faults** — whenever `_appReady`, session or not: `task_monitor_output_data` and
-   errors via `ProcessErrorsAndWarnings()`.
-8. `CDC_Transmit_FS(_txBuffer, …)`; delay `USB_TASK_OSDELAY`.
+7. **Health + faults** — whenever `_appReady`, session or not: `task_monitor_output_data`, errors via
+   `ProcessErrorsAndWarnings()`, then `ReportTxDropsIfDue()` and `ReportBufferOverflowsIfDue()`
+   (*Buffer overflows* below). Both report after the drains, so a loss detected on this pass counts.
+8. `TransmitBatch()` — stamp the batch trailer onto the pending records and hand the buffer to
+   `CDC_Transmit_FS`; delay `USB_TASK_OSDELAY`.
 
 Step 5 runs *before* step 6 on purpose: a session-start event is framed ahead of the samples it
 authorizes, so the host — which displays sensor data only while it believes a session is running —
@@ -79,8 +81,10 @@ host raises a change event only when the value actually moves, so it is silent.
 An edge that falls while no host is acked is not lost either: the ack that follows sets
 `_sessionStateDue`, and the current state goes out then.
 
-`MockMessages()` has no SessionController, so it announces `in_session = 1` once after the
-handshake — otherwise the host would gate away the entire mock stream.
+The mock stream (below) forces `inSession` true for the same reason it replaces the sensors: the
+host displays sensor data only during a session, and there may be no SessionController state — no
+brake, no board wired up — behind a link being exercised. Forcing the flag rather than the
+streaming step means the announcement goes out too, so the host is told what it is being shown.
 
 ## Handshake (device-announced)
 The firmware streams nothing until the host acknowledges it. While `_appReady` is false the
@@ -88,8 +92,7 @@ device repeatedly announces `usb_device_ready_event{ USB_PROTOCOL_VERSION }`; th
 with a framed `USB_CMD_ACK` whose body is its own `USB_PROTOCOL_VERSION`. `HandleUsbLocalCommand`
 sets `_appReady` and replies `USB_RSP_OK` when the versions match, or `USB_RSP_VERSION_MISMATCH`
 (and keeps announcing) when they differ — so a host built against a stale schema is rejected at
-the link instead of silently mis-decoding the stream. `MockMessages()` gates on the same
-handshake via `WaitForHandshake()`.
+the link instead of silently mis-decoding the stream.
 
 `USB_CMD_ACK` is answered **in any state**, and applying it twice is a no-op. That is deliberate:
 it lets the host re-send it as a keep-alive (below) and as a probe, without a dedicated opcode.
@@ -117,6 +120,52 @@ Complementary halves of the same idea, both in `DeviceClient` (see `src/Dyno.Cor
   `USB_CMD_ACK` rather than waiting. This is what rescues a reconnect to a board running firmware
   *without* the detach fix above (which is still silently `_appReady` and so never announces).
 
+## Transfer accounting (`usb_tx_batch_trailer`)
+Every transfer ends with a `usb_tx_batch_trailer` (`USB_MSG_STATUS`, `TASK_OFFSET_USB_CONTROLLER`)
+carrying a monotonic `batch_seq` and the `batch_len` handed to `CDC_Transmit_FS` — including the
+trailer itself. It exists to make byte loss **attributable**. The SOF/CRC envelope already tells the
+host that bytes went missing; it cannot say whether they were lost above the driver or below it, and
+those are opposite bugs. Counting the bytes that arrive between two trailers against `batch_len`
+answers it: short means the firmware framed and submitted bytes that never landed, a `batch_seq` gap
+means a whole accepted transfer vanished, and everything adding up while the parser still resyncs
+means the device framed a record wrong in the first place.
+
+Three details carry the weight:
+
+- **It is a trailer, not a header.** The loss it was built to diagnose eats the *leading* bytes of a
+  transfer, which is exactly where a marker would be destroyed by the thing it is meant to measure.
+- **`IsBufferFull` reserves its 24 bytes permanently**, which is what lets `TransmitBatch()` be
+  infallible. Flushes happen from paths with no way to report "no room", and a batch that could not
+  be stamped is a batch the host cannot account for — the one case this record exists to rule out.
+- **`batch_seq` advances only on acceptance.** A batch the driver refused and `StallIfIsBufferFull`
+  gave up on burns no number, so it cannot be misread as a transfer lost in flight; that case is
+  already reported as `WARNING_USB_TX_BATCH_DROPPED`.
+
+The host's parser consumes the trailer as framing and never publishes it as a message — see
+`StreamParser` / `BatchAccounting` in `src/Dyno.Core/README.md`.
+
+## Buffer overflows (`ReportBufferOverflowsIfDue`)
+Each circular buffer this task reads can be lapped by its producer — a *full* lap, meaning elements
+that were never read have been overwritten. [[CircularBuffer]]'s reader detects that (the writer
+being more than `size` ahead), rejoins at the oldest element still present, and counts what it
+skipped; this step collects those counts and frames a warning naming the buffer:
+`WARNING_USB_{OPTICAL_ENCODER,FORCE_SENSOR,BPM,TASK_ERROR}_BUFFER_OVERFLOW`.
+
+Per buffer, not one "something overflowed", because which one it is *is* the diagnosis: one stream
+means that producer outran the drain, all four at once means this task stalled. All four carry
+`TASK_OFFSET_USB_CONTROLLER` — a packed error number only has meaning inside the enum of the task
+the code is attributed to, and these live in `usb_controller_task_error_ids` — so the buffer is
+named by the code, not by the offset.
+
+Warnings rather than errors, matching `WARNING_USB_TX_BATCH_DROPPED`: data is lost, the link and the
+session carry on. Rate-limited to one per buffer per second for the same reason, since a reader a lap
+behind usually stays behind and the report would otherwise add to the load that caused it. Tallies
+are dropped on host detach — loss that happened under the previous host is not the next one's news,
+and the sensor readers are caught up to their writers at the next session entry regardless.
+
+Only buffers *read here* are covered. An `osMessageQueue` that fills is rejected at the **writer**
+(e.g. `WARNING_PID_CONTROLLER_MESSAGE_QUEUE_FULL`), which is the pushing task's report to make.
+
 ## Error/warning framing
 `ProcessErrorsAndWarnings()` reads `task_error_data` from `task_error_circular_buffer` and sets
 the header from the packed code: `msg_type = (error_code & WARNING_FLAG) ? USB_MSG_WARNING : USB_MSG_ERROR`,
@@ -125,7 +174,16 @@ the header from the packed code: `msg_type = (error_code & WARNING_FLAG) ? USB_M
 ## Helpers / config
 - `ProcessTaskData<T>(reader|queue, task_offset)`, `AddToBuffer<T>`, `IsBufferFull` / `StallIfIsBufferFull`.
 - `ACTIVE_FORCE_SENSOR_TASK_OFFSET` selects ADS1115 vs ADC offset for the shared force stream.
-- `MockMessages()` emits synthetic data when `DEBUG_USB_CONTROLLER_MOCK_MESSAGES` is set.
+- `AppendMockFrames(timestamp)` replaces step 7's sensor reads with synthetic counters while the
+  runtime parameter `SYSCFG_USB_MOCK_MESSAGES` is non-zero, plus a canned error/warning pair at most
+  once a second (`MOCK_FAULT_INTERVAL_MS`) — the streams stand in for sensors and are meant to run
+  flat out, but the faults land in the host's *event log*, where one per loop buried every real line
+  under hundreds of fabricated ones a second.
+  Every other step of the loop is untouched, so only the numbers are invented. It was the
+  compile-time `DEBUG_USB_CONTROLLER_MOCK_MESSAGES`; as a runtime parameter it needs no rebuild,
+  and — unlike a build you had to make deliberately — a board can be put into it while someone is
+  watching the plots, so the host labels them as fabricated. Defaults off, from the schema rather
+  than config.h: it is device state only, with no compile-time setting to agree with.
 - `USB_TX_BUFFER_SIZE`, `USB_TASK_OSDELAY` (config.h).
 
 ## Related

@@ -16,7 +16,7 @@ never by calling into another task directly.
 ## Module index
 | Module | Doc | Role |
 |---|---|---|
-| SessionController | `Core/Src/Tasks/SessionController/README.md` | Orchestrator: FSM, task coordination, torque/power math |
+| SessionController | `Core/Src/Tasks/SessionController/README.md` | Orchestrator: FSM, task coordination, LCD readout |
 | BPM | `Core/Src/Tasks/BPM/README.md` | Motor PWM / duty-cycle |
 | PID | `Core/Src/Tasks/PID/README.md` | Closed-loop brake control from encoder feedback |
 | ForceSensor | `Core/Src/Tasks/ForceSensor/README.md` | On-board force: i2c (ADS1115) and internal ADC |
