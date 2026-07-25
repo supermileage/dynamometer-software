@@ -1,4 +1,0 @@
-# local toolchain (not part of the build)
-.venv/
-__pycache__/
-*.pyc

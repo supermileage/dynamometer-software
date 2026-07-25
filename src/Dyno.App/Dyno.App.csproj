@@ -4,10 +4,12 @@
     <RootNamespace>Dyno.App</RootNamespace>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <!-- The window, taskbar and .exe icon. Avalonia also publishes whatever ApplicationIcon
-         points at as the default Window.Icon, so this one property covers the taskbar on
-         Linux too, where there is no .exe to carry it. Redraw with scripts/generate-icon.sh
-         after touching the matching "D" badge in MainWindow.axaml. -->
+    <!-- The .exe icon, and — since Avalonia publishes whatever ApplicationIcon points at as
+         the default Window.Icon — the window and taskbar icon too, on platforms with no .exe
+         to carry it. It is a bitmap copy of the "D" badge MainWindow.axaml draws in markup,
+         so the two can drift: if that badge changes, redraw the .ico to match. It is a
+         22px-square box scaled up — corner radius 6/22, white Inter Bold "D" at 13/22,
+         #4C8DFF to #6366F1 gradient running corner to corner. -->
     <ApplicationIcon>Assets/dyno.ico</ApplicationIcon>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>
