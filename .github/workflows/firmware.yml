@@ -62,13 +62,14 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Build through the very script developers run, rather than a second copy of
+      # the docker invocation. The two drifted once already: this job mounted the
+      # repo at /repo while the script uses /work, and because both write to the
+      # same build-docker/<config>/ tree, a CMake cache left by one aborted the
+      # other ("does not match the source ... used to generate cache"). The script
+      # reuses the image built above instead of rebuilding it.
       - name: Build ${{ matrix.config }}
-        run: |
-          docker run --rm \
-            -v "${{ github.workspace }}:/repo:z" -w /repo/firmware \
-            --user "$(id -u):$(id -g)" -e HOME=/tmp \
-            stm32-dyno-builder:latest \
-            bash -lc "python3 tools/message_gen/generate.py && cmake --preset ${{ matrix.config }} -B build-docker/${{ matrix.config }} && cmake --build build-docker/${{ matrix.config }}"
+        run: firmware/Scripts/build-docker.sh ${{ matrix.config }}
 
       - name: Upload firmware
         uses: actions/upload-artifact@v4

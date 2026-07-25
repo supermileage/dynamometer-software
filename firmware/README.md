@@ -7,17 +7,19 @@ management. The project is built with **CMake + Ninja** and the Arm GNU toolchai
 (`arm-none-eabi-gcc`); code is generated from the `.ioc` with **STM32CubeMX**.
 
 ## Cloning the Repository
-Include all submodules when cloning:
+A plain clone is all you need to **build** — the generated HAL is committed:
 
 ```bash
-git clone --recurse-submodules <repository-url>
+git clone <repository-url>
 ```
 
-If you forgot the flag, initialize the submodules afterwards:
-
-```bash
-git submodule update --init --recursive
-```
+The repo's only submodule is `firmware/third_party/STM32CubeH7`, the STM32Cube
+firmware pack. It is needed **only to regenerate** from the `.ioc`, weighs ~2 GB,
+and `Scripts/regen-cube.sh` initialises it on demand — so don't clone with
+`--recurse-submodules`, and in particular never
+`git submodule update --init --recursive`: that pulls the pack's ~40 eval-board BSP
+sub-submodules, which nothing here uses. To set it up deliberately, see
+[Regenerating Code](#regenerating-code-from-the-ioc).
 
 ## Requirements
 You only need these to **build**:
@@ -29,9 +31,39 @@ You only need these to **build**:
 | Ninja | Build backend | `sudo dnf install ninja-build` | `sudo apt install ninja-build` |
 
 Additional, only if you need them:
-- **STM32CubeMX** — to regenerate code after editing `stm32_dyno_firmware_v2.ioc`
-  ([download](https://www.st.com/en/development-tools/stm32cubemx.html)). Not in
-  apt/dnf; the download requires a free ST (myST) account.
+- **STM32CubeMX 6.15.0** — to regenerate the *HAL/driver* sources after editing
+  `stm32_dyno_firmware_v2.ioc`. Get it from
+  [ST](https://www.st.com/en/development-tools/stm32cubemx.html) and pick **6.15.0**
+  from the version selector — *not* the latest. The version must match the `.ioc`'s
+  `MxCube.Version`; a newer CubeMX pops a migration prompt that nothing can answer
+  headlessly, so the run just hangs. See
+  [Regenerating Code](#regenerating-code-from-the-ioc). Not in apt/dnf, the download
+  needs a free ST (myST) account, and ST's licence means we can't vendor it in the
+  repo — so this is a one-time manual install, and only for people who regenerate.
+- **Python 3 + Jinja2 + PyYAML** — to regenerate the *MessagePassing* headers
+  (`Core/Inc/MessagePassing/messages_*.h`) from their YAML schema with
+  `tools/message_gen/generate.py`. This is a second, independent code generator (the
+  YAML schema is to these headers what the `.ioc` is to the HAL). Like the HAL, the
+  headers are committed, so a plain build needs none of this — it's only for
+  regenerating them. Install with
+  `pip install -r firmware/tools/message_gen/requirements.txt`, or via distro
+  packages: `sudo dnf install python3 python3-jinja2 python3-pyyaml` (Fedora) /
+  `sudo apt install python3 python3-jinja2 python3-yaml` (Ubuntu/Debian). Then, from
+  `firmware/`, run `python3 tools/message_gen/generate.py` (or `check.py` to verify
+  the committed headers are in sync, as CI does).
+- **A host C/C++ compiler + CTest** (with CMake ≥ 3.24) — to build and run the
+  host-compiled unit tests in `firmware/tests` (the hardware-independent logic: USB
+  RX ring, frame parser, sysconfig store). These compile with the machine's *native*
+  gcc/clang, **not** the Arm toolchain, and GoogleTest is fetched automatically (so
+  the first run needs a network connection). Run them with:
+  ```bash
+  cmake -S firmware/tests -B firmware/tests/build
+  cmake --build firmware/tests/build -j
+  ctest --test-dir firmware/tests/build --output-on-failure
+  ```
+- **Docker** — for the reproducible, host-toolchain-free build. See
+  [Reproducible build](#reproducible-build-docker); nothing else is needed for
+  that path.
 - A **flashing tool** — to program the board. The open-source options
   (`stlink`, `openocd`, `dfu-util`, `stm32flash`) install from apt/dnf with no
   account; **STM32CubeProgrammer is _not_ available via apt/dnf** and requires a
@@ -78,7 +110,95 @@ STM32CubeMX, click **Generate Code** to refresh the HAL/driver sources and
 `cmake/stm32cubemx/CMakeLists.txt`. Your edits in the top-level `CMakeLists.txt`
 (and inside `USER CODE BEGIN/END` blocks) are preserved.
 
-To regenerate headlessly from the command line, drive STM32CubeMX with a script:
+### Two separate things, two separate versions
+Regenerating needs **both** of these, and the `.ioc` pins them independently. They
+are easy to confuse — the submodule solves the second one only:
+
+| | What it is | Pinned in the `.ioc` by | Where it comes from |
+|---|---|---|---|
+| **STM32CubeMX** | The *program* that generates the code | `MxCube.Version=6.15.0` | **Manual install**, one-off (1.7 GB, free myST account) |
+| **STM32Cube FW_H7** | The *HAL/driver sources* it copies from | `ProjectManager.FirmwarePackage=STM32Cube FW_H7 V1.12.1` | **The `STM32CubeH7` submodule** — public, no account |
+
+The analogy: CubeMX is the *compiler*, FW_H7 is the *library source*. Vendoring the
+pack as a submodule removed the ST login for the **library**; the **program** still
+has to be installed by hand, because ST's licence forbids redistributing it. Both
+versions must match what the `.ioc` names — see the [warning below](#the-firmware-pack-no-st-account-needed).
+
+### One-time setup to regenerate
+Only needed by people who actually regenerate — building requires none of this.
+1. **Install STM32CubeMX 6.15.0.** The version selector on
+   [ST's download page](https://www.st.com/en/development-tools/stm32cubemx.html)
+   lists older releases — take **6.15.0**, *not* the latest. It has to match the
+   `.ioc`'s `MxCube.Version` (currently `6.15.0`); see the warning below. Needs a
+   free myST account. It deliberately isn't vendored in the repo: ST's licence
+   forbids redistributing it, three of its files exceed GitHub's 100 MB limit, and
+   its bundled JRE is platform-specific.
+2. **Init the pack submodule** (no account needed — details [below](#the-firmware-pack-no-st-account-needed)):
+   ```bash
+   git submodule update --init firmware/third_party/STM32CubeH7
+   ```
+3. **Point at CubeMX if it isn't auto-found.** Lookup order is `--cubemx`/`-Cubemx`,
+   then `$STM32CUBEMX`, then the usual install dirs, then `PATH`:
+   ```bash
+   export STM32CUBEMX=~/STM32CubeMX/STM32CubeMX     # or pass --cubemx <path>
+   ```
+
+Then regenerate headlessly with the wrapper script — it finds STM32CubeMX, feeds it
+a `config load … / project generate` script, and (on Linux) wraps the run in
+`xvfb-run` for headless hosts:
+```bash
+./Scripts/regen-cube.sh                                   # auto-find CubeMX + the .ioc
+./Scripts/regen-cube.sh --cubemx ~/STM32CubeMX/STM32CubeMX # or point at the binary
+./Scripts/regen-cube.sh --check                           # regenerate, then fail on drift
+```
+```powershell
+.\Scripts\regen-cube.ps1
+.\Scripts\regen-cube.ps1 -Cubemx "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeMX\STM32CubeMX.exe"
+```
+On a headless Linux host, install the virtual-display helper
+(`dnf install xorg-x11-server-Xvfb` / `apt install xvfb`); the script wraps CubeMX
+in it automatically.
+
+Before generating, the script compares the `.ioc`'s `MxDb.Version` against the
+`db/package.xml` of the CubeMX you pointed it at, and stops if they differ. This is
+worth knowing because the failure it prevents does not look like a failure: a
+mismatched CubeMX opens a migration prompt, and with no one to answer it the run
+sits in `config load` printing nothing until it is killed. `--allow-version-mismatch`
+(`-AllowVersionMismatch`) runs anyway. Migrating the project to a newer CubeMX is a
+deliberate change — re-stamp the `.ioc` in the GUI and commit the regenerated tree,
+rather than reaching for the override.
+
+### The firmware pack (no ST account needed)
+Generation needs the HAL/driver package the `.ioc` names
+(`ProjectManager.FirmwarePackage`, currently **`STM32Cube FW_H7 V1.12.1`**). Rather
+than downloading it from ST behind a myST login, it is **vendored as a submodule**
+— [`STM32CubeH7`](https://github.com/STMicroelectronics/STM32CubeH7) pinned to tag
+`v1.12.1`, which is the same package ST ships, public and cloneable:
+```bash
+git submodule update --init firmware/third_party/STM32CubeH7
+```
+`regen-cube.sh` links it into CubeMX's repository under the exact name CubeMX
+expects, so no pack install is required. Two things worth knowing:
+- The submodule is only needed to **regenerate** — never to *build*, since the
+  generated HAL is committed. It's ~2 GB, so skip initialising it unless you're
+  regenerating.
+- `STM32CubeH7` is a **meta-repo** whose sources are themselves nested submodules,
+  and a plain clone leaves them empty. The script populates every non-BSP module
+  for you and skips the ~40 eval-board BSPs (most of the download, none of it used
+  here). Don't hand-pick modules: an empty `Drivers/` stalls CubeMX as if the pack
+  were missing, and empty middleware is worse — CubeMX silently generates a project
+  *without* FreeRTOS and deletes the committed copies.
+
+> **Why the version has to match.** CubeMX raises a *"New STM32Cube firmware version
+> available"* prompt when its version differs from the `.ioc`'s. Headless there is
+> nobody to answer it, so the run hangs at `config load` at 0% CPU with no output and
+> no error. Answering *Migrate* is not a shortcut — it also drags the HAL from FW_H7
+> V1.12.1 to V1.13.0, whose FreeRTOS (V10.3.1) is missing `mpu_wrappers_v2.c` that
+> CubeMX 6.18 generates a reference to, so the project stops compiling. This was
+> tried and reverted; stay on 6.15.0 / V1.12.1. Pin the same version in CI.
+
+Under the hood it just drives CubeMX's own scripting mode, which you can also run
+by hand:
 ```bash
 printf 'config load %s/stm32_dyno_firmware_v2.ioc\nproject generate\nexit\n' "$PWD" > /tmp/gen.txt
 /path/to/STM32CubeMX -q /tmp/gen.txt
@@ -110,10 +230,29 @@ tool, choosing among multiple connected probes, device discovery, the CMake
 `flash` targets, and **Linux USB permissions**.
 
 ## Continuous Integration
-`.github/workflows/build.yml` builds both `Debug` and `Release` with CMake on every
-push/PR and uploads the resulting firmware as workflow artifacts.
+`.github/workflows/firmware.yml` runs on every push/PR:
+- **build** — builds `Debug` and `Release` with CMake in the pinned Docker image
+  and uploads the firmware as workflow artifacts.
+- **generated-headers** — verifies the committed MessagePassing headers still
+  match their YAML schema.
+- **unit-tests** — host-compiles and runs the tests in `tests/`.
+
+**CI does not check the generated firmware against the `.ioc`.** Doing so would
+mean running STM32CubeMX on a runner, and CubeMX is ST-licensed: it cannot be
+published in a public image, and a private one cannot be shared with forks. So
+that check is a **local** step — after editing the `.ioc`, run
+`Scripts/regen-cube.sh --check` yourself and commit the regenerated tree with the
+`.ioc` change. See [Regenerating Code](#regenerating-code-from-the-ioc).
+
+Nothing catches this for you, so it is worth stating the failure mode plainly: a
+setting added by hand to a *generated* section instead of to the `.ioc` survives
+until the next regeneration, then silently disappears — taking anything that
+referenced it with it.
 
 ## Notes
-- Ensure all submodules are initialized and updated before building.
+- **Don't initialise submodules to build.** The repo's one submodule
+  (`third_party/STM32CubeH7`, the firmware pack) is needed *only* to regenerate from
+  the `.ioc` — the generated HAL is committed, so a plain clone builds. See
+  [Cloning](#cloning-the-repository).
 - The build is IDE-independent. The project can still be opened in STM32CubeIDE
   1.15+ via **File → Import → Import CMake Project**, but that is optional.

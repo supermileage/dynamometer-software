@@ -52,6 +52,17 @@
 
 /* USER CODE END FunctionPrototypes */
 
+/* Hook prototypes */
+void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName);
+
+/* USER CODE BEGIN 4 */
+/* vApplicationStackOverflowHook is defined in Tasks/TaskMonitor/TaskMonitor.cpp.
+   CubeMX re-emits a stub here whenever FREERTOS.configCHECK_FOR_STACK_OVERFLOW is
+   non-zero; keeping it would be a second strong definition of the same symbol and
+   the link fails with a duplicate. Delete it after each regen - this USER CODE
+   block is preserved, so the deletion sticks. */
+/* USER CODE END 4 */
+
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
 
