@@ -57,6 +57,7 @@
 /* External variables --------------------------------------------------------*/
 extern PCD_HandleTypeDef hpcd_USB_OTG_FS;
 extern ADC_HandleTypeDef hadc2;
+extern TIM_HandleTypeDef htim4;
 extern TIM_HandleTypeDef htim13;
 extern TIM_HandleTypeDef htim17;
 
@@ -215,10 +216,23 @@ void EXTI9_5_IRQHandler(void)
   HAL_GPIO_EXTI_IRQHandler(BTN_SELECT_Pin);
   HAL_GPIO_EXTI_IRQHandler(BTN_BACK_Pin);
   HAL_GPIO_EXTI_IRQHandler(BTN_BRAKE_Pin);
-  HAL_GPIO_EXTI_IRQHandler(OP_IN_Pin);
   /* USER CODE BEGIN EXTI9_5_IRQn 1 */
 
   /* USER CODE END EXTI9_5_IRQn 1 */
+}
+
+/**
+  * @brief This function handles TIM4 global interrupt.
+  */
+void TIM4_IRQHandler(void)
+{
+  /* USER CODE BEGIN TIM4_IRQn 0 */
+
+  /* USER CODE END TIM4_IRQn 0 */
+  HAL_TIM_IRQHandler(&htim4);
+  /* USER CODE BEGIN TIM4_IRQn 1 */
+
+  /* USER CODE END TIM4_IRQn 1 */
 }
 
 /**

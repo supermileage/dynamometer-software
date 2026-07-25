@@ -80,9 +80,6 @@ void Error_Handler(void);
 #define BPM_CTRL_MCU_GPIO_Port GPIOF
 #define ADC3_BPM_FB_Pin GPIO_PIN_7
 #define ADC3_BPM_FB_GPIO_Port GPIOF
-#define OP_IN_Pin GPIO_PIN_9
-#define OP_IN_GPIO_Port GPIOF
-#define OP_IN_EXTI_IRQn EXTI9_5_IRQn
 #define ILI_SPI2_MOSI_Pin GPIO_PIN_1
 #define ILI_SPI2_MOSI_GPIO_Port GPIOC
 #define ILI_SPI2_MISO_Pin GPIO_PIN_2
@@ -119,6 +116,8 @@ void Error_Handler(void);
 #define ADS1115_I2C4_SCL_GPIO_Port GPIOH
 #define ADS1115_I2C4_SDA_Pin GPIO_PIN_12
 #define ADS1115_I2C4_SDA_GPIO_Port GPIOH
+#define OP_IN_CLOCK_Pin GPIO_PIN_12
+#define OP_IN_CLOCK_GPIO_Port GPIOD
 #define ILI_LCD_DC_Pin GPIO_PIN_5
 #define ILI_LCD_DC_GPIO_Port GPIOD
 #define ILI_LCD_RST_Pin GPIO_PIN_6

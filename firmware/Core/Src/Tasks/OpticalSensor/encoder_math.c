@@ -65,3 +65,15 @@ float encoder_angular_acceleration(float previous_velocity,
     }
     return (velocity - previous_velocity) / seconds;
 }
+
+uint32_t encoder_extended_count(uint32_t overflows, uint16_t counter, bool overflow_pending)
+{
+    // The shift discards the top 16 bits of the wrap count on purpose -- see the header. Both
+    // additions are unsigned, so neither the +1 nor the shift can trap or saturate.
+    return ((overflows + (overflow_pending ? 1u : 0u)) << 16) | (uint32_t)counter;
+}
+
+uint32_t encoder_count_delta(uint32_t current_total, uint32_t previous_total)
+{
+    return current_total - previous_total;
+}

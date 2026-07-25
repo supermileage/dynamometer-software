@@ -8,11 +8,11 @@ extern optical_encoder_output_data optical_encoder_circular_buffer[OPTICAL_ENCOD
 extern size_t task_error_circular_buffer_index_writer;
 extern task_error_data task_error_circular_buffer[TASK_ERROR_CIRCULAR_BUFFER_SIZE];
 
-// Written only by the encoder ISR, read only by the task inside a critical section. EXTI9_5 runs
-// at priority 5, which taskENTER_CRITICAL()'s BASEPRI masks, so the task reads the pair atomically
-// and no pulse is lost between reading the count and clearing it.
-static volatile uint32_t num_counts = 0;
-static volatile uint32_t last_pulse_timestamp = 0;
+// Wraps of TIM4's 16-bit counter. Written only by the update ISR, read only by the task inside a
+// critical section. TIM4_IRQn runs at priority 5, which taskENTER_CRITICAL()'s BASEPRI masks, so
+// the task can read this and CNT as a consistent pair. It is never reset -- it is consumed as a
+// difference, and unsigned wraparound handles its own overflow (encoder_math.h).
+static volatile uint32_t counter_overflows = 0;
 
 OpticalSensor::OpticalSensor(osMessageQueueId_t sessionControllerToOpticalSensorHandle) : 
 		// this comes directly from circular_buffers.h and config.h
@@ -22,21 +22,54 @@ OpticalSensor::OpticalSensor(osMessageQueueId_t sessionControllerToOpticalSensor
 		_opticalEncoderEnabled(false)
 {}
 
+// Reads TIM4's running pulse total. Must be called with TIM4_IRQn masked (i.e. inside a critical
+// section): CNT and counter_overflows only describe the same instant if the ISR cannot run between
+// the two reads.
+static uint32_t ReadPulseTotal()
+{
+    uint16_t counter = (uint16_t)__HAL_TIM_GET_COUNTER(opticalCounterTimer);
+    bool overflowPending = __HAL_TIM_GET_FLAG(opticalCounterTimer, TIM_FLAG_UPDATE);
+
+    if (overflowPending)
+    {
+        // The flag is set, so the wrap has already happened -- but it may have happened *after* the
+        // read above, which would have caught a pre-wrap counter near 65535. Re-read now that the
+        // wrap is known to be behind us, so the carry is paired with a post-wrap counter. Pairing
+        // it with the stale one would invent a whole 65536 pulses.
+        counter = (uint16_t)__HAL_TIM_GET_COUNTER(opticalCounterTimer);
+    }
+
+    return encoder_extended_count(counter_overflows, counter, overflowPending);
+}
+
 bool OpticalSensor::Init()
 {
-    return true;
+    // HAL_TIM_Base_Init() ends with an EGR.UG to latch the prescaler, which leaves the update flag
+    // already set. Enabling the interrupt below would fire it at once and bank a wrap that never
+    // happened -- 65536 phantom pulses in whichever window straddles it, i.e. one absurd velocity
+    // spike shortly after boot. Clear it before arming.
+    __HAL_TIM_CLEAR_FLAG(opticalCounterTimer, TIM_FLAG_UPDATE);
+
+    // TIM4 is clocked by the encoder pin rather than by the CPU, so it free-runs for the life of
+    // the program: counting costs nothing, and enabling/disabling the sensor stays a pure reporting
+    // decision in Run() with no start/stop ordering to get wrong.
+    return HAL_TIM_Base_Start_IT(opticalCounterTimer) == HAL_OK;
 }
 
 void OpticalSensor::Run(void)
 {
     optical_encoder_output_data outputData;
 
-    // The reference edge: the pulse that ended the previous measurement interval. Until a first
-    // pulse has been seen there is nothing to measure against -- the old code used 0 here, so the
-    // first sample was divided by the entire time since boot (TIM2 free-runs), which is a wrong
-    // answer of unpredictable size and, after a counter wrap, a meaningless one.
-    uint32_t referenceTimestamp = 0;
-    bool haveReference = false;
+    // Origin of the current window: the pulse total and the instant it was read. A window is the
+    // difference against these, so until one reading exists there is nothing to divide by.
+    uint32_t previousTotal = 0;
+    uint32_t previousSampleTimestamp = 0;
+    bool haveBaseline = false;
+
+    // Ticks accumulated since the last window that actually saw a pulse, and how many windows that
+    // is -- the two together decide how a silent shaft is reported.
+    uint32_t ticksSinceLastCount = 0;
+    uint32_t emptyWindows = 0;
 
     float prevAngularVelocity = 0.0f;
 
@@ -51,85 +84,91 @@ void OpticalSensor::Run(void)
             _opticalEncoderEnabled ? 0 : osWaitForever
         );
 
-        // Skip processing if the latest state says disabled. The reference is dropped with it: the
-        // ISR keeps counting while disabled, so resuming against a stale edge would attribute a
-        // whole idle period's pulses to one interval.
+        // Skip processing if the latest state says disabled. The baseline is dropped with it: TIM4
+        // is clocked by the pin and keeps counting while disabled, so resuming against a stale
+        // baseline would attribute a whole idle period's pulses to one window.
         if (!_opticalEncoderEnabled)
         {
-            haveReference = false;
+            haveBaseline = false;
             continue;
         }
 
-        // --- Copy the ISR's state atomically (see the note on the globals) ---
+        // --- Sample the counter and the clock as one instant (see the note on the globals) ---
         taskENTER_CRITICAL();
-        uint32_t num_counts_copy = num_counts;
-        num_counts = 0;
-        uint32_t lastPulseCopy = last_pulse_timestamp;
+        uint32_t pulseTotal = ReadPulseTotal();
         uint32_t now = get_timestamp();
         taskEXIT_CRITICAL();
 
-        float angularVelocity;
-        uint32_t sampleTimestamp;
-        uint32_t deltaTicks;
-
-        if (num_counts_copy > 0u && haveReference)
+        if (!haveBaseline)
         {
-            // Both ends of this interval are real pulse edges, so the angle is exactly
-            // num_counts_copy apertures and the only error is the timestamps' 1 us resolution.
-            // Unsigned subtraction is deliberate: it stays correct across a counter wrap.
-            deltaTicks = lastPulseCopy - referenceTimestamp;
-            angularVelocity = encoder_angular_velocity(
-                num_counts_copy, deltaTicks, sysconfig_get_u32(SYSCFG_NUM_APERTURES),
-                _timestampClockSpeedFreq);
-            sampleTimestamp = lastPulseCopy;
+            // First window since the task started or was re-enabled: adopt this reading as the
+            // origin. There is no interval behind it, so nothing is reported for it.
+            previousTotal = pulseTotal;
+            previousSampleTimestamp = now;
+            haveBaseline = true;
+            ticksSinceLastCount = 0u;
+            emptyWindows = 0u;
+            prevAngularVelocity = 0.0f;
+            continue;
         }
-        else if (num_counts_copy > 0u)
+
+        const uint32_t counts = encoder_count_delta(pulseTotal, previousTotal);
+        // Time actually elapsed, not the osDelay that was asked for: the task's wake-ups jitter,
+        // and the denominator being off is the speed being off. Unsigned subtraction is deliberate
+        // -- it stays correct across TIM2's 32-bit wrap.
+        const uint32_t deltaTicks = now - previousSampleTimestamp;
+        const uint32_t apertures = sysconfig_get_u32(SYSCFG_NUM_APERTURES);
+
+        float angularVelocity;
+
+        if (counts > 0u)
         {
-            // First pulses since the task started or was re-enabled: adopt this edge as the
-            // reference and report nothing derived from it yet.
-            deltaTicks = 0u;
-            angularVelocity = 0.0f;
-            sampleTimestamp = lastPulseCopy;
+            angularVelocity = encoder_angular_velocity(counts, deltaTicks, apertures,
+                                                       _timestampClockSpeedFreq);
+            ticksSinceLastCount = 0u;
+            emptyWindows = 0u;
         }
         else
         {
-            // No pulse this pass. The shaft has not covered another aperture, so its speed is
-            // below one aperture per the elapsed silence -- a bound that decays toward zero on
-            // its own rather than snapping there. Never report faster than the last known speed.
-            deltaTicks = haveReference ? (now - referenceTimestamp) : 0u;
-            float bound = encoder_velocity_upper_bound(
-                deltaTicks, sysconfig_get_u32(SYSCFG_NUM_APERTURES), _timestampClockSpeedFreq);
-            angularVelocity = (haveReference && bound < prevAngularVelocity)
-                                  ? bound
-                                  : (haveReference ? prevAngularVelocity : 0.0f);
-            sampleTimestamp = now;
+            ticksSinceLastCount += deltaTicks;
+            emptyWindows++;
+
+            if (emptyWindows >= OPTICAL_ENCODER_MAX_EMPTY_WINDOWS)
+            {
+                // Silent long enough that the bound has stopped saying anything useful. Call the
+                // shaft stopped rather than letting an ever-shrinking ceiling pass for a
+                // measurement. Zero is sticky: prevAngularVelocity below carries it forward.
+                angularVelocity = 0.0f;
+            }
+            else
+            {
+                // No pulse this window, so the shaft has not covered another aperture: it is
+                // turning slower than one aperture per the elapsed silence. Report that ceiling,
+                // which decays on its own, but never faster than the last real measurement -- the
+                // bound is only news when it is the lower of the two.
+                const float bound = encoder_velocity_upper_bound(ticksSinceLastCount, apertures,
+                                                                 _timestampClockSpeedFreq);
+                angularVelocity = (bound < prevAngularVelocity) ? bound : prevAngularVelocity;
+            }
         }
 
-        outputData.timestamp = sampleTimestamp;
-        outputData.raw_value = num_counts_copy;
+        outputData.timestamp = now;
+        outputData.raw_value = counts;
         outputData.angular_velocity = angularVelocity;
-        outputData.angular_acceleration = haveReference
-            ? encoder_angular_acceleration(prevAngularVelocity, angularVelocity, deltaTicks,
-                                           _timestampClockSpeedFreq)
-            : 0.0f;
+        outputData.angular_acceleration = encoder_angular_acceleration(
+            prevAngularVelocity, angularVelocity, deltaTicks, _timestampClockSpeedFreq);
 
         _data_buffer_writer.WriteElementAndIncrementIndex(outputData);
 
-        if (num_counts_copy > 0u)
-        {
-            referenceTimestamp = lastPulseCopy;
-            haveReference = true;
-        }
+        previousTotal = pulseTotal;
+        previousSampleTimestamp = now;
         prevAngularVelocity = angularVelocity;
     }
 }
 
-extern "C" void opticalsensor_input_interrupt()
+extern "C" void opticalsensor_overflow_interrupt()
 {
-    num_counts = num_counts + 1;
-    // Stamping the edge here is what makes the measurement interval start and end on real pulses
-    // rather than on whenever the task happened to run -- see encoder_math.h.
-    last_pulse_timestamp = get_timestamp();
+    counter_overflows = counter_overflows + 1;
 }
 
 extern "C" void opticalsensor_main(osMessageQueueId_t sessionControllerToOpticalSensorHandle)
