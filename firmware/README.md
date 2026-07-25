@@ -61,9 +61,9 @@ Additional, only if you need them:
   cmake --build firmware/tests/build -j
   ctest --test-dir firmware/tests/build --output-on-failure
   ```
-- **Docker** — for the reproducible, host-toolchain-free build (and to build the
-  drift-check image). See [Reproducible build](#reproducible-build-docker); nothing
-  else is needed for that path.
+- **Docker** — for the reproducible, host-toolchain-free build. See
+  [Reproducible build](#reproducible-build-docker); nothing else is needed for
+  that path.
 - A **flashing tool** — to program the board. The open-source options
   (`stlink`, `openocd`, `dfu-util`, `stm32flash`) install from apt/dnf with no
   account; **STM32CubeProgrammer is _not_ available via apt/dnf** and requires a

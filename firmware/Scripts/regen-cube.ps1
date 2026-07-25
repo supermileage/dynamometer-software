@@ -113,7 +113,7 @@ if ($packLine) {
                 $subPaths = git -C $submod config -f .gitmodules --get-regexp 'submodule\..*\.path' |
                     ForEach-Object { ($_ -split ' ')[1] } |
                     Where-Object { $_ -notmatch 'BSP' }
-                git -C $submod submodule update --init --depth 1 -- @subPaths
+                git -C $submod submodule update --init --depth 1 -- $subPaths
             }
             New-Item -ItemType Directory -Force -Path $repo | Out-Null
             New-Item -ItemType Junction -Path $packDir -Target $submod | Out-Null
@@ -197,12 +197,21 @@ try {
 if ($Check) {
     # Ignore .mxproject: CubeMX rewrites this bookkeeping file on every generate,
     # so it churns even when no source changed, and it isn't compiled.
+    #
+    # A regen can *add* files as well as change them — a pack update ships new
+    # LICENSE.md files, for one. git diff reports tracked paths only, so those
+    # would slip through as untracked; ask for them separately.
+    $newFiles = @(git -C $ProjectPath ls-files --others --exclude-standard -- . ':(exclude).mxproject')
+
     git -C $ProjectPath diff --quiet -- . ':(exclude).mxproject'
-    if ($LASTEXITCODE -ne 0) {
+    $changed = ($LASTEXITCODE -ne 0)
+
+    if ($changed -or $newFiles.Count -gt 0) {
         Write-Host ""
-        Write-Host "ERROR: regeneration changed committed files — the generated code is"
-        Write-Host "       out of date with the .ioc. Regenerate and commit:"
-        git -C $ProjectPath --no-pager diff --stat -- . ':(exclude).mxproject'
+        Write-Host "ERROR: regeneration changed the working tree — the committed generated"
+        Write-Host "       code is out of date with the .ioc. Regenerate and commit:"
+        if ($changed) { git -C $ProjectPath --no-pager diff --stat -- . ':(exclude).mxproject' }
+        foreach ($f in $newFiles) { Write-Host "  new file: $f" }
         exit 1
     }
     Write-Host "Drift check passed: generated code matches the .ioc."

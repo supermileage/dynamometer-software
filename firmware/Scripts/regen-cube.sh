@@ -194,11 +194,22 @@ if [[ $CHECK -eq 1 ]]; then
     # Ignore .mxproject: CubeMX rewrites this bookkeeping file on every generate,
     # so it churns even when no source changed, and it isn't compiled.
     DRIFT_SPEC=(-- . ':(exclude).mxproject')
-    if ! git -C "$PROJECT_PATH" diff --quiet "${DRIFT_SPEC[@]}"; then
+
+    # A regen can *add* files as well as change them — a pack update ships new
+    # LICENSE.md files, for one. git diff reports tracked paths only, so those
+    # would slip through as untracked; ask for them separately.
+    mapfile -t NEW_FILES < <(git -C "$PROJECT_PATH" ls-files --others \
+        --exclude-standard "${DRIFT_SPEC[@]}")
+
+    CHANGED=0
+    git -C "$PROJECT_PATH" diff --quiet "${DRIFT_SPEC[@]}" || CHANGED=1
+
+    if [[ $CHANGED -eq 1 || ${#NEW_FILES[@]} -gt 0 ]]; then
         echo
-        echo "ERROR: regeneration changed committed files — the generated code is"
-        echo "       out of date with the .ioc. Regenerate and commit:"
-        git -C "$PROJECT_PATH" --no-pager diff --stat "${DRIFT_SPEC[@]}"
+        echo "ERROR: regeneration changed the working tree — the committed generated"
+        echo "       code is out of date with the .ioc. Regenerate and commit:"
+        [[ $CHANGED -eq 1 ]] && git -C "$PROJECT_PATH" --no-pager diff --stat "${DRIFT_SPEC[@]}"
+        [[ ${#NEW_FILES[@]} -gt 0 ]] && printf '  new file: %s\n' "${NEW_FILES[@]}"
         exit 1
     fi
     echo "Drift check passed: generated code matches the .ioc."
