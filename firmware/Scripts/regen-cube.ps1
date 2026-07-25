@@ -27,6 +27,10 @@
 .PARAMETER Ioc
     The .ioc to generate from (default: the project's single .ioc).
 
+.PARAMETER AllowVersionMismatch
+    Run even when the installed CubeMX is not the version that wrote the .ioc.
+    Off by default because that combination stops on a migration prompt.
+
 .EXAMPLE
     .\Scripts\regen-cube.ps1
     .\Scripts\regen-cube.ps1 -Cubemx "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeMX\STM32CubeMX.exe"
@@ -35,7 +39,8 @@
 param(
     [switch]$Check,
     [string]$Cubemx = $env:STM32CUBEMX,
-    [string]$Ioc
+    [string]$Ioc,
+    [switch]$AllowVersionMismatch
 )
 
 $ErrorActionPreference = 'Stop'
@@ -125,12 +130,55 @@ if ($packLine) {
     }
 }
 
+# --- version guard -----------------------------------------------------------
 # CubeMX shows a migration prompt when its version differs from the one that
-# wrote the .ioc. Headless there is nobody to answer it, so the run just hangs at
-# 'config load' with no output — surface the expected version up front.
+# wrote the .ioc. Driven by script there is nobody to answer it, so the run does
+# not fail — it sits in 'config load' indefinitely until killed. Compare the two
+# up front so the mismatch is reported at once instead of looking like a slow
+# generate.
+#
+# MxDb.Version is the stamp to compare: it is the exact database the .ioc was
+# written against, and the install names its own in db\package.xml (CubeMX
+# 6.18.0 ships DB.6.0.180). MxCube.Version is carried along only for the message.
+$mxVer = $null
+$iocDbVer = $null
 $verLine = Select-String -LiteralPath $Ioc -Pattern '^MxCube\.Version=(.+)$' | Select-Object -First 1
-if ($verLine) {
-    Write-Host ("Note: this .ioc was written by STM32CubeMX {0}; a different version will stall on a migration prompt." -f $verLine.Matches[0].Groups[1].Value.Trim())
+if ($verLine) { $mxVer = $verLine.Matches[0].Groups[1].Value.Trim() }
+$dbLine = Select-String -LiteralPath $Ioc -Pattern '^MxDb\.Version=(.+)$' | Select-Object -First 1
+if ($dbLine) { $iocDbVer = $dbLine.Matches[0].Groups[1].Value.Trim() }
+
+$installedDbVer = $null
+$dbXml = Join-Path (Split-Path -Parent $Cubemx) 'db\package.xml'
+if (Test-Path -LiteralPath $dbXml -PathType Leaf) {
+    $m = Select-String -LiteralPath $dbXml -Pattern 'DB\.\d+\.\d+\.\d+' | Select-Object -First 1
+    if ($m) { $installedDbVer = $m.Matches[0].Value }
+}
+
+if (-not $iocDbVer -or -not $installedDbVer) {
+    # Nothing to compare: either the .ioc carries no MxDb.Version, or the install
+    # exposes no db\package.xml (a .jar outside a normal install tree). Fall back
+    # to the advisory note rather than blocking on a check we could not make.
+    if ($mxVer) {
+        Write-Host "Note: this .ioc was written by STM32CubeMX $mxVer; a different version will stall on a migration prompt."
+    }
+} elseif ($iocDbVer -ne $installedDbVer) {
+    if ($AllowVersionMismatch) {
+        Write-Host "WARNING: CubeMX database mismatch (installed $installedDbVer, .ioc wants $iocDbVer)."
+        Write-Host "         Continuing because -AllowVersionMismatch was given; expect a stall."
+    } else {
+        Write-Host "ERROR: STM32CubeMX version mismatch — this run would hang, not fail."
+        Write-Host "         installed:  $installedDbVer  ($Cubemx)"
+        Write-Host ("         .ioc wants: {0}{1}" -f $iocDbVer, $(if ($mxVer) { "  (STM32CubeMX $mxVer)" }))
+        Write-Host ""
+        Write-Host "CubeMX would open a migration prompt that nothing can answer unattended."
+        Write-Host ("Either install STM32CubeMX {0} and point -Cubemx at it," -f $(if ($mxVer) { $mxVer } else { 'the matching version' }))
+        Write-Host "or run the pinned container built from firmware/cubemx.Dockerfile."
+        Write-Host ""
+        Write-Host "Migrating the project to the installed version is a deliberate change, not a"
+        Write-Host "workaround: re-stamp the .ioc in the GUI and commit the regenerated tree."
+        Write-Host "To attempt this run regardless: -AllowVersionMismatch"
+        exit 1
+    }
 }
 
 # --- generate ----------------------------------------------------------------

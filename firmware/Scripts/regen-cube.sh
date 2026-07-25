@@ -9,12 +9,17 @@
 # but running it needs no account. Point this script at the binary you installed.
 #
 # Usage: ./Scripts/regen-cube.sh [--check] [--cubemx <path>] [--ioc <path>]
+#                                [--allow-version-mismatch]
 #   --check          regenerate, then fail if it changed any tracked file
 #                    (drift check for CI: the committed generated code no longer
 #                    matches the .ioc). Without it, changes are left in the tree.
 #   --cubemx <path>  path to the STM32CubeMX launcher or .jar. Overrides the
 #                    $STM32CUBEMX env var and the search of common install dirs.
 #   --ioc <path>     .ioc to generate from (default: the project's single .ioc).
+#   --allow-version-mismatch
+#                    run even when the installed CubeMX is not the version that
+#                    wrote the .ioc. Off by default because that combination
+#                    hangs on an unanswerable migration prompt (see below).
 #
 # The binary is found in this order: --cubemx, $STM32CUBEMX, common install
 # locations, then STM32CubeMX on PATH. On a headless host (no $DISPLAY) the run
@@ -26,6 +31,7 @@ set -euo pipefail
 CHECK=0
 CUBEMX="${STM32CUBEMX:-}"
 IOC=""
+ALLOW_VER_MISMATCH=0
 
 usage() { sed -n '2,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
@@ -36,6 +42,7 @@ while [[ $# -gt 0 ]]; do
         --cubemx=*)   CUBEMX="${1#*=}" ;;
         --ioc)        IOC="${2:?--ioc needs a value}"; shift ;;
         --ioc=*)      IOC="${1#*=}" ;;
+        --allow-version-mismatch) ALLOW_VER_MISMATCH=1 ;;
         -h|--help)    usage; exit 0 ;;
         *)            echo "ERROR: unknown argument '$1' (see --help)"; exit 1 ;;
     esac
@@ -127,11 +134,52 @@ if [[ -n "$PACK" && ! -d "$PACK_DIR" ]]; then
     fi
 fi
 
+# --- version guard -----------------------------------------------------------
 # CubeMX shows a migration prompt when its version differs from the one that
-# wrote the .ioc. Headless there is nobody to answer it, so the run just hangs at
-# 'config load' with no output — surface the expected version up front.
+# wrote the .ioc. Headless there is nobody to answer it, so the run does not fail
+# — it hangs in 'config load' indefinitely, printing nothing but a JVM preferences
+# warning every 30 s, until someone kills it or the CI job times out. Compare the
+# two up front and stop, so the mismatch is reported in a second rather than
+# looking like a slow generate.
+#
+# MxDb.Version is the stamp to compare: it is the exact database the .ioc was
+# written against, and the install names its own in db/package.xml (CubeMX 6.18.0
+# ships DB.6.0.180). MxCube.Version is carried along only for the message.
 IOC_MX_VER="$(sed -n 's/^MxCube\.Version=//p' "$IOC" | tr -d '\r' | head -1)"
-[[ -n "$IOC_MX_VER" ]] && echo "Note: this .ioc was written by STM32CubeMX $IOC_MX_VER; a different version will stall on a migration prompt."
+IOC_DB_VER="$(sed -n 's/^MxDb\.Version=//p' "$IOC" | tr -d '\r' | head -1)"
+
+# Resolve symlinks first: a launcher found on PATH is often a link into the real
+# install tree, and db/ sits next to the real one.
+CUBEMX_REAL="$(readlink -f "$CUBEMX" 2>/dev/null || echo "$CUBEMX")"
+INSTALLED_DB_VER=""
+DB_XML="$(dirname "$CUBEMX_REAL")/db/package.xml"
+[[ -f "$DB_XML" ]] && INSTALLED_DB_VER="$(grep -ao 'DB\.[0-9]\+\.[0-9]\+\.[0-9]\+' "$DB_XML" | head -1)"
+
+if [[ -z "$IOC_DB_VER" || -z "$INSTALLED_DB_VER" ]]; then
+    # Nothing to compare: either the .ioc carries no MxDb.Version, or the install
+    # exposes no db/package.xml (a .jar outside a normal install tree). Fall back
+    # to the advisory note rather than blocking on a check we could not make.
+    [[ -n "$IOC_MX_VER" ]] && \
+        echo "Note: this .ioc was written by STM32CubeMX $IOC_MX_VER; a different version will stall on a migration prompt."
+elif [[ "$IOC_DB_VER" != "$INSTALLED_DB_VER" ]]; then
+    if [[ $ALLOW_VER_MISMATCH -eq 1 ]]; then
+        echo "WARNING: CubeMX database mismatch (installed $INSTALLED_DB_VER, .ioc wants $IOC_DB_VER)."
+        echo "         Continuing because --allow-version-mismatch was given; expect a stall."
+    else
+        echo "ERROR: STM32CubeMX version mismatch — this run would hang, not fail."
+        echo "         installed:  $INSTALLED_DB_VER  ($CUBEMX_REAL)"
+        echo "         .ioc wants: $IOC_DB_VER${IOC_MX_VER:+  (STM32CubeMX $IOC_MX_VER)}"
+        echo
+        echo "CubeMX would open a migration prompt that nothing can answer headlessly."
+        echo "Either install STM32CubeMX ${IOC_MX_VER:-the matching version} and point"
+        echo "--cubemx at it, or run the pinned container built from firmware/cubemx.Dockerfile."
+        echo
+        echo "Migrating the project to the installed version is a deliberate change, not a"
+        echo "workaround: re-stamp the .ioc in the GUI and commit the regenerated tree."
+        echo "To attempt this run regardless: --allow-version-mismatch"
+        exit 1
+    fi
+fi
 
 # --- generate ----------------------------------------------------------------
 SCRIPT="$(mktemp)"

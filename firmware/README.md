@@ -31,7 +31,7 @@ You only need these to **build**:
 | Ninja | Build backend | `sudo dnf install ninja-build` | `sudo apt install ninja-build` |
 
 Additional, only if you need them:
-- **STM32CubeMX 6.15.0** — to regenerate code after editing
+- **STM32CubeMX 6.15.0** — to regenerate the *HAL/driver* sources after editing
   `stm32_dyno_firmware_v2.ioc`. Get it from
   [ST](https://www.st.com/en/development-tools/stm32cubemx.html) and pick **6.15.0**
   from the version selector — *not* the latest. The version must match the `.ioc`'s
@@ -40,6 +40,30 @@ Additional, only if you need them:
   [Regenerating Code](#regenerating-code-from-the-ioc). Not in apt/dnf, the download
   needs a free ST (myST) account, and ST's licence means we can't vendor it in the
   repo — so this is a one-time manual install, and only for people who regenerate.
+- **Python 3 + Jinja2 + PyYAML** — to regenerate the *MessagePassing* headers
+  (`Core/Inc/MessagePassing/messages_*.h`) from their YAML schema with
+  `tools/message_gen/generate.py`. This is a second, independent code generator (the
+  YAML schema is to these headers what the `.ioc` is to the HAL). Like the HAL, the
+  headers are committed, so a plain build needs none of this — it's only for
+  regenerating them. Install with
+  `pip install -r firmware/tools/message_gen/requirements.txt`, or via distro
+  packages: `sudo dnf install python3 python3-jinja2 python3-pyyaml` (Fedora) /
+  `sudo apt install python3 python3-jinja2 python3-yaml` (Ubuntu/Debian). Then, from
+  `firmware/`, run `python3 tools/message_gen/generate.py` (or `check.py` to verify
+  the committed headers are in sync, as CI does).
+- **A host C/C++ compiler + CTest** (with CMake ≥ 3.24) — to build and run the
+  host-compiled unit tests in `firmware/tests` (the hardware-independent logic: USB
+  RX ring, frame parser, sysconfig store). These compile with the machine's *native*
+  gcc/clang, **not** the Arm toolchain, and GoogleTest is fetched automatically (so
+  the first run needs a network connection). Run them with:
+  ```bash
+  cmake -S firmware/tests -B firmware/tests/build
+  cmake --build firmware/tests/build -j
+  ctest --test-dir firmware/tests/build --output-on-failure
+  ```
+- **Docker** — for the reproducible, host-toolchain-free build (and to build the
+  drift-check image). See [Reproducible build](#reproducible-build-docker); nothing
+  else is needed for that path.
 - A **flashing tool** — to program the board. The open-source options
   (`stlink`, `openocd`, `dfu-util`, `stm32flash`) install from apt/dnf with no
   account; **STM32CubeProgrammer is _not_ available via apt/dnf** and requires a
@@ -134,6 +158,15 @@ a `config load … / project generate` script, and (on Linux) wraps the run in
 On a headless Linux host, install the virtual-display helper
 (`dnf install xorg-x11-server-Xvfb` / `apt install xvfb`); the script wraps CubeMX
 in it automatically.
+
+Before generating, the script compares the `.ioc`'s `MxDb.Version` against the
+`db/package.xml` of the CubeMX you pointed it at, and stops if they differ. This is
+worth knowing because the failure it prevents does not look like a failure: a
+mismatched CubeMX opens a migration prompt, and with no one to answer it the run
+sits in `config load` printing nothing until it is killed. `--allow-version-mismatch`
+(`-AllowVersionMismatch`) runs anyway. Migrating the project to a newer CubeMX is a
+deliberate change — re-stamp the `.ioc` in the GUI and commit the regenerated tree,
+rather than reaching for the override.
 
 ### The firmware pack (no ST account needed)
 Generation needs the HAL/driver package the `.ioc` names
