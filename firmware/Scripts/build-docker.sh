@@ -65,6 +65,17 @@ fi
 # directory directly, since --build --preset would resolve back to build/.
 BUILD_DIR="build-docker/$CONFIG"
 
+# Everything here configures at /work, but a container started by hand with a
+# different mount point leaves a cache pinned to that path, and every later run
+# aborts with the same "does not match the source" error. The tree is disposable,
+# so discard it rather than making the next person work out why.
+CACHE="$PROJECT_PATH/$BUILD_DIR/CMakeCache.txt"
+if [[ -f "$CACHE" ]] && ! grep -q '^CMAKE_HOME_DIRECTORY:INTERNAL=/work$' "$CACHE"; then
+    STALE_SRC="$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$CACHE" | head -1)"
+    echo "Discarding $BUILD_DIR: its CMake cache was configured for ${STALE_SRC:-another path}, not /work."
+    rm -rf "${PROJECT_PATH:?}/$BUILD_DIR"
+fi
+
 echo "Building firmware ($CONFIG)..."
 docker run --rm \
     -v "$MOUNT" -w /work \

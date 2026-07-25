@@ -63,6 +63,22 @@ if ($Rebuild -or -not (docker images -q $Image)) {
 # directory directly, since --build --preset would resolve back to build/.
 $BuildDir = "build-docker/$Config"
 
+# Everything here configures at /work, but a container started by hand with a
+# different mount point leaves a cache pinned to that path, and every later run
+# aborts with the same "does not match the source" error. The tree is disposable,
+# so discard it rather than making the next person work out why.
+$cachePath = Join-Path $ProjectPath "$BuildDir/CMakeCache.txt"
+if (Test-Path -LiteralPath $cachePath -PathType Leaf) {
+    $homeLine = Select-String -LiteralPath $cachePath -Pattern '^CMAKE_HOME_DIRECTORY:INTERNAL=(.*)$' |
+        Select-Object -First 1
+    $staleSrc = if ($homeLine) { $homeLine.Matches[0].Groups[1].Value.Trim() } else { $null }
+    if ($staleSrc -ne '/work') {
+        $shown = if ($staleSrc) { $staleSrc } else { 'another path' }
+        Write-Host "Discarding $BuildDir`: its CMake cache was configured for $shown, not /work."
+        Remove-Item -LiteralPath (Join-Path $ProjectPath $BuildDir) -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # Docker Desktop maps ownership of bind-mounted files automatically, so unlike
 # the Linux path in build-docker.sh there's no --user flag to pass here.
 Write-Host "Building firmware ($Config)..."
