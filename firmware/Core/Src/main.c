@@ -187,12 +187,12 @@ osMessageQueueId_t taskMonitorToUsbControllerHandle;
 const osMessageQueueAttr_t taskMonitorToUsbController_attributes = {
   .name = "taskMonitorToUsbController"
 };
-/* Definitions for usbToForceSensorCommand (host settings routed to the force sensor) */
+/* Definitions for usbToForceSensorCommand */
 osMessageQueueId_t usbToForceSensorCommandHandle;
 const osMessageQueueAttr_t usbToForceSensorCommand_attributes = {
   .name = "usbToForceSensorCommand"
 };
-/* Definitions for taskToUsbController (applied-command acks back to the host) */
+/* Definitions for taskToUsbControllerResponse */
 osMessageQueueId_t taskToUsbControllerResponseHandle;
 const osMessageQueueAttr_t taskToUsbControllerResponse_attributes = {
   .name = "taskToUsbControllerResponse"
@@ -365,7 +365,7 @@ int main(void)
   /* creation of usbToForceSensorCommand */
   usbToForceSensorCommandHandle = osMessageQueueNew (8, sizeof(usb_task_command), &usbToForceSensorCommand_attributes);
 
-  /* creation of taskToUsbController */
+  /* creation of taskToUsbControllerResponse */
   taskToUsbControllerResponseHandle = osMessageQueueNew (8, sizeof(usb_task_completion), &taskToUsbControllerResponse_attributes);
 
   /* creation of pidControllerToSessionControllerAck */
