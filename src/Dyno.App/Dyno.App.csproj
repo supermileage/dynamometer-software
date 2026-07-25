@@ -4,6 +4,11 @@
     <RootNamespace>Dyno.App</RootNamespace>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- The window, taskbar and .exe icon. Avalonia also publishes whatever ApplicationIcon
+         points at as the default Window.Icon, so this one property covers the taskbar on
+         Linux too, where there is no .exe to carry it. Redraw with scripts/generate-icon.sh
+         after touching the matching "D" badge in MainWindow.axaml. -->
+    <ApplicationIcon>Assets/dyno.ico</ApplicationIcon>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>
 
