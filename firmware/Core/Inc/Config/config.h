@@ -73,12 +73,19 @@
 
 
 // Optical Encoder Config
-#define OPTICAL_MAX_NUM_OVERFLOWS 3 // Meant to count overflows for optical encoder
+// A shaft is called stopped after this many consecutive windows with no pulses. Until then the
+// task reports the decaying upper bound (encoder_math.h) instead, so a slow shaft straddling the
+// one-count-per-window floor eases to zero rather than flapping. At a 200ms window, 3 windows is
+// 600ms of silence, i.e. anything under ~1.6 RPM reads as stopped.
+#define OPTICAL_ENCODER_MAX_EMPTY_WINDOWS 3
 #define NUM_APERTURES 64 // Tied to physical 3D printed apparatus
 #define OPTICAL_ENCODER_CIRCULAR_BUFFER_SIZE 100 // Need to evaluate maximum possible size from STM32
-// 10ms = 100 Hz velocity samples. Also improves low-RPM resolution: a 2ms window at 64 apertures
-// sees zero pulses below ~470 RPM and reported a string of zeros between real readings.
-#define OPTICAL_ENCODER_TASK_OSDELAY 10
+// This is the velocity sampling window, not just a loop delay: TIM4 counts pulses continuously and
+// the task divides by the time between wake-ups, so the window sets both the resolution and the
+// slowest detectable speed. At 64 apertures, 200ms gives +/-1 count = +/-4.7 RPM and a floor of
+// ~4.7 RPM; the old 10ms window gave +/-94 RPM and saw nothing at all below that. The cost is
+// update rate: 5 Hz samples instead of 100 Hz, and up to 200ms to notice an enable/disable.
+#define OPTICAL_ENCODER_TASK_OSDELAY 200
 
 // PID config
 #define PID_INITIAL_STATUS false

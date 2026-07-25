@@ -197,9 +197,9 @@ public static class SysConfigCatalog
                 "OPTICAL_ENCODER_TASK_OSDELAY",
                 "Optical Encoder",
                 "ms",
-                "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU.",
+                "Window (ms) over which encoder pulses are counted. Longer = finer speed resolution and a lower detectable speed; shorter = more samples per second. At 64 apertures, 200ms resolves ~4.7 RPM, 10ms only ~94 RPM.",
                 IsFloat: false,
-                Default: 10.0,
+                Default: 200.0,
                 Min: 0.0,
                 Max: 65535.0
             ),

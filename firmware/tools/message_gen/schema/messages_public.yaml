@@ -595,7 +595,7 @@ sections:
       - { name: FORCESENSOR_TASK_OSDELAY, type: uint32, min: 0, max: 65535, category: "Force Sensor", subsection: "All", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
       - { name: FORCESENSOR_COMMAND_POLL_OSDELAY, type: uint32, min: 0, max: 65535, category: "Force Sensor", subsection: "All", unit: "ms", description: "Bounded wait on the enable queue while the sensor is idle, so USB commands still get serviced." }
       - { name: FORCESENSOR_CONVERSION_TIMEOUT_MS, type: uint32, min: 0, max: 65535, category: "Force Sensor", subsection: "I2C", unit: "ms", description: "How long to wait for the ADS1115 conversion-ready alert before abandoning the sample." }
-      - { name: OPTICAL_ENCODER_TASK_OSDELAY, type: uint32, min: 0, max: 65535, category: "Optical Encoder", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }
+      - { name: OPTICAL_ENCODER_TASK_OSDELAY, type: uint32, min: 0, max: 65535, category: "Optical Encoder", unit: "ms", description: "Window (ms) over which encoder pulses are counted. Longer = finer speed resolution and a lower detectable speed; shorter = more samples per second. At 64 apertures, 200ms resolves ~4.7 RPM, 10ms only ~94 RPM." }
       # A slot count on a wheel: uint16_t.
       - { name: NUM_APERTURES, type: uint32, min: 0, max: 65535, category: "Optical Encoder", unit: "", description: "Apertures on the encoder wheel (tied to the physical 3D-printed apparatus)." }
       - { name: PID_TASK_OSDELAY, type: uint32, min: 0, max: 65535, category: "PID Controller", unit: "ms", description: "Delay (ms) at the end of each loop pass of the task; lower = faster polling, more CPU." }

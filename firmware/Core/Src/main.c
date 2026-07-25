@@ -74,6 +74,7 @@ SPI_HandleTypeDef hspi2;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim13;
 TIM_HandleTypeDef htim16;
 
@@ -216,6 +217,10 @@ I2C_HandleTypeDef* forceSensorADS1115Handle = &hi2c4;
 
 TIM_HandleTypeDef* timestampTimer = &htim2;
 
+// TIM4 counts optical encoder pulses in hardware: PD12 (OP_IN_CLOCK) drives TI1FP1 and the timer
+// runs in external clock mode 1, so CNT *is* the pulse count and no interrupt fires per edge.
+TIM_HandleTypeDef* opticalCounterTimer = &htim4;
+
 TIM_HandleTypeDef* lumexLcdTimer = &htim13;
 
 TIM_TypeDef* lumexLcdTimInstance = TIM13;
@@ -240,6 +245,7 @@ static void MX_ADC2_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_ADC3_Init(void);
 static void MX_I2C4_Init(void);
+static void MX_TIM4_Init(void);
 void usbTaskEntryFunction(void *argument);
 extern void bpmTaskEntryFunction(void *argument);
 extern void forceSensorTaskEntryFunction(void *argument);
@@ -305,6 +311,7 @@ int main(void)
   MX_TIM2_Init();
   MX_ADC3_Init();
   MX_I2C4_Init();
+  MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
   /* Brake indicator off, whatever the button is doing right now. It used to be seeded from the
      pin, which lit it whenever the board was reset with the brake held -- showing an engaged brake
@@ -919,6 +926,54 @@ static void MX_TIM2_Init(void)
 }
 
 /**
+  * @brief TIM4 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM4_Init(void)
+{
+
+  /* USER CODE BEGIN TIM4_Init 0 */
+
+  /* USER CODE END TIM4_Init 0 */
+
+  TIM_SlaveConfigTypeDef sSlaveConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM4_Init 1 */
+
+  /* USER CODE END TIM4_Init 1 */
+  htim4.Instance = TIM4;
+  htim4.Init.Prescaler = 0;
+  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim4.Init.Period = 65535;
+  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sSlaveConfig.SlaveMode = TIM_SLAVEMODE_EXTERNAL1;
+  sSlaveConfig.InputTrigger = TIM_TS_TI1FP1;
+  sSlaveConfig.TriggerPolarity = TIM_TRIGGERPOLARITY_RISING;
+  sSlaveConfig.TriggerFilter = 0;
+  if (HAL_TIM_SlaveConfigSynchro(&htim4, &sSlaveConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM4_Init 2 */
+
+  /* USER CODE END TIM4_Init 2 */
+
+}
+
+/**
   * @brief TIM13 Initialization Function
   * @param None
   * @retval None
@@ -1134,12 +1189,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(ADS1115_ALERT_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : OP_IN_Pin */
-  GPIO_InitStruct.Pin = OP_IN_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(OP_IN_GPIO_Port, &GPIO_InitStruct);
-
   /*Configure GPIO pins : LUMEX_LCD_D0_Pin LUMEX_LCD_D1_Pin LUMEX_LCD_D2_Pin LUMEX_LCD_D3_Pin
                            LUMEX_LCD_D4_Pin LUMEX_LCD_D5_Pin LUMEX_LCD_D6_Pin LUMEX_LCD_D7_Pin */
   GPIO_InitStruct.Pin = LUMEX_LCD_D0_Pin|LUMEX_LCD_D1_Pin|LUMEX_LCD_D2_Pin|LUMEX_LCD_D3_Pin
@@ -1224,17 +1273,6 @@ static void MX_GPIO_Init(void)
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
-  /* The optical encoder input (OP_IN, PF9) sits on EXTI line 9, so its interrupt is EXTI9_5 --
-     the same one BTN_SELECT (PF5) needs. CubeMX therefore enables it above for the button, and
-     the encoder only counts as a side effect of that: delete or move BTN_SELECT and the encoder
-     stops counting silently, with the task still running and reporting a plausible zero.
-     Claim the line explicitly so the encoder's own requirement is recorded and enforced.
-     Enabling an already-enabled IRQ is idempotent, and the priority matches what is set above
-     (5 == configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY, so taskENTER_CRITICAL masks it and the
-     pulse count/timestamp pair can be read atomically). */
-  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
-
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
@@ -1277,9 +1315,6 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
       register_button_brake_input();
       break;
     case ILI_TOUCH_IRQ_Pin:
-      break;
-    case OP_IN_Pin:
-      opticalsensor_input_interrupt();
       break;
     default:
       break;
@@ -1488,6 +1523,12 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   else if (htim->Instance == lumexLcdTimInstance)
   {
 	  lumex_lcd_timer_interrupt(htim);
+  }
+  else if (htim->Instance == TIM4)
+  {
+	  // TIM4's counter is 16 bits, so it wraps every 65536 encoder pulses. Counting the wraps
+	  // here is what lets the task read a 32-bit pulse total instead of a truncated one.
+	  opticalsensor_overflow_interrupt();
   }
 
   /* USER CODE END Callback 1 */
