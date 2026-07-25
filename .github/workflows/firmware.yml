@@ -40,38 +40,6 @@ jobs:
       - name: Run
         run: ctest --test-dir firmware/tests/build --output-on-failure
 
-  ioc-drift:
-    name: generated firmware in sync with .ioc
-    # Regenerates from the .ioc with STM32CubeMX and fails if the committed
-    # generated code drifted from what the .ioc produces. Needs a PRIVATE image
-    # containing CubeMX + the ST-licensed FW_H7 pack (see firmware/cubemx.Dockerfile).
-    # Skipped until the CUBEMX_IMAGE repo variable is set, so it never blocks the
-    # build for forks or a repo that hasn't provisioned the image.
-    if: ${{ vars.CUBEMX_IMAGE != '' }}
-    runs-on: ubuntu-latest
-    container:
-      image: ${{ vars.CUBEMX_IMAGE }}
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.CUBEMX_IMAGE_TOKEN }}
-    steps:
-      # submodules: true (not recursive) fetches STM32CubeH7 — the firmware pack —
-      # at its pinned tag, without dragging in its ~40 eval-board BSP submodules.
-      # regen-cube.sh then populates the pack's own non-BSP modules itself.
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      # The job runs as root inside the container; mark the checkout trusted so
-      # git operations don't bail on "dubious ownership".
-      - name: Trust the checkout
-        run: git config --global --add safe.directory '*'
-
-      # STM32CUBEMX comes from the image's ENV; regen-cube.sh links the pack in
-      # from the submodule and wraps CubeMX in xvfb-run (no display in CI).
-      - name: Regenerate from the .ioc and fail on drift
-        run: firmware/Scripts/regen-cube.sh --check
-
   build:
     name: build (${{ matrix.config }})
     runs-on: ubuntu-latest

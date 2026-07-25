@@ -171,8 +171,8 @@ if (-not $iocDbVer -or -not $installedDbVer) {
         Write-Host ("         .ioc wants: {0}{1}" -f $iocDbVer, $(if ($mxVer) { "  (STM32CubeMX $mxVer)" }))
         Write-Host ""
         Write-Host "CubeMX would open a migration prompt that nothing can answer unattended."
-        Write-Host ("Either install STM32CubeMX {0} and point -Cubemx at it," -f $(if ($mxVer) { $mxVer } else { 'the matching version' }))
-        Write-Host "or run the pinned container built from firmware/cubemx.Dockerfile."
+        Write-Host ("Install STM32CubeMX {0} and point -Cubemx at it" -f $(if ($mxVer) { $mxVer } else { 'the matching version' }))
+        Write-Host "(older releases are behind the version selector on ST's download page)."
         Write-Host ""
         Write-Host "Migrating the project to the installed version is a deliberate change, not a"
         Write-Host "workaround: re-stamp the .ioc in the GUI and commit the regenerated tree."

@@ -235,24 +235,19 @@ tool, choosing among multiple connected probes, device discovery, the CMake
   and uploads the firmware as workflow artifacts.
 - **generated-headers** — verifies the committed MessagePassing headers still
   match their YAML schema.
-- **ioc-drift** — regenerates from the `.ioc` with STM32CubeMX and fails if the
-  committed generated code drifted (i.e. the `.ioc` was edited without running
-  `Scripts/regen-cube.sh`). `.mxproject` churn is ignored. **Off by default** —
-  see below to enable it.
+- **unit-tests** — host-compiles and runs the tests in `tests/`.
 
-### Enabling the `ioc-drift` check
-It needs STM32CubeMX **plus** the ST-licensed `STM32Cube FW_H7` pack, which can't
-live in a public image. It stays **skipped** until you point it at a private image:
+**CI does not check the generated firmware against the `.ioc`.** Doing so would
+mean running STM32CubeMX on a runner, and CubeMX is ST-licensed: it cannot be
+published in a public image, and a private one cannot be shared with forks. So
+that check is a **local** step — after editing the `.ioc`, run
+`Scripts/regen-cube.sh --check` yourself and commit the regenerated tree with the
+`.ioc` change. See [Regenerating Code](#regenerating-code-from-the-ioc).
 
-1. Build the image once from `cubemx.Dockerfile` (bundles your CubeMX install and
-   `~/STM32Cube/Repository`) and push it to a **private** registry. The Dockerfile
-   header has the exact `docker build`/`push` recipe. ST credentials are used only
-   here, at build time — never in CI.
-2. In the repo's **Settings → Secrets and variables → Actions**, set:
-   - variable **`CUBEMX_IMAGE`** = the image ref (e.g. `ghcr.io/<org>/cubemx-h7:6.18.0`)
-   - secret **`CUBEMX_IMAGE_TOKEN`** = a token that can pull that private image
-
-Once both are set the job runs on every push/PR; leave them unset and it's a no-op.
+Nothing catches this for you, so it is worth stating the failure mode plainly: a
+setting added by hand to a *generated* section instead of to the `.ioc` survives
+until the next regeneration, then silently disappears — taking anything that
+referenced it with it.
 
 ## Notes
 - **Don't initialise submodules to build.** The repo's one submodule

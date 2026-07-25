@@ -10,9 +10,9 @@
 #
 # Usage: ./Scripts/regen-cube.sh [--check] [--cubemx <path>] [--ioc <path>]
 #                                [--allow-version-mismatch]
-#   --check          regenerate, then fail if it changed any tracked file
-#                    (drift check for CI: the committed generated code no longer
-#                    matches the .ioc). Without it, changes are left in the tree.
+#   --check          regenerate, then fail if it changed any tracked file — a
+#                    drift check catching a .ioc edited without committing the
+#                    regenerated output. Without it, changes are left in the tree.
 #   --cubemx <path>  path to the STM32CubeMX launcher or .jar. Overrides the
 #                    $STM32CUBEMX env var and the search of common install dirs.
 #   --ioc <path>     .ioc to generate from (default: the project's single .ioc).
@@ -171,8 +171,8 @@ elif [[ "$IOC_DB_VER" != "$INSTALLED_DB_VER" ]]; then
         echo "         .ioc wants: $IOC_DB_VER${IOC_MX_VER:+  (STM32CubeMX $IOC_MX_VER)}"
         echo
         echo "CubeMX would open a migration prompt that nothing can answer headlessly."
-        echo "Either install STM32CubeMX ${IOC_MX_VER:-the matching version} and point"
-        echo "--cubemx at it, or run the pinned container built from firmware/cubemx.Dockerfile."
+        echo "Install STM32CubeMX ${IOC_MX_VER:-the matching version} and point --cubemx at it"
+        echo "(older releases are behind the version selector on ST's download page)."
         echo
         echo "Migrating the project to the installed version is a deliberate change, not a"
         echo "workaround: re-stamp the .ioc in the GUI and commit the regenerated tree."
