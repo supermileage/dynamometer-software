@@ -114,10 +114,6 @@ sections:
           one of the queues the session controller drives its tasks through was missing at
           startup, so it parked itself and commands from this app reach nothing. A firmware
           build fault, not something a run can cause
-      - name: ERROR_SESSION_CONTROLLER_INVALID_UART1_MUTEX_POINTER
-        description: >-
-          the UART1 mutex was missing at startup and the session controller parked itself. A
-          firmware build fault, not something a run can cause
 
   - { kind: static_assert, expr: "sizeof(session_controller_task_error_ids) == 4", message: "Size of session_controller_task_error_ids must be 4 bytes" }
 

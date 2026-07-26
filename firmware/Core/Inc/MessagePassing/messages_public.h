@@ -79,8 +79,7 @@ DYNO_STATIC_ASSERT(sizeof(task_offset_t) == 4, "Size of task_offset_t must be 4 
 typedef enum : uint32_t
 {
     ERROR_SESSION_CONTROLLER_TIMESTAMP_TIMER_START_FAILURE = 0,
-    ERROR_SESSION_CONTROLLER_INVALID_TASK_QUEUE_POINTER,
-    ERROR_SESSION_CONTROLLER_INVALID_UART1_MUTEX_POINTER
+    ERROR_SESSION_CONTROLLER_INVALID_TASK_QUEUE_POINTER
 } session_controller_task_error_ids;
 
 DYNO_STATIC_ASSERT(sizeof(session_controller_task_error_ids) == 4, "Size of session_controller_task_error_ids must be 4 bytes");

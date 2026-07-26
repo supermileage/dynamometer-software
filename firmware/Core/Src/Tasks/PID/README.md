@@ -36,7 +36,10 @@ and feeds it to [[BPM]]. Enabled/disabled by [[SessionController]].
 - `K_P`, `K_I`, `K_D`, `PID_MAX_OUTPUT`, `BRAKE_GAIN`, `THROTTLE_GAIN`, `PID_TASK_OSDELAY`, `PID_INITIAL_STATUS`
 
 ## Notes
-- Brake-only today; throttle / dual-output mixing is a planned extension.
+- Brake-only. The unfinished second output (throttle) and its mixing sketch were removed along
+  with the manual throttle control in the [[SessionController]]; nothing was ever wired to
+  receive either. `THROTTLE_GAIN`, `HORIZONTAL_BIAS`, `VERTICAL_BIAS` and `PID_MAX_OUTPUT`
+  remain in the config schema for whoever revives it, but no code reads them.
 - State machine diagram: `pid_brake_controller.puml`.
 
 ## Related

@@ -23,24 +23,36 @@ UI/FSM, dispatches commands to all other tasks, and drives the LCD readout.
 
 ## Sub-modules
 - **input_manager_interrupts** (C) — button + rotary-encoder GPIO ISRs write `button_press_data`
-  into `button_press_circular_buffer`; the FSM drains it in task context (keeps ISRs tiny).
+  into `button_press_circular_buffer`; the FSM drains it in task context (keeps ISRs tiny). The
+  three push buttons share `register_button()`; they differ only in active level and in whether
+  the press edge is reported (BRAKE reports both, because the session lasts as long as it is held).
 - **FiniteStateMachine** — `MainDynoState` (`IDLE` / `SETTINGS_MENU` / `IN_SESSION`) + settings
-  sub-states. Owns the LCD UI (`session_controller_to_lumex_lcd` messages) and target RPM editing.
+  sub-states; the state model is drawn at the top of `FiniteStateMachine.hpp`. Owns the LCD UI
+  (`session_controller_to_lumex_lcd` messages) and target RPM editing. `Show*` methods each enter
+  one screen and redraw it; `Handle*Input` methods each take one input and dispatch on state.
 
 ## Run() loop (per iteration)
+Each step below is a method of the same name; all are edge-triggered against the `_prev*` fields,
+so a steady state produces no queue traffic. `PublishStartupState()` runs once before the loop.
+
 1. `_fsm.HandleUserInputs()` — process pending button/encoder events.
-2. Edge-detect SD-logging enable → notify the SD queue only on change.
-3. Session start/stop edge (`GetInSessionStatus`): tell [[USB]] whether a session is running (it
-   streams sensor data only then), reset the display, and command [[BPM]] (`START_PWM` /
-   `STOP_PWM`). Sensor sampling itself is enabled once at startup and never gated, so a session
-   starts against sensors that are already warm.
+2. `PublishSdLoggingChange()` — notify the SD queue only when the setting moves.
+3. `PublishSessionTransition()` on a session start/stop edge (`GetInSessionStatus`): tell [[USB]]
+   whether a session is running (it streams sensor data only then), reset the display, and stop
+   [[BPM]] (`STOP_PWM`) on the way out. Sensor sampling itself is enabled once at startup and
+   never gated, so a session starts against sensors that are already warm.
 
    There is **no USB-logging option**: USB streaming follows the session, and nothing can turn it
    off. (SD logging remains a togglable setting in the menu.)
-4. On PID enable change: send `session_controller_to_pid_controller` (enable + desired ω); await `pid_controller_ack`.
-5. Manual mode: push throttle/BPM duty cycle to the BPM queue.
-6. Drain latest `forcesensor_output_data` + `optical_encoder_output_data` (via `GetLatestFromQueue`-style buffer reads).
-7. Push angular velocity and force to the LCD, each only when its value changed.
+
+   Outside a session the iteration ends here — nothing below may drive an actuator.
+4. `PublishPidEnableChange()` — send `session_controller_to_pid_controller` (enable + desired ω);
+   `AwaitPidAck()` then waits for `pid_controller_ack` before pointing the BPM at the PID output.
+5. `DriveManualBrake()` — PID option off only: brake duty cycle to the BPM queue (`START_PWM`),
+   clamped by the FSM to the same envelope `BPM::SetDutyCycle` enforces.
+6. `UpdateMeasurementDisplay()` — drain to the newest `forcesensor_output_data` +
+   `optical_encoder_output_data`, then push angular velocity and force to the LCD, each only when
+   its value changed. An iteration with no new samples keeps the last reading.
 
 ## Queues out — `session_controller_os_task_queues`
 `usb_controller, sd_controller, force_sensor, optical_sensor, bpm_controller, pid_controller, pid_controller_ack, lumex_lcd`
@@ -58,7 +70,7 @@ The LCD still shows the two measured quantities directly, so the dyno reads out 
 computer attached — it just no longer shows numbers it would have to derive to get.
 
 ## Errors
-- `ERROR_SESSION_CONTROLLER_TIMESTAMP_TIMER_START_FAILURE`, `_INVALID_TASK_QUEUE_POINTER`, `_INVALID_UART1_MUTEX_POINTER`.
+- `ERROR_SESSION_CONTROLLER_TIMESTAMP_TIMER_START_FAILURE`, `_INVALID_TASK_QUEUE_POINTER`.
   A failed `Init()` suspends the task.
 
 ## Related

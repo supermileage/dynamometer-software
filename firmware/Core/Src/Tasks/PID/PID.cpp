@@ -2,8 +2,6 @@
 #include <Tasks/PID/PID.hpp>
 #include <Config/sysconfig.h>
 
-extern UART_HandleTypeDef huart1;
-
 extern size_t task_error_circular_buffer_index_writer;
 extern task_error_data task_error_circular_buffer[TASK_ERROR_CIRCULAR_BUFFER_SIZE];
 
@@ -105,22 +103,14 @@ void PIDController::Run()
                           + sysconfig_get_float(SYSCFG_K_D) * derivative
                           + sysconfig_get_float(SYSCFG_K_I) * integral;
 
-        // TODO: Figure out how to merge this single input duo output PID controller
-        // pidOutput = Clamp(pidOutput / sysconfig_get_float(SYSCFG_PID_MAX_OUTPUT), -1.0f, 1.0f); // Normalize and clamp to [-1, 1]
-
-        // // Linear, branchless mixing
-        // float horizontalBias = sysconfig_get_float(SYSCFG_HORIZONTAL_BIAS);
-        // float verticalBias = sysconfig_get_float(SYSCFG_VERTICAL_BIAS);
-        // float throttleOutput =
-        //     Clamp(sysconfig_get_float(SYSCFG_THROTTLE_GAIN) * (0.5f * (1.0f - (pidOutput-horizontalBias)) - verticalBias), 0.0f, 1.0f);
-        // float brakeOutput =
-        //     Clamp(sysconfig_get_float(SYSCFG_BRAKE_GAIN) * (0.5f * (1.0f + (pidOutput-horizontalBias)) - verticalBias), 0.0f, 1.0f);
-
-        // PID Graph
-        // https://www.desmos.com/calculator/s3sjvmcamd
-
-        // --- Send to actuators ---
-        // SendThrottleDutyCycle(throttleOutput);
+        // --- Send to the actuator ---
+        // The brake is the only one. A second output driving a throttle was sketched here --
+        // normalize by PID_MAX_OUTPUT, then split the signed output into throttle and brake
+        // halves about HORIZONTAL_BIAS/VERTICAL_BIAS (https://www.desmos.com/calculator/s3sjvmcamd)
+        // -- but it was never finished, nothing was ever wired to receive it, and the manual
+        // throttle control it would have paired with is gone. SYSCFG_THROTTLE_GAIN,
+        // SYSCFG_HORIZONTAL_BIAS, SYSCFG_VERTICAL_BIAS and SYSCFG_PID_MAX_OUTPUT are still in
+        // the config schema for whoever picks that up; nothing reads them today.
         SendBrakeDutyCycle(pidOutput);
 
         // --- Update previous values ---
@@ -165,13 +155,6 @@ void PIDController::Reset()
 
 	_error = static_cast<float>(0);
 	_prevError = static_cast<float>(0);
-}
-
-void PIDController::SendThrottleDutyCycle(float new_duty_cycle_percent)
-{
-    // TODO (Send Throttle Duty Cycle to Motor Controller)
-    
-
 }
 
 void PIDController::SendBrakeDutyCycle(float new_duty_cycle_percent)

@@ -1,7 +1,9 @@
 #include "Tasks/SessionController/FiniteStateMachine.hpp"
 
+#include "Config/sysconfig.h"
+
 FSM::FSM(osMessageQueueId_t sessionControllerToLumexLcdHandle) :
-        _sessionControllerToLumexLcdHandle(sessionControllerToLumexLcdHandle), 
+        _sessionControllerToLumexLcdHandle(sessionControllerToLumexLcdHandle),
         _state{
             State::MainDynoState::INIT_STATE,
             State::SettingsState::INIT_STATE,
@@ -9,16 +11,13 @@ FSM::FSM(osMessageQueueId_t sessionControllerToLumexLcdHandle) :
           },
         _sdLoggingEnabled(false),
         _pidOptionToggleableEnabled(false),
+        _desiredRpm(5000),
         _pidEnabled(false),
-        _throttleControlModeEnabled(false),
-        _inSession(false),
+        _desiredManualBpmDutyCycle(0),
         // A brake already held as we come up is not a request to start a session -- it is just how
         // the board was left, or a finger on the button during a reset. Start disarmed in that case
         // so nothing can run until the button has been released and pressed deliberately.
         _brakeArmed(HAL_GPIO_ReadPin(BTN_BRAKE_GPIO_Port, BTN_BRAKE_Pin) == GPIO_PIN_RESET),
-        _desiredManualBpmDutyCycle(0),
-        _desiredManualThrottleDutyCycle(0),
-        _desiredRpm(5000),
         // Start where the ISRs have already got to, rather than at 0. The button interrupts are
         // live from MX_GPIO_Init, which is well before the kernel starts and this FSM exists, so
         // anything already in the buffer happened during boot -- including, on a board reset with
@@ -27,388 +26,311 @@ FSM::FSM(osMessageQueueId_t sessionControllerToLumexLcdHandle) :
         _fsmInputDataIndex(interrupt_input_data_index)
         {
             ClearDisplay();
-            IdleState();
-
+            ShowIdleScreen();
         }
 
-template<typename T>
-static inline T clamp(T x, T minVal, T maxVal)
-{
-    if (x < minVal) return minVal;
-    if (x > maxVal) return maxVal;
-    return x;
-}
 
+// ---------------------------------------------------------------------------- input dispatch
 
+// The ISRs append events and advance interrupt_input_data_index; this drains everything that
+// arrived since the last pass, in order, in task context.
 void FSM::HandleUserInputs(void)
 {
-    
-    while(_fsmInputDataIndex != interrupt_input_data_index)
+    while (_fsmInputDataIndex != interrupt_input_data_index)
     {
-        volatile button_press_data* current_button_data = get_circular_buffer_data(_fsmInputDataIndex);
-        switch(current_button_data->opcode)
+        volatile button_press_data* input = get_circular_buffer_data(_fsmInputDataIndex);
+
+        switch (input->opcode)
         {
-            case ROT_EN_TICKS:
-                HandleRotaryEncoderInput(current_button_data->positive);
-                break;
-            case ROT_EN_SW:
-                HandleRotaryEncoderSwInput();
-                break;
-            case BTN_BACK:
-                HandleButtonBackInput();
-                break;
-            case BTN_SELECT:
-                HandleButtonSelectInput();
-                break;
-            case BTN_BRAKE:
-                HandleButtonBrakeInput(current_button_data->positive);
-                break;
-            default:
-                break;
+            case ROT_EN_TICKS: HandleRotaryEncoderInput(input->positive); break;
+            case ROT_EN_SW:    HandleRotaryEncoderSwInput();              break;
+            case BTN_BACK:     HandleButtonBackInput();                   break;
+            case BTN_SELECT:   HandleButtonSelectInput();                 break;
+            case BTN_BRAKE:    HandleButtonBrakeInput(input->positive);   break;
+            default:                                                      break;
         }
 
         _fsmInputDataIndex = (_fsmInputDataIndex + 1) % USER_INPUT_CIRCULAR_BUFFER_SIZE;
     }
 }
 
+
+// ---------------------------------------------------------------------------- rotary encoder
+
 void FSM::HandleRotaryEncoderInput(bool positiveTick)
 {
-    switch(_state.mainState)
+    switch (_state.mainState)
     {
         case State::MainDynoState::IDLE:
             break;
-        case State::MainDynoState::SETTINGS_MENU:
-            switch(_state.settingsState)
-            {
-                case State::SettingsState::SD_LOGGING_OPTION_DISPLAYED:
-                    if (positiveTick) PIDOptionDisplayedSettingsState();
-                    else PIDDesiredRPMOptionDisplayedSettingsState();
-                    break;
-                case State::SettingsState::SD_LOGGING_OPTION_EDIT:
-                    // _sdLoggingEnabled = positiveTick;
-                    // SDLoggingOptionEditSettingsState();
-                    break; 
-                case State::SettingsState::PID_ENABLE_DISPLAYED:
-                    if (positiveTick) PIDDesiredRPMOptionDisplayedSettingsState();
-                    else SDLoggingOptionDisplayedSettingsState();
-                    break;
-                case State::SettingsState::PID_ENABLE_EDIT:
-                    // _pidOptionToggleableEnabled = positiveTick;
-                    // PIDOptionEditSettingsState();
-                    break;
-                case State::SettingsState::PID_DESIRED_RPM_DISPLAYED:
-                    if (positiveTick) SDLoggingOptionDisplayedSettingsState();
-                    else PIDOptionDisplayedSettingsState();
-                    break;
-                case State::SettingsState::PID_DESIRED_RPM_EDIT:
-                    ConvertUserInputIntoDesiredRpm(positiveTick);
-                    PIDDesiredRPMOptionEditSettingsState(false);
-                    break;
-                default:
-                    break;
-            }
-            break;
-        case State::MainDynoState::IN_SESSION:
-            float increment = 0.01f;
-            if (!positiveTick)
-            {
-                increment *= -1;
-            }
-            if (_throttleControlModeEnabled)
-            {
-                _desiredManualThrottleDutyCycle = clamp(_desiredManualThrottleDutyCycle + increment, 0.0f, 1.0f);
-            }
-            else
-            {
-                _desiredManualBpmDutyCycle = clamp(_desiredManualBpmDutyCycle + increment, 0.0f, 1.0f);
-            }
 
+        case State::MainDynoState::SETTINGS_MENU:
+            HandleRotaryEncoderInSettings(positiveTick);
+            break;
+
+        case State::MainDynoState::IN_SESSION:
+            AdjustBrakeDutyCycle(positiveTick);
             break;
     }
-
 }
+
+void FSM::HandleRotaryEncoderInSettings(bool positiveTick)
+{
+    switch (_state.settingsState)
+    {
+        // The three pages form a ring; a tick steps one page along it in the tick's direction.
+        case State::SettingsState::SD_LOGGING_OPTION_DISPLAYED:
+            if (positiveTick) ShowPidEnablePage();
+            else ShowDesiredRpmPage();
+            break;
+
+        case State::SettingsState::PID_ENABLE_DISPLAYED:
+            if (positiveTick) ShowDesiredRpmPage();
+            else ShowSdLoggingPage();
+            break;
+
+        case State::SettingsState::PID_DESIRED_RPM_DISPLAYED:
+            if (positiveTick) ShowSdLoggingPage();
+            else ShowPidEnablePage();
+            break;
+
+        // Inside the editor a tick changes the digit under the cursor rather than the page.
+        case State::SettingsState::PID_DESIRED_RPM_EDIT:
+            AdjustDesiredRpm(positiveTick);
+            ShowDesiredRpmEditor(false);
+            break;
+
+        // Unreachable -- the toggle settings have no edit screen (see State::SettingsState).
+        case State::SettingsState::SD_LOGGING_OPTION_EDIT:
+        case State::SettingsState::PID_ENABLE_EDIT:
+        default:
+            break;
+    }
+}
+
+// The encoder's push switch does nothing yet. It was wired up to start a session, which did not
+// work reliably, and the brake button does that job instead.
 void FSM::HandleRotaryEncoderSwInput(void)
 {
-//  Was not working, will debug later
-//    _inSession = true;
-//    InSessionState();
-    
-    
-//      switch(_state.mainState)
-//      {
-//          case State::MainDynoState::IDLE:
-// //             InSessionState();
-//              break;
-//          case State::MainDynoState::SETTINGS_MENU:
-// //             InSessionState();
-//               switch(_state.settingsState)
-//               {
-//                   case State::SettingsState::PID_DESIRED_RPM_EDIT:
-//                       break;
-//                   default:
-//                       break;
-//               }
-//              break;
-//          case State::MainDynoState::IN_SESSION:
-//              break;
-//      }
-
 }
+
+
+// ---------------------------------------------------------------------------- back / select
+
 void FSM::HandleButtonBackInput(void)
 {
-    switch(_state.mainState)
+    // BACK is inert on the idle screen and during a session; only the menu has somewhere to go.
+    if (_state.mainState == State::MainDynoState::SETTINGS_MENU)
     {
-        case State::MainDynoState::IDLE:
+        HandleButtonBackInSettings();
+    }
+}
+
+void FSM::HandleButtonBackInSettings()
+{
+    switch (_state.settingsState)
+    {
+        // From any settings page, BACK leaves the menu.
+        case State::SettingsState::SD_LOGGING_OPTION_DISPLAYED:
+        case State::SettingsState::PID_ENABLE_DISPLAYED:
+        case State::SettingsState::PID_DESIRED_RPM_DISPLAYED:
+            ShowIdleScreen();
             break;
-        case State::MainDynoState::SETTINGS_MENU:
-            switch(_state.settingsState)
-            {
-                case State::SettingsState::SD_LOGGING_OPTION_DISPLAYED:
-                    IdleState();
-                    break;
-                case State::SettingsState::SD_LOGGING_OPTION_EDIT:
-                    SDLoggingOptionDisplayedSettingsState();
-                    break; 
-                case State::SettingsState::PID_ENABLE_DISPLAYED:
-                    IdleState();
-                    break;
-                case State::SettingsState::PID_ENABLE_EDIT:
-                    PIDOptionDisplayedSettingsState();
-                    break;
-                case State::SettingsState::PID_DESIRED_RPM_DISPLAYED:
-                    IdleState();
-                    break;
-                case State::SettingsState::PID_DESIRED_RPM_EDIT:
-                    _state.desiredRpmUnitsState = static_cast<State::DesiredRpmUnitsState>((static_cast<int>(_state.desiredRpmUnitsState) - 1 + static_cast<int>(State::DesiredRpmUnitsState::NUM_STATES)) % static_cast<int>(State::DesiredRpmUnitsState::NUM_STATES));
-                    // This will occur if it loops back to State of NUM_STATES - 1
-                    if (static_cast<int>(_state.desiredRpmUnitsState) != static_cast<int>(State::DesiredRpmUnitsState::NUM_STATES) - 1) {
-                        PIDDesiredRPMOptionEditSettingsState(false);
-                    }
-                    else
-                    {
-                        PIDDesiredRPMOptionDisplayedSettingsState();
-                    }
-                    break;
-                default:
-                    break;
-            }
+
+        // In the editor, BACK walks the digit cursor left; off the left end it leaves the editor.
+        case State::SettingsState::PID_DESIRED_RPM_EDIT:
+            if (StepDesiredRpmDigit(-1)) ShowDesiredRpmPage();
+            else ShowDesiredRpmEditor(false);
             break;
-        case State::MainDynoState::IN_SESSION:
-            
+
+        // Unreachable -- the toggle settings have no edit screen (see State::SettingsState).
+        case State::SettingsState::SD_LOGGING_OPTION_EDIT:
+        case State::SettingsState::PID_ENABLE_EDIT:
+        default:
             break;
     }
-
 }
 
 void FSM::HandleButtonSelectInput(void)
 {
-	switch(_state.mainState)
+    switch (_state.mainState)
     {
         case State::MainDynoState::IDLE:
-            SDLoggingOptionDisplayedSettingsState();
+            ShowSdLoggingPage();  // opens the settings menu on its first page
             break;
-        case State::MainDynoState::SETTINGS_MENU:
-            switch(_state.settingsState)
-            {
-                case State::SettingsState::SD_LOGGING_OPTION_DISPLAYED:
-                    _sdLoggingEnabled = !_sdLoggingEnabled;
-                    SDLoggingOptionEditSettingsState();
-                    // We don't actually want to change state, should remove the SD_LOGGING_OPTION_EDIT state later
-                    _state.settingsState = State::SettingsState::SD_LOGGING_OPTION_DISPLAYED;
-                    break;
-                case State::SettingsState::SD_LOGGING_OPTION_EDIT:
-                    // SDLoggingOptionEditSettingsState();
-                    break; 
-                case State::SettingsState::PID_ENABLE_DISPLAYED:
-                    _pidOptionToggleableEnabled = !_pidOptionToggleableEnabled;
-                    PIDOptionEditSettingsState();
-                    // We don't actually want to change state, should remove the PID_ENABLE_EDIT state later
-                    _state.settingsState = State::SettingsState::PID_ENABLE_DISPLAYED;
-                    break;
-                case State::SettingsState::PID_ENABLE_EDIT:
-                    // PIDOptionEditSettingsState();
-                    break;
-                case State::SettingsState::PID_DESIRED_RPM_DISPLAYED:
-                    PIDDesiredRPMOptionEditSettingsState(true);
-                    break;
-                case State::SettingsState::PID_DESIRED_RPM_EDIT:
-                    _state.desiredRpmUnitsState = static_cast<State::DesiredRpmUnitsState>((static_cast<int>(_state.desiredRpmUnitsState) + 1) % static_cast<int>(State::DesiredRpmUnitsState::NUM_STATES));
-                    // This will occur if it loops back to State of 0
-                    if (static_cast<int>(_state.desiredRpmUnitsState) != 0) {
-                        PIDDesiredRPMOptionEditSettingsState(false);
-                    }
-                    else
-                    {
-                        PIDDesiredRPMOptionDisplayedSettingsState();
-                    }
 
-                    break;
-                default:
-                    break;
-            }
+        case State::MainDynoState::SETTINGS_MENU:
+            HandleButtonSelectInSettings();
             break;
+
         case State::MainDynoState::IN_SESSION:
-            if (_pidOptionToggleableEnabled)
-            {
-                _pidEnabled = !_pidEnabled;
-            }
-            else
-            {
-                _throttleControlModeEnabled = !_throttleControlModeEnabled;
-            }
+            // SELECT arms and disarms the PID loop, and only when the menu option allows it.
+            // With the option off there is nothing to switch: the brake is the only actuator
+            // the encoder drives.
+            if (_pidOptionToggleableEnabled) _pidEnabled = !_pidEnabled;
+            break;
+    }
+}
+
+void FSM::HandleButtonSelectInSettings()
+{
+    switch (_state.settingsState)
+    {
+        // A toggle is applied and redrawn on the page itself; there is no edit screen to enter.
+        case State::SettingsState::SD_LOGGING_OPTION_DISPLAYED:
+            _sdLoggingEnabled = !_sdLoggingEnabled;
+            ShowSdLoggingPage();
+            break;
+
+        case State::SettingsState::PID_ENABLE_DISPLAYED:
+            _pidOptionToggleableEnabled = !_pidOptionToggleableEnabled;
+            ShowPidEnablePage();
+            break;
+
+        case State::SettingsState::PID_DESIRED_RPM_DISPLAYED:
+            ShowDesiredRpmEditor(true);
+            break;
+
+        // In the editor, SELECT walks the digit cursor right; off the right end it leaves.
+        case State::SettingsState::PID_DESIRED_RPM_EDIT:
+            if (StepDesiredRpmDigit(+1)) ShowDesiredRpmPage();
+            else ShowDesiredRpmEditor(false);
+            break;
+
+        // Unreachable -- the toggle settings have no edit screen (see State::SettingsState).
+        case State::SettingsState::SD_LOGGING_OPTION_EDIT:
+        case State::SettingsState::PID_ENABLE_EDIT:
+        default:
             break;
     }
 }
 
 
+// ---------------------------------------------------------------------------- brake
+
+// The brake button is the session switch: held means running, released means stopped, from
+// whichever screen the UI happens to be on.
 void FSM::HandleButtonBrakeInput(bool isEnabled)
 {
-     if (isEnabled)
-     {
-         // Disarmed means this press is the one that was already being made when the board came
-         // up, so it is not a decision to start a session -- and starting one here would drive the
-         // BPM the moment power returned, with nobody having asked for it since the reset. The
-         // release below is what turns the button back into a control.
-         if (!_brakeArmed)
-         {
-             return;
-         }
-         _inSession = true;
-         InSessionState();
-     }
-     else
-     {
-         // Released: whatever was held through the reset has been let go, so the next press is a
-         // deliberate one and is allowed to start a session.
-         _brakeArmed = true;
-         _inSession = false;
-         IdleState();
-     }
-
-    // switch(_state.mainState)
-    // {
-    //     case State::MainDynoState::IDLE:
-    //         break;
-    //     case State::MainDynoState::SETTINGS_MENU:
-    //         _inSession = true;
-    //         DisplayInSessionScreen();
-    //         break;
-    //     case State::MainDynoState::IN_SESSION:
-    //         break;
-    // }
-    
+    if (isEnabled)
+    {
+        // Disarmed means this press is the one that was already being made when the board came
+        // up, so it is not a decision to start a session -- and starting one here would drive the
+        // BPM the moment power returned, with nobody having asked for it since the reset. The
+        // release below is what turns the button back into a control.
+        if (!_brakeArmed)
+        {
+            return;
+        }
+        ShowSessionScreen();
+    }
+    else
+    {
+        // Released: whatever was held through the reset has been let go, so the next press is a
+        // deliberate one and is allowed to start a session.
+        _brakeArmed = true;
+        ShowIdleScreen();
+    }
 }
 
-int FSM::ConvertDesiredRpmUnitsStateToIncrement()
+
+// ---------------------------------------------------------------------------- value editing
+
+void FSM::AdjustBrakeDutyCycle(bool positiveTick)
+{
+    const float increment = positiveTick ? 0.01f : -0.01f;
+
+    // Stop the brake knob where the BPM task stops. BPM::SetDutyCycle clamps every request to
+    // this same envelope, so a UI that ran to 1.0 spent its last few ticks changing the number
+    // on screen and nothing else -- the LCD read 100 against a ceiling of 95. Both sides read
+    // the pair through sysconfig_get_duty_cycle_limits, which also orders it: a host may leave
+    // min above max, and std::clamp is undefined if its bounds are crossed.
+    float minDutyCycle;
+    float maxDutyCycle;
+    sysconfig_get_duty_cycle_limits(&minDutyCycle, &maxDutyCycle);
+
+    _desiredManualBpmDutyCycle =
+        std::clamp(_desiredManualBpmDutyCycle + increment, minDutyCycle, maxDutyCycle);
+}
+
+// How much one encoder tick moves the desired RPM, given which digit the cursor is on.
+int FSM::DesiredRpmDigitIncrement() const
 {
     switch (_state.desiredRpmUnitsState)
     {
-        case State::DesiredRpmUnitsState::TEN_THOUSAND:
-            return 10000;
-        case State::DesiredRpmUnitsState::THOUSAND:
-            return 1000;
-        case State::DesiredRpmUnitsState::HUNDRED:
-            return 100;
-        case State::DesiredRpmUnitsState::TEN:
-            return 10;
-        case State::DesiredRpmUnitsState::ONE:
-            return 1;
-        default:
-            return 0;
+        case State::DesiredRpmUnitsState::TEN_THOUSAND: return 10000;
+        case State::DesiredRpmUnitsState::THOUSAND:     return 1000;
+        case State::DesiredRpmUnitsState::HUNDRED:      return 100;
+        case State::DesiredRpmUnitsState::TEN:          return 10;
+        case State::DesiredRpmUnitsState::ONE:          return 1;
+        default:                                        return 0;
     }
 }
 
-void FSM::ConvertUserInputIntoDesiredRpm(bool positiveTick)
+void FSM::AdjustDesiredRpm(bool positiveTick)
 {
-    int increment = ConvertDesiredRpmUnitsStateToIncrement();
+    const int increment = DesiredRpmDigitIncrement();
 
-    if (!positiveTick)
-    {
-        increment *= -1;
-    }
-
-    _desiredRpm = std::max(0, _desiredRpm + increment);
-
+    _desiredRpm = std::max(0, _desiredRpm + (positiveTick ? increment : -increment));
 }
 
-void FSM::ClearDisplay()
+// Moves the digit cursor by one place. Returns true when it wrapped past an end of the number,
+// which is how the editor is left -- SELECT walks off the last digit, BACK off the first.
+bool FSM::StepDesiredRpmDigit(int direction)
 {
+    constexpr int digitCount = static_cast<int>(State::DesiredRpmUnitsState::NUM_STATES);
 
-    AddToLumexLCDMessageQueue(CLEAR_DISPLAY, 0, 0, NULL, 0);
+    const int next = (static_cast<int>(_state.desiredRpmUnitsState) + direction + digitCount)
+                     % digitCount;
 
+    _state.desiredRpmUnitsState = static_cast<State::DesiredRpmUnitsState>(next);
+
+    return (direction > 0) ? (next == 0) : (next == digitCount - 1);
 }
 
-void FSM::IdleState()
+
+// ---------------------------------------------------------------------------- screens
+
+void FSM::ShowIdleScreen()
 {
     _state.mainState = State::MainDynoState::IDLE;
 
     ClearDisplay();
-    
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 0, 6, "DYNO", sizeof("DYNO") - 1);
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 2, "PRESS SELECT", sizeof("PRESS SELECT") - 1);
+
+    WriteText(0, 6, "DYNO");
+    WriteText(1, 2, "PRESS SELECT");
 }
 
-void FSM::SDLoggingOptionDisplayedSettingsState()
+void FSM::ShowSdLoggingPage()
 {
     _state.mainState = State::MainDynoState::SETTINGS_MENU;
     _state.settingsState = State::SettingsState::SD_LOGGING_OPTION_DISPLAYED;
 
     ClearDisplay();
 
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 0, 3, "SD LOGGING", sizeof("SD LOGGING") - 1);
-    
-    if (_sdLoggingEnabled)
-        AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 4, "ENABLED", sizeof("ENABLED") - 1);
-    else
-        AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 4, "DISABLED", sizeof("DISABLED") - 1);
+    WriteText(0, 3, "SD LOGGING");
+    ShowEnabledDisabled(_sdLoggingEnabled);
 }
 
-void FSM::SDLoggingOptionEditSettingsState()
-{
-    _state.mainState = State::MainDynoState::SETTINGS_MENU;
-    _state.settingsState = State::SettingsState::SD_LOGGING_OPTION_EDIT;
-
-    ClearDisplay();
-    
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 0, 3, "SD LOGGING", sizeof("SD LOGGING") - 1);
-
-    if (_sdLoggingEnabled)
-        AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 4, "ENABLED", sizeof("ENABLED") - 1);
-    else
-        AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 4, "DISABLED", sizeof("DISABLED") - 1);
-}
-
-void FSM::PIDOptionDisplayedSettingsState()
+void FSM::ShowPidEnablePage()
 {
     _state.mainState = State::MainDynoState::SETTINGS_MENU;
     _state.settingsState = State::SettingsState::PID_ENABLE_DISPLAYED;
 
     ClearDisplay();
-    
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 0, 2, "PID LOGGING", sizeof("PID LOGGING") - 1);
 
-    if (_pidOptionToggleableEnabled)
-        AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 4, "ENABLED", sizeof("ENABLED") - 1);
-    else
-        AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 4, "DISABLED", sizeof("DISABLED") - 1);
+    WriteText(0, 2, "PID LOGGING");
+    ShowEnabledDisabled(_pidOptionToggleableEnabled);
 }
 
-void FSM::PIDOptionEditSettingsState()
+// The second row shared by both toggle pages.
+void FSM::ShowEnabledDisabled(bool enabled)
 {
-    _state.mainState = State::MainDynoState::SETTINGS_MENU;
-    _state.settingsState = State::SettingsState::PID_ENABLE_EDIT;
-
-    ClearDisplay();
-    
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 0, 2, "PID LOGGING", sizeof("PID LOGGING") - 1);
-
-    if (_pidOptionToggleableEnabled)
-        AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 4, "ENABLED", sizeof("ENABLED") - 1);
-    else
-        AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 4, "DISABLED", sizeof("DISABLED") - 1);
+    if (enabled) WriteText(1, 4, "ENABLED");
+    else WriteText(1, 4, "DISABLED");
 }
 
-void FSM::PIDDesiredRPMOptionDisplayedSettingsState()
+void FSM::ShowDesiredRpmPage()
 {
     _state.mainState = State::MainDynoState::SETTINGS_MENU;
     _state.settingsState = State::SettingsState::PID_DESIRED_RPM_DISPLAYED;
@@ -416,108 +338,101 @@ void FSM::PIDDesiredRPMOptionDisplayedSettingsState()
 
     ClearDisplay();
 
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY,  0, 2, "PID DES RPM", sizeof("PID DES RPM") - 1);
+    WriteText(0, 2, "PID DES RPM");
 
     char buffer[6];
-    snprintf(buffer, sizeof(buffer), "%5d", static_cast<int>(_desiredRpm));
+    snprintf(buffer, sizeof(buffer), "%5d", _desiredRpm);
 
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 5, buffer, sizeof(buffer) - 1);
-
+    WriteText(1, 5, buffer);
 }
 
-void FSM::PIDDesiredRPMOptionEditSettingsState(bool clearDisplay)
+// Same page with the cursor's step size alongside the value, so the user can see which digit a
+// tick will move. Entering from the display page clears first; redraws while editing do not,
+// because the layout does not change.
+void FSM::ShowDesiredRpmEditor(bool clearDisplay)
 {
     _state.mainState = State::MainDynoState::SETTINGS_MENU;
     _state.settingsState = State::SettingsState::PID_DESIRED_RPM_EDIT;
 
     if (clearDisplay) ClearDisplay();
 
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 0, 2, "PID DES RPM", sizeof("PID DES RPM") - 1);
+    WriteText(0, 2, "PID DES RPM");
 
     char buffer[12];
-    snprintf(buffer, sizeof(buffer), "%5d %5d", static_cast<int>(_desiredRpm), ConvertDesiredRpmUnitsStateToIncrement());
+    snprintf(buffer, sizeof(buffer), "%5d %5d", _desiredRpm, DesiredRpmDigitIncrement());
 
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 2, buffer, sizeof(buffer) - 1);
+    WriteText(1, 2, buffer);
 }
 
-
-
-void FSM::InSessionState()
+void FSM::ShowSessionScreen()
 {
     _state.mainState = State::MainDynoState::IN_SESSION;
 
+    // Deliberately 0 rather than the envelope's floor: nothing has been commanded yet, and the
+    // SessionController sends START_PWM the moment this value differs from what it last sent --
+    // so starting at a non-zero floor would engage the brake on session entry, unasked. The
+    // first encoder tick moves into the envelope.
     _desiredManualBpmDutyCycle = 0.0f;
-    _desiredManualThrottleDutyCycle = 0.0f;
 
     ClearDisplay();
-    
-    // The actual data will be managed in the session controller
+
+    // The values are filled in by the SessionController through the Display* methods below.
     // Two measured quantities and the drive mode. Torque and power used to sit here, but the
     // device no longer derives them -- the host does, from these same measurements.
-    //          col: 0123456789012345
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 0, 0, "n:     0 rpm    ", sizeof("n:     0 rpm    ") - 1);
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 0, "F:    0.00 N    ", sizeof("F:    0.00 N    ") - 1);
+    //        col: 0123456789012345
+    WriteText(0, 0, "n:     0 rpm    ");
+    WriteText(1, 0, "F:    0.00 N    ");
 }
 
 
+// ---------------------------------------------------------------------------- display fields
+
 void FSM::DisplayRpm(float rpm)
 {
-    char buf[6]; // Enough for 32-bit integers
+    char buf[6];
     uint32_t value = static_cast<uint32_t>(std::round(rpm));
-    snprintf(buf, sizeof(buf), "%5lu", value);
+    // uint32_t is unsigned long on this target, but not everywhere the file is compiled.
+    snprintf(buf, sizeof(buf), "%5lu", static_cast<unsigned long>(value));
 
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 0, 3, buf, sizeof(buf) - 1);
+    WriteText(0, 3, buf);
 }
 
 void FSM::DisplayForce(float force)
 {
-    char buf[7]; // Enough for force with 2 decimals
+    char buf[7];
     float value = std::round(force * 100.0) / 100.0;
     snprintf(buf, sizeof(buf), "%6.2f", value);
 
     // %6.2f is 6 chars wide, at cols 2-7: clear of the "F:" label and of the drive-mode
     // field at col 12, so neither can be overwritten however large the reading gets.
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 2, buf, sizeof(buf) - 1);
+    WriteText(1, 2, buf);
 }
 
 void FSM::DisplayPIDEnabled()
 {
-    const char *pid_str = _pidEnabled ? "PIDE" : "PIDD";
-
-    AddToLumexLCDMessageQueue(
-        WRITE_TO_DISPLAY,
-        1,
-        12,
-        pid_str,
-        4
-    );
-
+    if (_pidEnabled) WriteText(1, 12, "PIDE");
+    else WriteText(1, 12, "PIDD");
 }
 
 void FSM::DisplayManualBPMDutyCycle()
 {
-    char buf[5]; // Enough for duty cycle with no decimals
-    uint8_t value = std::round(_desiredManualBpmDutyCycle * 100.0);
+    char buf[5];
+    uint8_t value = static_cast<uint8_t>(std::round(_desiredManualBpmDutyCycle * 100.0));
     snprintf(buf, sizeof(buf), "B%3u", value);
 
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 12, buf, sizeof(buf) - 1);
+    WriteText(1, 12, buf);
 }
 
-void FSM::DisplayManualThrottleDutyCycle()
-{  
-    char buf[5]; // Enough for duty cycle with no decimals
-    uint8_t value = std::round(_desiredManualThrottleDutyCycle * 100.0);
-    snprintf(buf, sizeof(buf), "T%3u", value);
-
-    AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, 1, 12, buf, sizeof(buf) - 1);
+void FSM::ClearDisplay()
+{
+    // The LCD task ignores the string for CLEAR_DISPLAY. It is empty rather than null because
+    // AddToLumexLCDMessageQueue copies it unconditionally.
+    AddToLumexLCDMessageQueue(CLEAR_DISPLAY, 0, 0, "", 0);
 }
-
-
 
 void FSM::AddToLumexLCDMessageQueue(session_controller_to_lumex_lcd_opcode opcode, uint8_t row, uint8_t column, const char* display_string, size_t size)
 {
-
-	session_controller_to_lumex_lcd msg;
+    session_controller_to_lumex_lcd msg;
     msg.op = opcode;
     msg.row = row;
     msg.column = column;
@@ -529,7 +444,10 @@ void FSM::AddToLumexLCDMessageQueue(session_controller_to_lumex_lcd_opcode opcod
     osMessageQueuePut(_sessionControllerToLumexLcdHandle, &msg, 0, 0);
 }
 
-State FSM::GetState() const 
+
+// ---------------------------------------------------------------------------- getters
+
+State FSM::GetState() const
 {
     return _state;
 }
@@ -539,6 +457,7 @@ bool FSM::GetSDLoggingEnabledStatus() const
     return _sdLoggingEnabled;
 }
 
+// The PID loop runs only when the menu option allows it and it has been switched on in-session.
 bool FSM::GetPIDEnabledModeStatus() const
 {
     return _pidOptionToggleableEnabled && _pidEnabled;
@@ -549,17 +468,6 @@ bool FSM::GetPIDOptionToggleableEnabledStatus() const
     return _pidOptionToggleableEnabled;
 }
 
-bool FSM::GetManualBpmModeStatus() const
-{
-    return !_throttleControlModeEnabled;
-}
-
-bool FSM::GetManualThrottleModeStatus() const
-{
-    return _throttleControlModeEnabled;
-}
-
-
 bool FSM::GetInSessionStatus() const
 {
     return _state.mainState == State::MainDynoState::IN_SESSION;
@@ -568,11 +476,6 @@ bool FSM::GetInSessionStatus() const
 float FSM::GetDesiredBpmDutyCycle() const
 {
     return _desiredManualBpmDutyCycle;
-}
-
-float FSM::GetDesiredThrottleDutyCycle() const
-{
-    return _desiredManualThrottleDutyCycle;
 }
 
 float FSM::GetDesiredRpm() const
