@@ -68,7 +68,22 @@
 #define USB_CONTROLLER_TASK_ENABLE 1
 
 // Led Blink Task
+//
+// It has no LED of its own: it blinks by toggling ILI_SPI2_SD_CS (PH7), which is the microSD
+// slot's chip select on the ILI9341 module. That was picked as a convenient scope point back
+// when nothing else used the pin. It is not a free pin once that module is fitted, so the
+// check below refuses the combination rather than leaving someone to find it with a scope.
 #define LED_BLINK_TASK_ENABLE 0
+
+// Guarded on definedness too: an undefined macro is 0 to the preprocessor, so moving either
+// #define below this point would silently switch the check off rather than break the build.
+#if !defined(ILI9341_LCD_TASK_ENABLE)
+#error "ILI9341_LCD_TASK_ENABLE must be defined above LED_BLINK_TASK_ENABLE -- the pin-conflict check below reads it."
+#endif
+
+#if LED_BLINK_TASK_ENABLE && ILI9341_LCD_TASK_ENABLE
+#error "LED_BLINK_TASK_ENABLE toggles ILI_SPI2_SD_CS (PH7), a chip select on the ILI9341 module. Disable one of LED_BLINK_TASK_ENABLE / ILI9341_LCD_TASK_ENABLE, or point the blink task at a pin of its own."
+#endif
 
 // Task Monitoring Task
 #define TASK_MONITOR_TASK_ENABLE 1
