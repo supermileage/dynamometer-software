@@ -31,6 +31,28 @@ ILI9341Display::ILI9341Display() :
     _hasRendered(false)
 {
     memset(&_lastFrame, 0, sizeof(_lastFrame));
+    memset(&_frame, 0, sizeof(_frame));
+    memset(&_detail, 0, sizeof(_detail));
+}
+
+// The Show* methods only record. Drawing happens in Render, so that everything on screen still
+// goes through one layout pass and one diff -- these must not paint behind its back.
+bool ILI9341Display::ShowAngularAcceleration(float radiansPerSecondSquared)
+{
+    _detail.angular_acceleration = radiansPerSecondSquared;
+    return true;
+}
+
+bool ILI9341Display::ShowPeakForce(float newtons)
+{
+    _detail.peak_force = newtons;
+    return true;
+}
+
+bool ILI9341Display::ShowSessionElapsed(uint32_t seconds)
+{
+    _detail.session_seconds = seconds;
+    return true;
 }
 
 bool ILI9341Display::Init()
@@ -70,8 +92,7 @@ bool ILI9341Display::DrawField(const ili9341_field& field)
 
 bool ILI9341Display::Render(const session_controller_to_display& state)
 {
-    ili9341_frame frame;
-    ili9341_layout(&state, &frame);
+    ili9341_layout(&state, &_detail, &_frame);
 
     // A new screen has a different set of fields in different places, so there is nothing to
     // diff against -- blank the panel and paint all of it. Within a screen the field list is
@@ -84,16 +105,16 @@ bool ILI9341Display::Render(const session_controller_to_display& state)
         return false;
     }
 
-    for (uint8_t i = 0; i < frame.count; i++)
+    for (uint8_t i = 0; i < _frame.count; i++)
     {
         if (!screenChanged
             && i < _lastFrame.count
-            && ili9341_field_equal(&frame.fields[i], &_lastFrame.fields[i]))
+            && ili9341_field_equal(&_frame.fields[i], &_lastFrame.fields[i]))
         {
             continue;
         }
 
-        if (!DrawField(frame.fields[i]))
+        if (!DrawField(_frame.fields[i]))
         {
             task_error_data error_data = PopulateTaskErrorDataStruct(
                 get_timestamp(),
@@ -111,7 +132,7 @@ bool ILI9341Display::Render(const session_controller_to_display& state)
         }
     }
 
-    _lastFrame = frame;
+    _lastFrame = _frame;
     _lastScreen = state.screen;
     _hasRendered = true;
 

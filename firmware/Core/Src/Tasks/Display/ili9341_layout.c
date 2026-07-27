@@ -86,7 +86,47 @@ static void add_enabled_disabled(ili9341_frame *out, bool enabled)
               enabled ? "ENABLED " : "DISABLED");
 }
 
-static void layout_session(const session_controller_to_display *state, ili9341_frame *out)
+// Clamps so each detail field is always exactly as wide as its format implies. The driver
+// diffs field i against field i and repaints only the movers, which relies on a screen's field
+// widths never changing with the values -- a reading that outgrew its format would shift the
+// ones beside it and leave the old pixels behind.
+static long clamp_long(long value, long low, long high)
+{
+    if (value < low)  return low;
+    if (value > high) return high;
+    return value;
+}
+
+static float clamp_float(float value, float low, float high)
+{
+    if (value < low)  return low;
+    if (value > high) return high;
+    return value;
+}
+
+// The extra in-session readouts, on one line under the two primary values: angular
+// acceleration, the largest force seen this session, and how long it has been running. None of
+// these fit on the character panel, which is why they arrive through the DisplayDriver Show*
+// methods that LumexLCD discards.
+static void layout_session_detail(const ili9341_session_detail *detail, ili9341_frame *out)
+{
+    char scratch[ILI9341_FIELD_TEXT_MAX];
+
+    const long accel = clamp_long((long)lroundf(detail->angular_acceleration), -9999, 99999);
+    snprintf(scratch, sizeof(scratch), "A%6ld", accel);
+    add_field(out, 12, 168, SIZE_SMALL, COLOUR_LABEL, scratch);
+
+    const float peak = clamp_float(detail->peak_force, 0.0f, 999.99f);
+    snprintf(scratch, sizeof(scratch), "P%6.2f", (double)peak);
+    add_field(out, 108, 168, SIZE_SMALL, COLOUR_LABEL, scratch);
+
+    const long seconds = clamp_long((long)detail->session_seconds, 0, 9999);
+    snprintf(scratch, sizeof(scratch), "T%4lds", seconds);
+    add_field(out, 216, 168, SIZE_SMALL, COLOUR_LABEL, scratch);
+}
+
+static void layout_session(const session_controller_to_display *state,
+                           const ili9341_session_detail *detail, ili9341_frame *out)
 {
     char scratch[ILI9341_FIELD_TEXT_MAX];
 
@@ -108,6 +148,8 @@ static void layout_session(const session_controller_to_display *state, ili9341_f
 
     add_field(out, 200, 146, SIZE_SMALL, COLOUR_LABEL, "N");
 
+    layout_session_detail(detail, out);
+
     // Drive mode. Which of the two appears is the menu option, not the live PID state: with the
     // option off there is nothing to arm, so what the encoder actually drives is shown instead.
     // Ten characters either way so one paints over the other.
@@ -125,7 +167,9 @@ static void layout_session(const session_controller_to_display *state, ili9341_f
     }
 }
 
-void ili9341_layout(const session_controller_to_display *state, ili9341_frame *out)
+void ili9341_layout(const session_controller_to_display *state,
+                    const ili9341_session_detail *detail,
+                    ili9341_frame *out)
 {
     memset(out, 0, sizeof(*out));
 
@@ -169,7 +213,7 @@ void ili9341_layout(const session_controller_to_display *state, ili9341_frame *o
             break;
 
         case DISPLAY_SCREEN_SESSION:
-            layout_session(state, out);
+            layout_session(state, detail, out);
             break;
 
         default:

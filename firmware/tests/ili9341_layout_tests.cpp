@@ -31,10 +31,11 @@ session_controller_to_display State(display_screen_id screen)
     return state;
 }
 
-ili9341_frame Layout(const session_controller_to_display &state)
+ili9341_frame Layout(const session_controller_to_display &state,
+                     const ili9341_session_detail &detail = {})
 {
     ili9341_frame frame{};
-    ili9341_layout(&state, &frame);
+    ili9341_layout(&state, &detail, &frame);
     return frame;
 }
 
@@ -286,6 +287,93 @@ TEST(Ili9341Font, OutOfRangeCoordinatesAreBlankRatherThanOutOfBounds)
 {
     EXPECT_FALSE(ili9341_font_pixel('A', ILI9341_FONT_GLYPH_WIDTH, 0));
     EXPECT_FALSE(ili9341_font_pixel('A', 0, ILI9341_FONT_GLYPH_HEIGHT + 1));
+}
+
+}   // namespace
+
+// ------------------------------------------------- extended session detail (ILI9341 only)
+
+// These three readouts exist on this panel and not on the character LCD, which discards them
+// through its one-line DisplayDriver stubs. The widths matter as much as the values: the
+// driver's field-by-field diff assumes a screen's field widths never move, so a reading that
+// outgrew its format would shift its neighbours and strand the old pixels.
+namespace
+{
+
+ili9341_session_detail Detail(float accel, float peak, uint32_t seconds)
+{
+    ili9341_session_detail detail{};
+    detail.angular_acceleration = accel;
+    detail.peak_force = peak;
+    detail.session_seconds = seconds;
+    return detail;
+}
+
+const ili9341_field &DetailField(const ili9341_frame &frame, int which)
+{
+    // The three detail fields sit between the "N" unit and the drive mode.
+    return frame.fields[6 + which];
+}
+
+TEST(Ili9341SessionDetail, ShowsAccelerationPeakForceAndElapsedTime)
+{
+    const ili9341_frame frame =
+        Layout(State(DISPLAY_SCREEN_SESSION), Detail(-42.0f, 123.45f, 87));
+
+    EXPECT_EQ(std::string(DetailField(frame, 0).text), "A   -42");
+    EXPECT_EQ(std::string(DetailField(frame, 1).text), "P123.45");
+    EXPECT_EQ(std::string(DetailField(frame, 2).text), "T  87s");
+}
+
+TEST(Ili9341SessionDetail, WidthsDoNotMoveWithTheValues)
+{
+    const ili9341_frame small = Layout(State(DISPLAY_SCREEN_SESSION), Detail(0.0f, 0.0f, 0));
+    const ili9341_frame large =
+        Layout(State(DISPLAY_SCREEN_SESSION), Detail(1e9f, 1e9f, 4000000000u));
+
+    ASSERT_EQ(small.count, large.count);
+
+    for (int i = 0; i < 3; i++)
+    {
+        EXPECT_EQ(DetailField(small, i).length, DetailField(large, i).length)
+            << "detail field " << i << " changed width: \"" << DetailField(small, i).text
+            << "\" vs \"" << DetailField(large, i).text << "\"";
+        EXPECT_EQ(DetailField(small, i).x, DetailField(large, i).x);
+    }
+}
+
+TEST(Ili9341SessionDetail, ClampsRatherThanOverflowingItsField)
+{
+    const ili9341_frame frame =
+        Layout(State(DISPLAY_SCREEN_SESSION), Detail(1e9f, 1e9f, 4000000000u));
+
+    EXPECT_EQ(std::string(DetailField(frame, 0).text), "A 99999");
+    EXPECT_EQ(std::string(DetailField(frame, 1).text), "P999.99");
+    EXPECT_EQ(std::string(DetailField(frame, 2).text), "T9999s");
+}
+
+TEST(Ili9341SessionDetail, OnlyAppearsOnTheSessionScreen)
+{
+    // Every other screen ignores the detail entirely, so a stale peak or clock cannot leak onto
+    // the idle or settings pages.
+    const ili9341_session_detail busy = Detail(999.0f, 500.0f, 1234);
+
+    for (display_screen_id screen : kAllScreens)
+    {
+        if (screen == DISPLAY_SCREEN_SESSION) continue;
+
+        EXPECT_EQ(Layout(State(screen)).count, Layout(State(screen), busy).count)
+            << "screen " << screen << " changed with session detail";
+    }
+}
+
+TEST(Ili9341SessionDetail, DetailChangesAreVisibleToTheDiff)
+{
+    const ili9341_frame before = Layout(State(DISPLAY_SCREEN_SESSION), Detail(10.0f, 1.0f, 5));
+    const ili9341_frame after  = Layout(State(DISPLAY_SCREEN_SESSION), Detail(20.0f, 1.0f, 5));
+
+    EXPECT_FALSE(ili9341_field_equal(&DetailField(before, 0), &DetailField(after, 0)));
+    EXPECT_TRUE(ili9341_field_equal(&DetailField(before, 1), &DetailField(after, 1)));
 }
 
 }   // namespace

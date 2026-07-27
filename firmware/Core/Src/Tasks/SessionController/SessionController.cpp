@@ -220,6 +220,7 @@ void SessionController::UpdateMeasurementDisplay()
     if (_prevAngularVelocity != _opticalData.angular_velocity)
     {
         _fsm.DisplayAngularVelocity(_opticalData.angular_velocity);
+        _fsm.DisplayAngularAcceleration(_opticalData.angular_acceleration);
         _prevAngularVelocity = _opticalData.angular_velocity;
     }
 

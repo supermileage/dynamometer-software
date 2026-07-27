@@ -2,6 +2,8 @@
 
 #include "Config/sysconfig.h"
 
+#include "TimeKeeping/timestamps.h"
+
 FSM::FSM(osMessageQueueId_t sessionControllerToDisplayHandle) :
         _toDisplayHandle(sessionControllerToDisplayHandle),
         _state{
@@ -16,6 +18,9 @@ FSM::FSM(osMessageQueueId_t sessionControllerToDisplayHandle) :
         _desiredManualBpmDutyCycle(0),
         _rpm(0.0f),
         _force(0.0f),
+        _angularAcceleration(0.0f),
+        _peakForce(0.0f),
+        _sessionStartTimestamp(0),
         // A brake already held as we come up is not a request to start a session -- it is just how
         // the board was left, or a finger on the button during a reset. Start disarmed in that case
         // so nothing can run until the button has been released and pressed deliberately.
@@ -344,6 +349,11 @@ void FSM::ShowSessionScreen()
 {
     _state.mainState = State::MainDynoState::IN_SESSION;
 
+    // Reset the per-session figures on the way in, so a new run does not inherit the last
+    // one's peak or clock.
+    _peakForce = 0.0f;
+    _sessionStartTimestamp = get_timestamp();
+
     // Deliberately 0 rather than the envelope's floor: nothing has been commanded yet, and the
     // SessionController sends START_PWM the moment this value differs from what it last sent --
     // so starting at a non-zero floor would engage the brake on session entry, unasked. The
@@ -372,6 +382,20 @@ void FSM::DisplayAngularVelocity(float angularVelocity)
 void FSM::DisplayForce(float force)
 {
     _force = force;
+
+    // Track the peak by magnitude: the rig is loaded whichever way the cell is driven.
+    const float magnitude = (force < 0.0f) ? -force : force;
+    if (magnitude > _peakForce)
+    {
+        _peakForce = magnitude;
+    }
+
+    PostDisplayState();
+}
+
+void FSM::DisplayAngularAcceleration(float angularAcceleration)
+{
+    _angularAcceleration = angularAcceleration;
     PostDisplayState();
 }
 
@@ -426,6 +450,15 @@ void FSM::PostDisplayState()
     msg.pid_enabled           = _pidEnabled;
     msg.pid_option_toggleable = _pidOptionToggleableEnabled;
     msg.sd_logging_enabled    = _sdLoggingEnabled;
+    msg.angular_acceleration  = _angularAcceleration;
+    msg.peak_force            = _peakForce;
+
+    // Elapsed seconds, from the microsecond timestamp counter the rest of the board stamps
+    // samples with. Zero outside a session: _sessionStartTimestamp is only set on entry.
+    const uint32_t scale = get_timestamp_scale();
+    msg.session_seconds = (_sessionStartTimestamp != 0 && scale != 0)
+                          ? (get_timestamp() - _sessionStartTimestamp) / scale
+                          : 0;
 
     osMessageQueuePut(_toDisplayHandle, &msg, 0, 0);
 }

@@ -32,6 +32,24 @@ concept DisplayDriver = requires(T driver, const session_controller_to_display& 
     // Paints one screen state. Called on every message; drivers are expected to diff against
     // what they last drew and repaint only what moved.
     { driver.Render(state) } -> std::same_as<bool>;
+
+    // --- Extended session detail.
+    //
+    // Everything above is the common ground: values every panel can show. These are not.
+    // They are extra readouts for the in-session screen that need room a 2x16 character grid
+    // does not have, so LumexLCD implements them as one-line no-ops that discard the argument
+    // and the ILI9341 draws them.
+    //
+    // They sit here rather than only on ILI9341Display so the display task can call them
+    // without knowing which panel it has, and so a driver that quietly stopped implementing
+    // one is a compile error. The asymmetry is deliberate and is the cost of letting the TFT
+    // grow without dragging the character panel along: adding a fourth readout means one real
+    // implementation and one `(void)` line.
+    //
+    // Called before Render(), so a driver may simply record them and lay them out there.
+    { driver.ShowAngularAcceleration(float{}) } -> std::same_as<bool>;
+    { driver.ShowPeakForce(float{}) } -> std::same_as<bool>;
+    { driver.ShowSessionElapsed(uint32_t{}) } -> std::same_as<bool>;
 };
 
 // The queue-drain loop, identical for every panel.
@@ -59,6 +77,12 @@ template <DisplayDriver Display>
         if (osMessageQueueGet(queue, &state, 0, osWaitForever) == osOK)
         {
             while (osMessageQueueGet(queue, &state, 0, 0) == osOK);
+
+            // Detail first: a driver that renders these records them here and lays them out
+            // in Render. On the character panel all three are no-ops the optimiser deletes.
+            (void)display.ShowAngularAcceleration(state.angular_acceleration);
+            (void)display.ShowPeakForce(state.peak_force);
+            (void)display.ShowSessionElapsed(state.session_seconds);
 
             (void)display.Render(state);
         }

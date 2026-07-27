@@ -41,6 +41,32 @@ class LumexLCD
 		// keeps a changed RPM reading to the five cells it occupies.
 		bool Render(const session_controller_to_display& state);
 
+		// --- Extended session detail: not shown here.
+		//
+		// Thirty-two character cells are fully spoken for by speed, force and drive mode, so
+		// there is nowhere to put these. They are accepted and discarded rather than left off
+		// the class, because DisplayDriver requires them of every panel and the display task
+		// calls them without knowing which one it is driving.
+		//
+		// Inline and empty, so each costs nothing: the calls vanish at -O0 as well as -Os.
+		bool ShowAngularAcceleration(float radiansPerSecondSquared)
+		{
+			(void)radiansPerSecondSquared;
+			return true;
+		}
+
+		bool ShowPeakForce(float newtons)
+		{
+			(void)newtons;
+			return true;
+		}
+
+		bool ShowSessionElapsed(uint32_t seconds)
+		{
+			(void)seconds;
+			return true;
+		}
+
 
 	private:
 		bool StartTimer(uint8_t microseconds);

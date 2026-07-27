@@ -75,8 +75,14 @@ sections:
       - { type: bool,     name: pid_enabled,           comment: "Whether the PID loop is armed for this session" }
       - { type: bool,     name: pid_option_toggleable, comment: "Whether the menu allows arming it; also selects the in-session drive-mode field" }
       - { type: bool,     name: sd_logging_enabled,    comment: "Whether SD logging is switched on" }
+      # Extended session detail. Carried for every panel but only shown by one: a 2x16 character
+      # grid has no room for it, so LumexLCD ignores these and the ILI9341 draws them. See the
+      # Show* methods on the DisplayDriver concept.
+      - { type: float,    name: angular_acceleration, comment: "Measured angular acceleration in rad/s^2 (session screen detail)" }
+      - { type: float,    name: peak_force,           comment: "Largest force magnitude seen this session, in N (session screen detail)" }
+      - { type: uint32_t, name: session_seconds,      comment: "Seconds since the session started (session screen detail)" }
 
-  - { kind: static_assert, expr: "sizeof(session_controller_to_display) <= 32", message: "session_controller_to_display is queued 25 deep -- keep it small" }
+  - { kind: static_assert, expr: "sizeof(session_controller_to_display) <= 48", message: "session_controller_to_display is queued 25 deep -- keep it small" }
 
   - kind: enum
     name: session_controller_to_bpm_opcode

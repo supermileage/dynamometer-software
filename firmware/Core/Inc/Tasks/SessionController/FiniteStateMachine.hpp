@@ -86,6 +86,11 @@ public:
     // and reposts the whole screen state; the driver works out what actually moved.
     void DisplayAngularVelocity(float angularVelocity);
     void DisplayForce(float force);
+
+    // Extra in-session detail. Only the ILI9341 panel has room to show these; the character
+    // panel discards them (see the DisplayDriver concept), so they are always sent and it
+    // costs nothing to record them here.
+    void DisplayAngularAcceleration(float angularAcceleration);
     void DisplayPIDEnabled();
     void DisplayManualBPMDutyCycle();
 
@@ -157,6 +162,14 @@ private:
     // RPM: the conversion from the encoder's rad/s happens on the way in.
     float _rpm;
     float _force;
+
+    // Session detail, derived here rather than by a panel so both get the same numbers.
+    // Peak force is the largest magnitude seen since the session started -- a pull and a push
+    // are both loads on the rig -- and both reset on entry to a session, not on exit, so the
+    // screen keeps showing the last run's figures until a new one begins.
+    float _angularAcceleration;
+    float _peakForce;
+    uint32_t _sessionStartTimestamp;
 
     // Whether a brake press may start a session. Cleared when the button is already held as this
     // FSM comes up, and set again by the release that follows -- see HandleButtonBrakeInput.

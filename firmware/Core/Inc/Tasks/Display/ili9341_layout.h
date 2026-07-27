@@ -23,7 +23,9 @@ extern "C" {
 #define ILI9341_LAYOUT_WIDTH  320
 #define ILI9341_LAYOUT_HEIGHT 240
 
-#define ILI9341_MAX_FIELDS     8
+// The session screen is the busiest: two labelled primary readouts, three detail readouts and
+// the drive mode.
+#define ILI9341_MAX_FIELDS     12
 #define ILI9341_FIELD_TEXT_MAX 20
 
 // One run of text at a fixed position and scale.
@@ -47,10 +49,23 @@ typedef struct
     uint8_t count;
 } ili9341_frame;
 
+// The extra in-session readouts this panel has room for and the character panel does not.
+// Kept separate from session_controller_to_display so that what is common to every panel and
+// what is this panel's alone stay visibly apart.
+typedef struct
+{
+    float    angular_acceleration;   // rad/s^2
+    float    peak_force;             // N, largest magnitude this session
+    uint32_t session_seconds;        // since the session started
+} ili9341_session_detail;
+
 // Lays out one screen. For a given screen id the field count, order, positions and sizes are
 // fixed, so the driver can diff field i against field i of the previous frame and repaint only
 // those whose text or colour moved.
-void ili9341_layout(const session_controller_to_display *state, ili9341_frame *out);
+// `detail` is only read on the session screen; pass a zeroed struct elsewhere.
+void ili9341_layout(const session_controller_to_display *state,
+                    const ili9341_session_detail *detail,
+                    ili9341_frame *out);
 
 // Whether two fields would paint the same pixels. Position and size are stable within a
 // screen, so in practice this compares text and colour.

@@ -74,9 +74,12 @@ typedef struct {
     bool pid_enabled;   // Whether the PID loop is armed for this session
     bool pid_option_toggleable;   // Whether the menu allows arming it; also selects the in-session drive-mode field
     bool sd_logging_enabled;   // Whether SD logging is switched on
+    float angular_acceleration;   // Measured angular acceleration in rad/s^2 (session screen detail)
+    float peak_force;   // Largest force magnitude seen this session, in N (session screen detail)
+    uint32_t session_seconds;   // Seconds since the session started (session screen detail)
 } session_controller_to_display;
 
-DYNO_STATIC_ASSERT(sizeof(session_controller_to_display) <= 32, "session_controller_to_display is queued 25 deep -- keep it small");
+DYNO_STATIC_ASSERT(sizeof(session_controller_to_display) <= 48, "session_controller_to_display is queued 25 deep -- keep it small");
 
 // Opcodes for controlling the BPM (Pulse Width Modulation) module from the session controller
 typedef enum : uint32_t
