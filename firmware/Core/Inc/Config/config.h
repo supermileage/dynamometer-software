@@ -2,6 +2,7 @@
 #define INC_CONFIG_CONFIG_H_
 
 #include "ADS1115_main.h"
+#include "ILI9341_main.h"
 
 // Tunable quantities below (gains, task delays, thresholds) are *boot defaults*: they
 // seed the runtime sysconfig store (Config/sysconfig.h), which the host can rewrite live
@@ -112,6 +113,14 @@
 // SESSION_CONTROLLER_TO_LUMEX_LCD_MSG_STRING_SIZE was really doing.
 #define LUMEX_LCD_ROWS 2
 #define LUMEX_LCD_COLUMNS 16
+
+// Which way up the ILI9341 panel is fitted. Both LANDSCAPE and LANDSCAPE_FLIP are 320x240,
+// so this changes nothing but the origin corner -- the layout is unaffected either way.
+//
+// FLIP because the panel is mounted 180 degrees from the controller's default landscape:
+// LANDSCAPE rendered the screens upside down on the rig. This is a property of the enclosure,
+// not of the driver, so it lives here rather than in ILI9341Display::Init().
+#define ILI9341_DISPLAY_ROTATION ILI9341_ROTATION_LANDSCAPE_FLIP
 
 // LED config
 #define LED_TASK_OSDELAY 500

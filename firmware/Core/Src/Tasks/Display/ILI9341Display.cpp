@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "Config/config.h"
 #include "Config/sysconfig.h"
 
 #include "Tasks/Display/DisplayDriver.hpp"
@@ -34,7 +35,7 @@ ILI9341Display::ILI9341Display() :
 
 bool ILI9341Display::Init()
 {
-    if (!_panel.Init(ILI9341_ROTATION_LANDSCAPE))
+    if (!_panel.Init(ILI9341_DISPLAY_ROTATION))
     {
         task_error_data error_data = PopulateTaskErrorDataStruct(
             get_timestamp(),
