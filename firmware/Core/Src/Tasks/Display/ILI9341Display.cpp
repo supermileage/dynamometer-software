@@ -80,6 +80,7 @@ bool ILI9341Display::Render(const session_controller_to_display& state)
 
     if (screenChanged && !Clear())
     {
+        _hasRendered = false;
         return false;
     }
 
@@ -101,6 +102,11 @@ bool ILI9341Display::Render(const session_controller_to_display& state)
             );
 
             _task_error_buffer_writer.WriteElementAndIncrementIndex(error_data);
+
+            // What is on the panel no longer matches _lastFrame, so the field-by-field diff
+            // would skip cells that were never actually painted. Force the next pass to clear
+            // and repaint everything.
+            _hasRendered = false;
             return false;
         }
     }
@@ -124,8 +130,15 @@ extern "C" void ili9341_lcd_main(osMessageQueueId_t sessionControllerToDisplayHa
 
     if (!display.Init())
     {
+        // Suspend rather than return: returning from a task function disables interrupts and
+        // spins (prvTaskExitError), which would take the rest of the board down over a display
+        // that would not start.
         osThreadSuspend(osThreadGetId());
     }
 
     RunDisplayTask(display, sessionControllerToDisplayHandle);
+
+    // RunDisplayTask does not return; this is here so that a future edit which lets it return
+    // parks this task instead of killing the scheduler.
+    osThreadSuspend(osThreadGetId());
 }

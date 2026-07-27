@@ -95,6 +95,7 @@ bool LumexLCD::Render(const session_controller_to_display& state)
 	{
 		if (!Clear())
 		{
+			_hasRendered = false;
 			return false;
 		}
 	}
@@ -122,6 +123,9 @@ bool LumexLCD::Render(const session_controller_to_display& state)
 
 			if (!DisplayString(row, start, &frame.cells[row][start], column - start))
 			{
+				// The panel no longer matches _lastFrame, so the diff would skip cells that
+				// were never written. Force a full clear and repaint next pass.
+				_hasRendered = false;
 				return false;
 			}
 		}
@@ -323,10 +327,14 @@ extern "C" void lumex_lcd_main(osMessageQueueId_t sessionControllerToDisplayHand
 
 	if (!lcd.Init())
 	{
-		 osThreadSuspend(osThreadGetId());
+		// Suspend rather than return: returning from a task function disables interrupts and
+		// spins (prvTaskExitError), taking the whole board down over a display fault.
+		osThreadSuspend(osThreadGetId());
 	}
 
 	RunDisplayTask(lcd, sessionControllerToDisplayHandle);
+
+	osThreadSuspend(osThreadGetId());
 }
 
 

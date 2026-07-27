@@ -54,9 +54,15 @@ static const uint8_t ILI9341_ROTATION_MADCTL[4] = {
 #define ILI9341_SCRATCH_PIXELS (ILI9341_FONT_CELL_WIDTH * ILI9341_MAX_TEXT_SIZE)
 static uint8_t ili9341_scratch[ILI9341_SCRATCH_PIXELS * 2];
 
-// How long HAL_SPI_Transmit may block. Generous: it only matters if the bus is wedged, and the
-// display task is the lowest-priority thing that could be waiting.
-#define ILI9341_SPI_TIMEOUT_MS 100
+// How long HAL_SPI_Transmit may block.
+//
+// Deliberately far longer than any transfer here needs -- the largest is 96 bytes, ~61 us at
+// 12.5 MHz. The timeout is wall-clock, and it keeps counting while the caller is preempted:
+// this runs in the lowest-priority task on the board, so a burst of sensor, PID and USB work
+// during session start can stall it for a long time between HAL's polls. A timeout tuned to
+// the transfer would fire on scheduling latency rather than on a real bus fault, which is a
+// display glitch reported as hardware failure.
+#define ILI9341_SPI_TIMEOUT_MS 1000
 
 
 ILI9341::ILI9341(SPI_HandleTypeDef* spi,

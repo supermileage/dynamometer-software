@@ -39,22 +39,28 @@ concept DisplayDriver = requires(T driver, const session_controller_to_display& 
 // Drains to the newest message before drawing: each one is the whole of what should be on
 // screen, so the ones behind it are already stale and rendering them in turn would only paint
 // values the user is never going to see. That matters more the slower the panel is.
+//
+// Never returns, and that is load-bearing rather than stylistic. A FreeRTOS task function that
+// returns lands in prvTaskExitError(), which fails a configASSERT, calls
+// portDISABLE_INTERRUPTS() and spins -- so the whole rig dies, buttons and brake included, with
+// no LED and no fault report. A display is the least important thing on this board and must not
+// be able to do that: a failed write is reported through the error buffer and the loop carries
+// on. The driver repaints in full on its next pass, so a half-drawn screen corrects itself.
+// [[noreturn]] is the guard: adding a `return` here is what caused the fault above, and the
+// compiler now says so rather than leaving it to be found on the bench.
 template <DisplayDriver Display>
-void RunDisplayTask(Display& display, osMessageQueueId_t queue)
+[[noreturn]] void RunDisplayTask(Display& display, osMessageQueueId_t queue)
 {
     session_controller_to_display state;
     memset(&state, 0, sizeof(state));
 
-    while (1)
+    for (;;)
     {
         if (osMessageQueueGet(queue, &state, 0, osWaitForever) == osOK)
         {
             while (osMessageQueueGet(queue, &state, 0, 0) == osOK);
 
-            if (!display.Render(state))
-            {
-                return;
-            }
+            (void)display.Render(state);
         }
 
         osDelay(sysconfig_get_u32(SYSCFG_LCD_TASK_OSDELAY));
