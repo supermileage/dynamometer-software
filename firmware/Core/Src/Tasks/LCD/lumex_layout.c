@@ -56,27 +56,23 @@ static void render_enabled_disabled(lumex_frame *out, bool enabled)
 
 static void render_session(const session_controller_to_display *state, lumex_frame *out)
 {
-    // The static labels, then each live field overlaid on top -- the same order, and the same
-    // cells, as ShowSessionScreen() followed by the SessionController's Display* calls.
+    // Labels and units only. The cells each live field occupies are left blank and filled in
+    // below, so a unit always sits just past where its value ends. The row 1 literal used to
+    // carry a "0.00" of its own at cols 6-9 while the force field wrote cols 2-7, which left
+    // two digits of it stranded on screen: 12.34 N read as "12.3400".
     //
     //                        col: 0123456789012345
-    PUT_LITERAL(out, 0, 0, "n:     0 rpm    ");
-    PUT_LITERAL(out, 1, 0, "F:    0.00 N    ");
+    PUT_LITERAL(out, 0, 0, "n:       rpm    ");
+    PUT_LITERAL(out, 1, 0, "F:       N      ");
 
-    // Whatever the SessionController hands over. Today that is the optical encoder's
-    // angular_velocity, which is rad/s -- printed here under an "rpm" label. Preserved as-is:
-    // this file changes where the layout lives, not what the numbers mean.
     char scratch[SCRATCH_SIZE];
 
-    uint32_t rpm = (uint32_t)roundf(state->angular_velocity);
+    uint32_t rpm = (uint32_t)roundf(state->rpm);
     snprintf(scratch, sizeof(scratch), "%5lu", (unsigned long)rpm);
     put_field(out, 0, 3, 5, scratch);
 
-    // Six characters at cols 2-7. Note this leaves the label literal's own "0.00" sitting at
-    // cols 6-9, so cols 8-9 keep a stale "00" that nothing ever rewrites -- see the test
-    // SessionScreen_ForceFieldLeavesStaleDigits, which pins the artifact rather than blessing
-    // it. Fixing it means shortening the literal above; that is a display change, not a
-    // refactor, so it is deliberately not done here.
+    // Six characters at cols 2-7, clear of the "F:" label and of the drive-mode field at
+    // col 12 however large the reading gets.
     float force = roundf(state->force * 100.0f) / 100.0f;
     snprintf(scratch, sizeof(scratch), "%6.2f", (double)force);
     put_field(out, 1, 2, 6, scratch);

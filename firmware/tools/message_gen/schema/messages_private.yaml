@@ -67,7 +67,7 @@ sections:
       unable to tell which quantity had changed.
     fields:
       - { type: display_screen_id, name: screen, comment: "Which screen to render" }
-      - { type: float,    name: angular_velocity, comment: "Measured angular velocity in rad/s, as the optical encoder reports it" }
+      - { type: float,    name: rpm, comment: "Measured shaft speed in RPM, already converted from the encoder's rad/s" }
       - { type: float,    name: force,            comment: "Measured force in N" }
       - { type: float,    name: bpm_duty_cycle,   comment: "Commanded brake duty cycle, 0 - 1" }
       - { type: uint32_t, name: desired_rpm,      comment: "The PID setpoint being displayed or edited" }

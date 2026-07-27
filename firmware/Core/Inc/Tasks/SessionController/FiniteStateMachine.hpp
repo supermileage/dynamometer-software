@@ -15,6 +15,8 @@
 
 #include "input_manager_interrupts.h"
 
+#include "Tasks/OpticalSensor/encoder_math.h"
+
 // Where the user interface is.
 //
 //   IDLE ---------------- SELECT ---------------> SETTINGS_MENU
@@ -82,7 +84,7 @@ public:
 
     // Fields the SessionController refreshes on the in-session screen. Each records the value
     // and reposts the whole screen state; the driver works out what actually moved.
-    void DisplayRpm(float rpm);
+    void DisplayAngularVelocity(float angularVelocity);
     void DisplayForce(float force);
     void DisplayPIDEnabled();
     void DisplayManualBPMDutyCycle();
@@ -151,8 +153,9 @@ private:
     float _desiredManualBpmDutyCycle;
 
     // Newest readings the SessionController has handed over. Held because every post carries
-    // the whole screen state, so a force update still has to say what the RPM is.
-    float _angularVelocity;
+    // the whole screen state, so a force update still has to say what the RPM is. Stored as
+    // RPM: the conversion from the encoder's rad/s happens on the way in.
+    float _rpm;
     float _force;
 
     // Whether a brake press may start a session. Cleared when the button is already held as this

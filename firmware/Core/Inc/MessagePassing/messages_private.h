@@ -66,7 +66,7 @@ DYNO_STATIC_ASSERT(sizeof(display_rpm_digit) == 4, "Size of display_rpm_digit mu
 // unable to tell which quantity had changed.
 typedef struct {
     display_screen_id screen;   // Which screen to render
-    float angular_velocity;   // Measured angular velocity in rad/s, as the optical encoder reports it
+    float rpm;   // Measured shaft speed in RPM, already converted from the encoder's rad/s
     float force;   // Measured force in N
     float bpm_duty_cycle;   // Commanded brake duty cycle, 0 - 1
     uint32_t desired_rpm;   // The PID setpoint being displayed or edited

@@ -1,9 +1,12 @@
 // Pins the Lumex panel's rendering, cell for cell.
 //
 // The layout used to live in FiniteStateMachine.cpp as runs of WriteText(row, column, "...")
-// with hand-counted padding. Moving it behind a screen-state message is a refactor, so the
-// expectations below are the literals that code wrote, transcribed by hand from it -- these
-// tests exist to catch the move changing what a user sees.
+// with hand-counted padding. Most expectations below are those literals transcribed by hand,
+// so the move behind a screen-state message cannot quietly change what a user sees.
+//
+// The session screen's row 1 is the exception, and deliberately so: the old label literal
+// carried a "0.00" at columns 6-9 while the force field wrote columns 2-7, leaving two digits
+// stranded (12.34 N read as "12.3400"). That row is pinned to the corrected layout.
 //
 // Written as whole 16-character rows rather than as field assertions, because the bugs worth
 // catching here are off-by-one column errors that a field-level check would step over.
@@ -70,7 +73,7 @@ TEST(LumexLayout, RenderingIsAPureFunctionOfState)
     // The driver relies on this: it renders, diffs against the last frame, and trusts that an
     // unchanged state produces an unchanged frame.
     session_controller_to_display state = State(DISPLAY_SCREEN_SESSION);
-    state.angular_velocity = 123.4f;
+    state.rpm = 123.4f;
     state.force = 56.78f;
 
     const lumex_frame first = Render(state);
@@ -173,33 +176,43 @@ TEST(LumexLayout, SessionScreenAtRest)
 
     //                                      0123456789012345
     EXPECT_EQ(Row(Render(state), 0), "n:     0 rpm    ");
+    EXPECT_EQ(Row(Render(state), 1), "F:  0.00 N  B  0");
 }
 
 TEST(LumexLayout, SessionScreenRoundsAndRightAlignsTheRpmField)
 {
     session_controller_to_display state = State(DISPLAY_SCREEN_SESSION);
 
-    state.angular_velocity = 1234.6f;
+    state.rpm = 1234.6f;
     //                                      0123456789012345
     EXPECT_EQ(Row(Render(state), 0), "n:  1235 rpm    ");
 
-    state.angular_velocity = 7.0f;
+    state.rpm = 7.0f;
     EXPECT_EQ(Row(Render(state), 0), "n:     7 rpm    ");
 }
 
-TEST(LumexLayout, SessionScreenForceFieldLeavesStaleDigits)
+TEST(LumexLayout, SessionScreenForceFieldEndsWhereItsUnitBegins)
 {
-    // Pins a pre-existing artifact rather than blessing it. The label literal carries "0.00"
-    // at columns 6-9, but the force field is six characters at columns 2-7 -- so columns 8-9
-    // keep a "00" that nothing ever rewrites, and 12.34 N reads as "12.3400". Reproduced here
-    // exactly because this commit moves the layout without changing it; the fix is to shorten
-    // the literal in lumex_layout.c, which is a display change and its own decision.
+    // Regression: the label literal used to carry a "0.00" of its own at columns 6-9 while the
+    // force field wrote columns 2-7, stranding two of its digits on screen -- 12.34 N read as
+    // "12.3400". The literal now holds labels and units only.
     session_controller_to_display state = State(DISPLAY_SCREEN_SESSION);
     state.pid_option_toggleable = false;
     state.force = 12.34f;
 
     //                                      0123456789012345
-    EXPECT_EQ(Row(Render(state), 1), "F: 12.3400 NB  0");
+    EXPECT_EQ(Row(Render(state), 1), "F: 12.34 N  B  0");
+}
+
+TEST(LumexLayout, SessionScreenForceFieldStaysClearOfTheDriveModeField)
+{
+    // The widest reading the six-character field can hold must not reach column 12.
+    session_controller_to_display state = State(DISPLAY_SCREEN_SESSION);
+    state.pid_option_toggleable = false;
+    state.force = 999.99f;
+
+    //                                      0123456789012345
+    EXPECT_EQ(Row(Render(state), 1), "F:999.99 N  B  0");
 }
 
 TEST(LumexLayout, SessionScreenShowsPidStateWhenTheOptionIsArmable)

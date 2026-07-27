@@ -14,7 +14,7 @@ FSM::FSM(osMessageQueueId_t sessionControllerToDisplayHandle) :
         _desiredRpm(5000),
         _pidEnabled(false),
         _desiredManualBpmDutyCycle(0),
-        _angularVelocity(0.0f),
+        _rpm(0.0f),
         _force(0.0f),
         // A brake already held as we come up is not a request to start a session -- it is just how
         // the board was left, or a finger on the button during a reset. Start disarmed in that case
@@ -360,9 +360,12 @@ void FSM::ShowSessionScreen()
 // them only when its reading has moved, and the driver diffs again on its side, so reposting
 // the whole state costs one queue message and no panel traffic.
 
-void FSM::DisplayRpm(float rpm)
+// Takes rad/s, because that is what the optical encoder measures and what every other consumer
+// of that reading wants. The panel is the only place RPM is the right unit, so the conversion
+// happens here, once, rather than in each display driver.
+void FSM::DisplayAngularVelocity(float angularVelocity)
 {
-    _angularVelocity = rpm;
+    _rpm = encoder_rpm(angularVelocity);
     PostDisplayState();
 }
 
@@ -415,7 +418,7 @@ void FSM::PostDisplayState()
     memset(&msg, 0, sizeof(msg));
 
     msg.screen                = CurrentScreen();
-    msg.angular_velocity      = _angularVelocity;
+    msg.rpm                   = _rpm;
     msg.force                 = _force;
     msg.bpm_duty_cycle        = _desiredManualBpmDutyCycle;
     msg.desired_rpm           = static_cast<uint32_t>(_desiredRpm);

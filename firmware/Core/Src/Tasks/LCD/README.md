@@ -53,11 +53,10 @@ changed, since all it received was `("  1234", row 0, col 3)`.
   (`StartTimer`).
 - `WriteData` / `WriteCommand` / `SetCursor` / `DisplayChar` / `DisplayString` / `ToggleBlink`.
 
-## Known display artifact
-The session screen's force field is six characters at columns 2-7, but the label literal
-carries `0.00` at columns 6-9 — so columns 8-9 keep a stale `00` and 12.34 N reads as
-`12.3400`. Pre-existing; pinned by `SessionScreenForceFieldLeavesStaleDigits` rather than
-blessed. Fixing it means shortening the literal in `lumex_layout.c`.
+## Units
+`session_controller_to_display.rpm` is RPM. The optical encoder measures rad/s, and the FSM
+converts once on the way in via `encoder_rpm()` ([[OpticalSensor]]) — so a driver renders the
+number it is given and no panel repeats the conversion.
 
 ## Errors
 - `ERROR_LUMEX_LCD_TIMER_START_FAILURE` → `task_error_circular_buffer`.

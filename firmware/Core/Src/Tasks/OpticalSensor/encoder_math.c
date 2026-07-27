@@ -53,6 +53,12 @@ float encoder_velocity_upper_bound(uint32_t ticks_since_last_pulse,
     return radians_per_count(apertures) / seconds;
 }
 
+float encoder_rpm(float angular_velocity)
+{
+    // rad/s -> rev/min: one revolution is 2*pi radians, one minute is 60 seconds.
+    return angular_velocity * (float)(60.0 / (2.0 * M_PI));
+}
+
 float encoder_angular_acceleration(float previous_velocity,
                                    float velocity,
                                    uint32_t delta_ticks,

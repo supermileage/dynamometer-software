@@ -136,7 +136,7 @@ void SessionController::PublishSessionTransition(bool inSession)
     if (inSession)
     {
         // Draw the fields of the in-session screen at their starting values.
-        _fsm.DisplayRpm(0);
+        _fsm.DisplayAngularVelocity(0);
         _fsm.DisplayForce(0);
 
         if (_fsm.GetPIDOptionToggleableEnabledStatus()) _fsm.DisplayPIDEnabled();
@@ -219,7 +219,7 @@ void SessionController::UpdateMeasurementDisplay()
 
     if (_prevAngularVelocity != _opticalData.angular_velocity)
     {
-        _fsm.DisplayRpm(_opticalData.angular_velocity);
+        _fsm.DisplayAngularVelocity(_opticalData.angular_velocity);
         _prevAngularVelocity = _opticalData.angular_velocity;
     }
 
