@@ -453,6 +453,38 @@ public sealed class DeviceClient : IDisposable
         );
     }
 
+    /// <summary>
+    /// Sets the commanded brake duty cycle (0.0 - 1.0), the same quantity the rig's rotary encoder
+    /// drives.
+    ///
+    /// The firmware honours this only while a session is running and clamps it to the
+    /// MIN/MAX_DUTY_CYCLE_PERCENT envelope, so a value sent outside a session is answered
+    /// <c>USB_RSP_NOT_SUPPORTED</c> and the brake is untouched. Not retried: unlike a sysconfig
+    /// write this commands an actuator, and re-sending a request whose ack was lost could drive the
+    /// brake to a figure the user has since moved away from.
+    /// </summary>
+    public Task<usb_response_data_t> SetBrakeDutyCycleAsync(
+        float dutyCycle,
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        byte[] body = new byte[4];
+        BitConverter.TryWriteBytes(body.AsSpan(0, 4), dutyCycle);
+
+        return SendCommandAsync(
+            task_offset_t.TASK_OFFSET_SESSION_CONTROLLER,
+            (ushort)session_controller_command_t.SESSION_CMD_SET_BRAKE_DUTY_CYCLE,
+            body,
+            description: $"brake duty cycle {dutyCycle:P1}",
+            type: usb_msg_type_t.USB_MSG_COMMAND,
+            throwOnError: true,
+            timeout: timeout,
+            retries: 0,
+            cancellationToken: cancellationToken
+        );
+    }
+
     /// <summary>Hands out the next host msg_id, skipping the firmware-reserved 0 on 16-bit wrap.</summary>
     private ushort NextMsgId()
     {

@@ -192,6 +192,7 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(ConnectCommand))]
     [NotifyCanExecuteChangedFor(nameof(DisconnectCommand))]
+    [NotifyPropertyChangedFor(nameof(CanCommandDutyCycle))]
     private bool _isConnected;
 
     [ObservableProperty]
@@ -202,6 +203,7 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
     /// so there is nothing truthful to show.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(SessionStatus))]
+    [NotifyPropertyChangedFor(nameof(CanCommandDutyCycle))]
     private bool _isSessionActive;
 
     public string SessionStatus => IsSessionActive ? "Session running" : "No session";
@@ -218,6 +220,96 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
 
     [ObservableProperty]
     private double _dutyCycle;
+
+    /// <summary>What is typed in the brake duty-cycle box, as a percentage (0 - 100) to match the
+    /// readout it replaced. The firmware takes a 0 - 1 fraction; the conversion happens on send.
+    ///
+    /// Held as text rather than a number so a half-typed value ("4", "4.") is not repeatedly
+    /// reinterpreted and rewritten under the user's cursor.</summary>
+    [ObservableProperty]
+    private string _dutyCycleInput = "0.0";
+
+    /// <summary>True while the duty-cycle box has focus. Telemetry stops writing to the box then:
+    /// the device streams a BPM sample several times a second, and without this the box would
+    /// overwrite whatever was being typed between one keystroke and the next.</summary>
+    [ObservableProperty]
+    private bool _isEditingDutyCycle;
+
+    /// <summary>Set when the last duty-cycle command was refused or failed, so the box can show
+    /// that the brake is not at what it says.</summary>
+    [ObservableProperty]
+    private bool _isDutyCycleInputInvalid;
+
+    /// <summary>The brake can only be commanded during a session -- the firmware refuses outside
+    /// one -- so the box is disabled rather than silently ignored.</summary>
+    public bool CanCommandDutyCycle => IsConnected && IsSessionActive;
+
+    /// <summary>How far one scroll-wheel notch moves the duty cycle, in percent.</summary>
+    private const double DutyCycleWheelStepPercent = 1.0;
+
+    /// <summary>Sends whatever is in the box. Called when the box loses focus or Enter is pressed --
+    /// not on every keystroke, which would command the brake to "4" on the way to typing "45".</summary>
+    public async Task CommitDutyCycleAsync()
+    {
+        IsEditingDutyCycle = false;
+
+        if (!double.TryParse(DutyCycleInput, out double percent))
+        {
+            IsDutyCycleInputInvalid = true;
+            return;
+        }
+
+        await SendDutyCyclePercentAsync(percent).ConfigureAwait(true);
+    }
+
+    /// <summary>Moves the duty cycle by <paramref name="notches"/> scroll-wheel steps and sends it
+    /// immediately. Unlike typing there is no half-finished state to wait for: one notch is one
+    /// complete intent, so it goes out at once.</summary>
+    public async Task NudgeDutyCycleAsync(int notches)
+    {
+        if (!CanCommandDutyCycle || notches == 0)
+        {
+            return;
+        }
+
+        // Start from what is in the box, so several notches in a row accumulate rather than each
+        // one being applied to whatever the device last reported.
+        double percent = double.TryParse(DutyCycleInput, out double parsed) ? parsed : DutyCycle * 100.0;
+
+        await SendDutyCyclePercentAsync(percent + notches * DutyCycleWheelStepPercent)
+            .ConfigureAwait(true);
+    }
+
+    /// <summary>Clamps to 0 - 100, shows the clamped figure, and commands it. The firmware clamps
+    /// again to the MIN/MAX_DUTY_CYCLE_PERCENT envelope, which is narrower and is the authority;
+    /// this only keeps the box from offering something nonsensical.</summary>
+    private async Task SendDutyCyclePercentAsync(double percent)
+    {
+        var client = _client;
+        if (client is null || !CanCommandDutyCycle)
+        {
+            return;
+        }
+
+        percent = Math.Clamp(percent, 0.0, 100.0);
+        DutyCycleInput = percent.ToString("F1");
+
+        try
+        {
+            var response = await client
+                .SetBrakeDutyCycleAsync((float)(percent / 100.0))
+                .ConfigureAwait(true);
+
+            // The device answers NOT_SUPPORTED when no session is running. Flagging it beats
+            // leaving the box showing a figure the brake never went to.
+            IsDutyCycleInputInvalid = response.status != (uint)usb_response_status_t.USB_RSP_OK;
+        }
+        catch (Exception)
+        {
+            // Logged by DeviceClient through CommandFailed, which the event log already shows.
+            IsDutyCycleInputInvalid = true;
+        }
+    }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(TorqueGeared))]
@@ -941,6 +1033,14 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
                 break;
             case BpmSample s:
                 DutyCycle = s.Data.duty_cycle;
+                // Follow the device only when the box is not being typed in. BPM samples arrive
+                // several times a second, so without the gate the box would rewrite itself
+                // between keystrokes and the caret would jump to the end each time.
+                if (!IsEditingDutyCycle)
+                {
+                    DutyCycleInput = (s.Data.duty_cycle * 100.0).ToString("F1");
+                    IsDutyCycleInputInvalid = false;
+                }
                 Plots.RecordDutyCycle(s.Data.timestamp, s.Data.duty_cycle);
                 break;
 

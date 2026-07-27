@@ -10,6 +10,24 @@
     <vm:MainWindowViewModel />
   </Design.DataContext>
 
+  <UserControl.Styles>
+    <!-- Matches the readouts it sits among rather than the form fields on SysConfig: this is a
+         number you watch as much as one you set. -->
+    <Style Selector="TextBox.dutycycle">
+      <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+      <Setter Property="FontSize" Value="12.5" />
+      <Setter Property="Width" Value="80" />
+      <Setter Property="Padding" Value="6,3" />
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="HorizontalContentAlignment" Value="Right" />
+      <Setter Property="CornerRadius" Value="7" />
+    </Style>
+    <!-- The device refused it, or it is not a number: the brake is not at what the box says. -->
+    <Style Selector="TextBox.dutycycle.invalid">
+      <Setter Property="BorderBrush" Value="#E5484D" />
+    </Style>
+  </UserControl.Styles>
+
   <!-- The event log used to be the last row here. It now belongs to the window (see
        MainWindow.axaml), so it is on every page rather than only on this one. -->
   <Grid RowDefinitions="Auto,*" Margin="16" RowSpacing="14">
@@ -231,14 +249,27 @@
                 Text="{Binding GearRatio, StringFormat='{}{0:F3}'}"
               />
 
-              <TextBlock Grid.Row="8" Grid.Column="0" Classes="label" Text="BPM duty cycle" />
               <TextBlock
                 Grid.Row="8"
-                Grid.Column="1"
-                Classes="readout"
-                HorizontalAlignment="Right"
-                Text="{Binding DutyCycle, StringFormat='{}{0:P1}'}"
+                Grid.Column="0"
+                Classes="label"
+                Text="BPM duty cycle"
+                ToolTip.Tip="Commands the brake, exactly as the rig's rotary encoder does. Editable only during a session — the firmware refuses outside one — and clamped to the min/max duty cycle set on the SysConfig page. Scroll over the box to nudge it by 1%."
               />
+              <StackPanel Grid.Row="8" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="4">
+                <TextBox
+                  Name="DutyCycleBox"
+                  Classes="dutycycle"
+                  Classes.invalid="{Binding IsDutyCycleInputInvalid}"
+                  Text="{Binding DutyCycleInput}"
+                  IsEnabled="{Binding CanCommandDutyCycle}"
+                  GotFocus="OnDutyCycleGotFocus"
+                  LostFocus="OnDutyCycleLostFocus"
+                  KeyDown="OnDutyCycleKeyDown"
+                  PointerWheelChanged="OnDutyCycleWheel"
+                />
+                <TextBlock Classes="readout" VerticalAlignment="Center" Text="%" />
+              </StackPanel>
 
               <TextBlock Grid.Row="9" Grid.Column="0" Classes="label" Text="Last timestamp" />
               <TextBlock

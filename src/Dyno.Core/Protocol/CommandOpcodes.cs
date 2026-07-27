@@ -24,6 +24,10 @@ public static class CommandOpcodes
                 when Enum.IsDefined((usb_controller_command_t)opcode) => (
                 (usb_controller_command_t)opcode
             ).ToString(),
+            task_offset_t.TASK_OFFSET_SESSION_CONTROLLER
+                when Enum.IsDefined((session_controller_command_t)opcode) => (
+                (session_controller_command_t)opcode
+            ).ToString(),
             // The force sensor no longer defines command opcodes (its ADS1115 config is sysconfig),
             // so anything addressed to it falls through to the generic name.
             _ => $"opcode {opcode}",

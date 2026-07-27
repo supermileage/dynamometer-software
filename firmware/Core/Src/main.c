@@ -192,6 +192,11 @@ osMessageQueueId_t usbToForceSensorCommandHandle;
 const osMessageQueueAttr_t usbToForceSensorCommand_attributes = {
   .name = "usbToForceSensorCommand"
 };
+/* Definitions for usbToSessionControllerCommand */
+osMessageQueueId_t usbToSessionControllerCommandHandle;
+const osMessageQueueAttr_t usbToSessionControllerCommand_attributes = {
+  .name = "usbToSessionControllerCommand"
+};
 /* Definitions for taskToUsbControllerResponse */
 osMessageQueueId_t taskToUsbControllerResponseHandle;
 const osMessageQueueAttr_t taskToUsbControllerResponse_attributes = {
@@ -360,6 +365,9 @@ int main(void)
 
   /* creation of usbToForceSensorCommand */
   usbToForceSensorCommandHandle = osMessageQueueNew (8, sizeof(usb_task_command), &usbToForceSensorCommand_attributes);
+
+  /* creation of usbToSessionControllerCommand */
+  usbToSessionControllerCommandHandle = osMessageQueueNew (8, sizeof(usb_task_command), &usbToSessionControllerCommand_attributes);
 
   /* creation of taskToUsbControllerResponse */
   taskToUsbControllerResponseHandle = osMessageQueueNew (8, sizeof(usb_task_completion), &taskToUsbControllerResponse_attributes);
@@ -1319,7 +1327,9 @@ void sessionControllerTaskEntryFunction(void* argument)
             .bpm_controller = sessionControllerToBpmHandle,
             .pid_controller = sessionControllerToPidControllerHandle,
             .pid_controller_ack = pidControllerToSessionControllerAckHandle,
-            .display = sessionControllerToDisplayHandle
+            .display = sessionControllerToDisplayHandle,
+            .usb_command = usbToSessionControllerCommandHandle,
+            .task_completion = taskToUsbControllerResponseHandle
         };
         sessioncontroller_main(&tasks);
   #endif
@@ -1412,7 +1422,7 @@ __weak void usbTaskEntryFunction(void *argument)
   #elif USB_CONTROLLER_TASK_ENABLE == 0
      osThreadSuspend(osThreadGetId());
   #else
-    usbcontroller_main(sessionControllertoUsbControllerHandle, taskMonitorToUsbControllerHandle, usbToForceSensorCommandHandle, taskToUsbControllerResponseHandle);
+    usbcontroller_main(sessionControllertoUsbControllerHandle, taskMonitorToUsbControllerHandle, usbToForceSensorCommandHandle, usbToSessionControllerCommandHandle, taskToUsbControllerResponseHandle);
   #endif
   /* USER CODE END 5 */
 }

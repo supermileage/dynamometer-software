@@ -262,6 +262,27 @@ void FSM::AdjustBrakeDutyCycle(bool positiveTick)
         std::clamp(_desiredManualBpmDutyCycle + increment, minDutyCycle, maxDutyCycle);
 }
 
+// The host's equivalent of turning the brake knob. Deliberately routed through the same state
+// the encoder writes, so everything downstream -- the clamp, the BPM post, the on-screen
+// readout -- behaves identically whether the request came from the rig or from the PC.
+bool FSM::SetHostBrakeDutyCycle(float dutyCycle)
+{
+    if (_state.mainState != State::MainDynoState::IN_SESSION)
+    {
+        return false;
+    }
+
+    float minDutyCycle;
+    float maxDutyCycle;
+    sysconfig_get_duty_cycle_limits(&minDutyCycle, &maxDutyCycle);
+
+    _desiredManualBpmDutyCycle = std::clamp(dutyCycle, minDutyCycle, maxDutyCycle);
+
+    PostDisplayState();
+
+    return true;
+}
+
 // How much one encoder tick moves the desired RPM, given which digit the cursor is on.
 int FSM::DesiredRpmDigitIncrement() const
 {

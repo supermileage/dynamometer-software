@@ -231,6 +231,59 @@ void SessionController::UpdateMeasurementDisplay()
     }
 }
 
+// The host's route into the UI state. Each command is acked through the shared completion
+// queue the USB task relays, so the app learns whether it was applied rather than assuming.
+void SessionController::DrainHostCommands()
+{
+    if (_task_queues->usb_command == nullptr)
+    {
+        return;
+    }
+
+    usb_task_command cmd;
+
+    while (osMessageQueueGet(_task_queues->usb_command, &cmd, NULL, 0) == osOK)
+    {
+        uint32_t status = USB_RSP_UNKNOWN_COMMAND;
+
+        switch (cmd.opcode)
+        {
+            case SESSION_CMD_SET_BRAKE_DUTY_CYCLE:
+            {
+                if (cmd.body_len < sizeof(session_set_brake_duty_body))
+                {
+                    status = USB_RSP_MALFORMED;
+                    break;
+                }
+
+                session_set_brake_duty_body body;
+                memcpy(&body, cmd.body, sizeof(body));
+
+                // NOT_SUPPORTED rather than OK when no session is running: the command was
+                // understood and deliberately not obeyed, and the app should say so rather
+                // than show a duty cycle the brake is not at.
+                status = _fsm.SetHostBrakeDutyCycle(body.duty_cycle)
+                         ? USB_RSP_OK : USB_RSP_NOT_SUPPORTED;
+                break;
+            }
+
+            default:
+                break;
+        }
+
+        // msg_id 0 is a firmware-internal command that wants no ack.
+        if (cmd.msg_id != 0 && _task_queues->task_completion != nullptr)
+        {
+            usb_task_completion done;
+            done.task_offset = TASK_OFFSET_SESSION_CONTROLLER;
+            done.opcode = cmd.opcode;
+            done.msg_id = cmd.msg_id;
+            done.status = status;
+            osMessageQueuePut(_task_queues->task_completion, &done, 0, 0);
+        }
+    }
+}
+
 void SessionController::Run()
 {
     PublishStartupState();
@@ -238,6 +291,7 @@ void SessionController::Run()
     while (1)
     {
         _fsm.HandleUserInputs();
+        DrainHostCommands();
 
         PublishSdLoggingChange();
 

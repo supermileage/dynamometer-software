@@ -30,7 +30,17 @@ public class CommandOpcodeTests
             "opcode 99",
             CommandOpcodes.Name(task_offset_t.TASK_OFFSET_USB_CONTROLLER, 99)
         );
-        Assert.Equal("opcode 1", CommandOpcodes.Name(task_offset_t.TASK_OFFSET_LUMEX_LCD, 1));
+        Assert.Equal("opcode 1", CommandOpcodes.Name(task_offset_t.TASK_OFFSET_DISPLAY, 1));
+        // The session controller does define commands, so a known opcode is named and an unknown
+        // one still falls back rather than being mislabelled as a defined command.
+        Assert.Equal(
+            "SESSION_CMD_SET_BRAKE_DUTY_CYCLE",
+            CommandOpcodes.Name(task_offset_t.TASK_OFFSET_SESSION_CONTROLLER, 0)
+        );
+        Assert.Equal(
+            "opcode 77",
+            CommandOpcodes.Name(task_offset_t.TASK_OFFSET_SESSION_CONTROLLER, 77)
+        );
         // The force sensor defines no command opcodes now (its ADS1115 config is sysconfig), so
         // anything addressed to it is a plain number too.
         Assert.Equal(
@@ -52,6 +62,9 @@ public class CommandOpcodeTests
             .OrderBy(n => n, StringComparer.Ordinal)
             .ToArray();
 
-        Assert.Equal(["usb_controller_command_t"], commandEnums);
+        Assert.Equal(
+            ["session_controller_command_t", "usb_controller_command_t"],
+            commandEnums
+        );
     }
 }

@@ -94,6 +94,11 @@ public:
     void DisplayPIDEnabled();
     void DisplayManualBPMDutyCycle();
 
+    // Sets the commanded brake duty cycle from a host command. Returns false, and changes
+    // nothing, unless a session is running: the brake is never actuated outside one, however
+    // the request arrives. The value is clamped to the same envelope the encoder is.
+    bool SetHostBrakeDutyCycle(float dutyCycle);
+
     // What the SessionController acts on
     State GetState() const;
     bool GetSDLoggingEnabledStatus() const;

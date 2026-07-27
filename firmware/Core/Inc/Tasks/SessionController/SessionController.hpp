@@ -48,6 +48,13 @@ class SessionController
         void Run(void);
 
     private:
+        // Applies host commands routed here by the USB task, acking each one. Drained beside
+        // HandleUserInputs because that is what these are: another source of input, differing
+        // only in arriving over USB rather than off a button.
+        void DrainHostCommands();
+
+
+    private:
         bool CheckTaskQueuesValid();
         void ReportError(session_controller_task_error_ids error_id);
 
