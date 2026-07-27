@@ -22,30 +22,61 @@ sections:
       #endif
 
   - kind: enum
-    name: session_controller_to_lumex_lcd_opcode
+    name: display_screen_id
     base: uint32_t
     comment: |-
-      Opcodes for controlling the Lumex LCD display from the session controller
+      Which screen the session controller's FSM is showing. The message below carries screen
+      state, not draw commands: the FSM says what it is displaying and each display driver
+      renders that however its panel allows. A 16x2 character LCD and a 320x240 TFT have no
+      useful common drawing API -- the intersection caps the TFT at 16x2, the union is
+      meaningless on the character LCD -- so the seam is here instead, at what the values mean.
     values:
-      - { name: CLEAR_DISPLAY,    value: "0", comment: "Clear the entire display" }
-      - { name: WRITE_TO_DISPLAY, value: "1", comment: "Write a string to a specific location on the display" }
+      - { name: DISPLAY_SCREEN_IDLE,             value: "0", comment: "Attract screen; SELECT opens the settings menu" }
+      - { name: DISPLAY_SCREEN_SD_LOGGING,       comment: "Settings: SD logging on/off" }
+      - { name: DISPLAY_SCREEN_PID_ENABLE,       comment: "Settings: whether the PID option may be toggled in-session" }
+      - { name: DISPLAY_SCREEN_DESIRED_RPM,      comment: "Settings: the desired-RPM setpoint" }
+      - { name: DISPLAY_SCREEN_DESIRED_RPM_EDIT, comment: "Settings: the same setpoint with the digit cursor showing" }
+      - { name: DISPLAY_SCREEN_SESSION,          comment: "Live readout while a session runs" }
 
-  - { kind: static_assert, expr: "sizeof(session_controller_to_lumex_lcd_opcode) == 4", message: "Size of session_controller_to_lumex_lcd_opcode must be 4 bytes" }
+  - { kind: static_assert, expr: "sizeof(display_screen_id) == 4", message: "Size of display_screen_id must be 4 bytes" }
+
+  - kind: enum
+    name: display_rpm_digit
+    base: uint32_t
+    comment: |-
+      Which decimal digit of the desired RPM the encoder is editing. Mirrors
+      State::DesiredRpmUnitsState in FiniteStateMachine.hpp. Sent as the cursor position
+      rather than as the step size it implies, so a driver can mark the digit itself
+      instead of only printing the increment.
+    values:
+      - { name: DISPLAY_RPM_DIGIT_TEN_THOUSAND, value: "0" }
+      - { name: DISPLAY_RPM_DIGIT_THOUSAND }
+      - { name: DISPLAY_RPM_DIGIT_HUNDRED }
+      - { name: DISPLAY_RPM_DIGIT_TEN }
+      - { name: DISPLAY_RPM_DIGIT_ONE }
+
+  - { kind: static_assert, expr: "sizeof(display_rpm_digit) == 4", message: "Size of display_rpm_digit must be 4 bytes" }
 
   - kind: struct
-    name: session_controller_to_lumex_lcd
+    name: session_controller_to_display
     comment: |-
-      Message sent from the session controller to the Lumex LCD
+      Everything any screen shows, sent whole on every update. Drivers diff it against the
+      last one they rendered and repaint only what moved -- which is what makes a 320x240
+      panel viable at all, since a full frame over SPI costs ~50-100 ms but a single field
+      costs ~1-2 ms. The older protocol sent ("  1234", row 0, col 3) and left the driver
+      unable to tell which quantity had changed.
     fields:
-      - { type: session_controller_to_lumex_lcd_opcode, name: op, comment: "Operation to perform on the display" }
-      - { type: uint32_t, name: row,    comment: "Row number on the LCD" }
-      - { type: uint32_t, name: column, comment: "Column number on the LCD" }
-      - { type: size_t,   name: size }
-      - { type: char,     name: display_string, array: SESSION_CONTROLLER_TO_LUMEX_LCD_MSG_STRING_SIZE, comment: "String to write (if WRITE_TO_DISPLAY)" }
+      - { type: display_screen_id, name: screen, comment: "Which screen to render" }
+      - { type: float,    name: angular_velocity, comment: "Measured angular velocity in rad/s, as the optical encoder reports it" }
+      - { type: float,    name: force,            comment: "Measured force in N" }
+      - { type: float,    name: bpm_duty_cycle,   comment: "Commanded brake duty cycle, 0 - 1" }
+      - { type: uint32_t, name: desired_rpm,      comment: "The PID setpoint being displayed or edited" }
+      - { type: display_rpm_digit, name: cursor_digit, comment: "Digit the encoder edits (DESIRED_RPM_EDIT only)" }
+      - { type: bool,     name: pid_enabled,           comment: "Whether the PID loop is armed for this session" }
+      - { type: bool,     name: pid_option_toggleable, comment: "Whether the menu allows arming it; also selects the in-session drive-mode field" }
+      - { type: bool,     name: sd_logging_enabled,    comment: "Whether SD logging is switched on" }
 
-  - kind: static_assert
-    expr: "sizeof(session_controller_to_lumex_lcd) >= offsetof(session_controller_to_lumex_lcd, display_string) + sizeof(((session_controller_to_lumex_lcd *)0)->display_string)"
-    message: "Size of session_controller_to_lumex_lcd must be correct"
+  - { kind: static_assert, expr: "sizeof(session_controller_to_display) <= 32", message: "session_controller_to_display is queued 25 deep -- keep it small" }
 
   - kind: enum
     name: session_controller_to_bpm_opcode

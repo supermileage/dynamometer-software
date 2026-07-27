@@ -15,7 +15,7 @@ SessionController::SessionController(session_controller_os_task_queues* task_que
                 _task_error_buffer_writer(task_error_circular_buffer, &task_error_circular_buffer_index_writer, TASK_ERROR_CIRCULAR_BUFFER_SIZE),
                 _forcesensor_buffer_reader(forcesensor_circular_buffer, &forcesensor_circular_buffer_index_writer, FORCESENSOR_CIRCULAR_BUFFER_SIZE),
                 _optical_encoder_buffer_reader(optical_encoder_circular_buffer, &optical_encoder_circular_buffer_index_writer, OPTICAL_ENCODER_CIRCULAR_BUFFER_SIZE),
-                _fsm(task_queues->lumex_lcd),
+                _fsm(task_queues->display),
                 _task_queues(task_queues),
                 _prevSDLoggingEnabled(false),
                 _prevPIDEnabled(false),
@@ -61,7 +61,7 @@ bool SessionController::CheckTaskQueuesValid()
         || _task_queues->pid_controller_ack == nullptr
         #endif
         #if LUMEX_LCD_TASK_ENABLE
-        || _task_queues->lumex_lcd == nullptr
+        || _task_queues->display == nullptr
         #endif
     )
     {

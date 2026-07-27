@@ -75,16 +75,13 @@ struct State
 class FSM
 {
 public:
-    FSM(osMessageQueueId_t sessionControllerToLumexLcdHandle);
+    FSM(osMessageQueueId_t sessionControllerToDisplayHandle);
 
     // Drains everything the input ISRs have queued since the last call and applies it.
     void HandleUserInputs();
 
-    // Display
-    void ClearDisplay();
-    void AddToLumexLCDMessageQueue(session_controller_to_lumex_lcd_opcode opcode, uint8_t row, uint8_t column, const char* display_string, size_t size);
-
-    // Fields the SessionController refreshes on the in-session screen.
+    // Fields the SessionController refreshes on the in-session screen. Each records the value
+    // and reposts the whole screen state; the driver works out what actually moved.
     void DisplayRpm(float rpm);
     void DisplayForce(float force);
     void DisplayPIDEnabled();
@@ -104,14 +101,13 @@ public:
     float GetDesiredAngularVelocity() const;
 
 private:
-    // --- Screens. Each sets the state it represents and redraws the LCD for it.
+    // --- Screens. Each sets the state it represents and reposts it.
     void ShowIdleScreen();
     void ShowSdLoggingPage();
     void ShowPidEnablePage();
     void ShowDesiredRpmPage();
-    void ShowDesiredRpmEditor(bool clearDisplay);
+    void ShowDesiredRpmEditor();
     void ShowSessionScreen();
-    void ShowEnabledDisabled(bool enabled);
 
     // --- One handler per input, dispatched from HandleUserInputs.
     void HandleRotaryEncoderInput(bool positiveTick);
@@ -131,16 +127,16 @@ private:
     int DesiredRpmDigitIncrement() const;
     bool StepDesiredRpmDigit(int direction);
 
-    // Writes a string at (row, column), taking the length from the array itself. Every caller
-    // passes either a literal or a snprintf'd fixed-width field, and in both cases the text
-    // fills the array exactly, so N - 1 is the number of characters on screen.
-    template <std::size_t N>
-    void WriteText(uint8_t row, uint8_t column, const char (&text)[N])
-    {
-        AddToLumexLCDMessageQueue(WRITE_TO_DISPLAY, row, column, text, N - 1);
-    }
+    // Posts the whole of what is on screen: which screen, and every value any screen shows.
+    // The FSM no longer formats anything -- a 16x2 character LCD and a 320x240 TFT want
+    // completely different layouts of the same facts, so laying out is the driver's job and
+    // this is the seam between them. Which panel is listening is a compile-time choice.
+    void PostDisplayState();
 
-    osMessageQueueId_t _sessionControllerToLumexLcdHandle;
+    // Maps the FSM's own state pair onto the screen id the drivers switch on.
+    display_screen_id CurrentScreen() const;
+
+    osMessageQueueId_t _toDisplayHandle;
 
     State _state;
 
@@ -153,6 +149,11 @@ private:
     // see GetInSessionStatus.
     bool _pidEnabled;
     float _desiredManualBpmDutyCycle;
+
+    // Newest readings the SessionController has handed over. Held because every post carries
+    // the whole screen state, so a force update still has to say what the RPM is.
+    float _angularVelocity;
+    float _force;
 
     // Whether a brake press may start a session. Cleared when the button is already held as this
     // FSM comes up, and set again by the release that follows -- see HandleButtonBrakeInput.

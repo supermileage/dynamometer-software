@@ -141,10 +141,10 @@ const osThreadAttr_t taskMonitorTask_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityHigh,
 };
-/* Definitions for sessionControllerToLumexLcd */
-osMessageQueueId_t sessionControllerToLumexLcdHandle;
-const osMessageQueueAttr_t sessionControllerToLumexLcd_attributes = {
-  .name = "sessionControllerToLumexLcd"
+/* Definitions for sessionControllerToDisplay */
+osMessageQueueId_t sessionControllerToDisplayHandle;
+const osMessageQueueAttr_t sessionControllerToDisplay_attributes = {
+  .name = "sessionControllerToDisplay"
 };
 /* Definitions for sessionControllerToBpm */
 osMessageQueueId_t sessionControllerToBpmHandle;
@@ -330,8 +330,8 @@ int main(void)
   /* USER CODE END RTOS_TIMERS */
 
   /* Create the queue(s) */
-  /* creation of sessionControllerToLumexLcd */
-  sessionControllerToLumexLcdHandle = osMessageQueueNew (25, sizeof(session_controller_to_lumex_lcd), &sessionControllerToLumexLcd_attributes);
+  /* creation of sessionControllerToDisplay */
+  sessionControllerToDisplayHandle = osMessageQueueNew (25, sizeof(session_controller_to_display), &sessionControllerToDisplay_attributes);
 
   /* creation of sessionControllerToBpm */
    sessionControllerToBpmHandle = osMessageQueueNew (10, sizeof(session_controller_to_bpm), & sessionControllerToBpm_attributes);
@@ -1315,7 +1315,7 @@ void sessionControllerTaskEntryFunction(void* argument)
             .bpm_controller = sessionControllerToBpmHandle,
             .pid_controller = sessionControllerToPidControllerHandle,
             .pid_controller_ack = pidControllerToSessionControllerAckHandle,
-            .lumex_lcd = sessionControllerToLumexLcdHandle
+            .display = sessionControllerToDisplayHandle
         };
         sessioncontroller_main(&tasks);
   #endif
@@ -1340,7 +1340,7 @@ void lcdDisplayTaskEntryFunction(void *argument)
   #elif LUMEX_LCD_TASK_ENABLE == 0
      osThreadSuspend(osThreadGetId());
   #else
-    lumex_lcd_main(sessionControllerToLumexLcdHandle);
+    lumex_lcd_main(sessionControllerToDisplayHandle);
   #endif
 }
 
@@ -1382,7 +1382,7 @@ void taskMonitorEntryFunction(void *argument)
       .bpm_controller = bpmTaskHandle,
       .pid_controller = pidTaskHandle,
       .pid_controller_ack = pidControllerToSessionControllerAckHandle,
-      .lumex_lcd = lcdDisplayTaskHandle
+      .display = lcdDisplayTaskHandle
   } ;
   taskmonitor_main(&osthreadids, taskMonitorToUsbControllerHandle);
 #endif

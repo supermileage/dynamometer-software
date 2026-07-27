@@ -17,6 +17,8 @@
 #include "MessagePassing/messages_public.h"
 #include "MessagePassing/osqueue_helpers.h"
 
+#include "Tasks/LCD/lumex_layout.h"
+
 #include "TimeKeeping/timestamps.h"
 
 #ifdef __cplusplus
@@ -26,11 +28,20 @@ extern "C" {
 class LumexLCD
 {
 	public:
-		LumexLCD(osMessageQueueId_t lumexLcdToSessionControllerqHandle);
+		LumexLCD(osMessageQueueId_t sessionControllerToDisplayqHandle);
 		~LumexLCD() = default;
 
 		bool Init();
 		void Run();
+
+		// Blanks the panel and forgets what was on it, so the next Render redraws in full.
+		bool Clear();
+
+		// Lays the screen state out on the 2x16 grid and writes only the cells that differ
+		// from what is already up there. Reposts are frequent -- the FSM sends the whole
+		// state whenever any part of it moves -- and this panel is slow, so the diff is what
+		// keeps a changed RPM reading to the five cells it occupies.
+		bool Render(const session_controller_to_display& state);
 
 
 	private:
@@ -47,6 +58,13 @@ class LumexLCD
 		CircularBufferWriter<task_error_data> _task_error_buffer_writer;
 
 		osMessageQueueId_t _fromSCqHandle;
+
+		// What is currently on the panel, and which screen put it there. A change of screen
+		// forces a physical clear -- the old code cleared inside every Show*Screen, and this
+		// reproduces exactly that, including not clearing on a redraw of the same screen.
+		lumex_frame _lastFrame;
+		display_screen_id _lastScreen;
+		bool _hasRendered;
 };
 
 

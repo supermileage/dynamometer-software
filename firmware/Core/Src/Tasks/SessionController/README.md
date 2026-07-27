@@ -12,7 +12,7 @@ code:
 entry_point: sessioncontroller_main()
 task_offset: TASK_OFFSET_SESSION_CONTROLLER
 consumes: [button/encoder GPIO interrupts, pid_controller_ack queue, forcesensor_circular_buffer, optical_encoder_circular_buffer]
-produces: [commands to usb/sd/bpm/pid/lumex/force_sensor/optical_sensor queues, task_error_circular_buffer]
+produces: [commands to usb/sd/bpm/pid/display/force_sensor/optical_sensor queues, task_error_circular_buffer]
 related: [BPM, PID, USB, LCD, ForceSensor, OpticalSensor, TimeKeeping]
 ---
 
@@ -28,7 +28,7 @@ UI/FSM, dispatches commands to all other tasks, and drives the LCD readout.
   the press edge is reported (BRAKE reports both, because the session lasts as long as it is held).
 - **FiniteStateMachine** — `MainDynoState` (`IDLE` / `SETTINGS_MENU` / `IN_SESSION`) + settings
   sub-states; the state model is drawn at the top of `FiniteStateMachine.hpp`. Owns the LCD UI
-  (`session_controller_to_lumex_lcd` messages) and target RPM editing. `Show*` methods each enter
+  (`session_controller_to_display` messages) and target RPM editing. `Show*` methods each enter
   one screen and redraw it; `Handle*Input` methods each take one input and dispatch on state.
 
 ## Run() loop (per iteration)
@@ -55,7 +55,7 @@ so a steady state produces no queue traffic. `PublishStartupState()` runs once b
    its value changed. An iteration with no new samples keeps the last reading.
 
 ## Queues out — `session_controller_os_task_queues`
-`usb_controller, sd_controller, force_sensor, optical_sensor, bpm_controller, pid_controller, pid_controller_ack, lumex_lcd`
+`usb_controller, sd_controller, force_sensor, optical_sensor, bpm_controller, pid_controller, pid_controller_ack, display`
 
 ## Nothing is derived here
 Torque and power used to be computed in this task and shown on the LCD. They are not: the device

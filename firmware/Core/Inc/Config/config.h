@@ -105,7 +105,13 @@
 
 // LCD config
 #define LCD_TASK_OSDELAY 20
-#define SESSION_CONTROLLER_TO_LUMEX_LCD_MSG_STRING_SIZE 16 + 1
+
+// The Lumex panel's character grid. The display message no longer carries strings -- it
+// carries screen state, and the Lumex driver lays that out into a grid this size -- so these
+// describe the panel itself rather than a queue payload, which is what the old
+// SESSION_CONTROLLER_TO_LUMEX_LCD_MSG_STRING_SIZE was really doing.
+#define LUMEX_LCD_ROWS 2
+#define LUMEX_LCD_COLUMNS 16
 
 // LED config
 #define LED_TASK_OSDELAY 500

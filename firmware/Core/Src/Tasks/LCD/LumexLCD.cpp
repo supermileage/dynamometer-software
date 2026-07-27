@@ -9,10 +9,14 @@ extern task_error_data task_error_circular_buffer[TASK_ERROR_CIRCULAR_BUFFER_SIZ
 
 static volatile bool timerCallbackFlag = false;
 
-LumexLCD::LumexLCD(osMessageQueueId_t sessionControllerToLumexLcdHandle) :
+LumexLCD::LumexLCD(osMessageQueueId_t sessionControllerToDisplayHandle) :
 		_task_error_buffer_writer(task_error_circular_buffer, &task_error_circular_buffer_index_writer, TASK_ERROR_CIRCULAR_BUFFER_SIZE),
-		_fromSCqHandle(sessionControllerToLumexLcdHandle)
-{}
+		_fromSCqHandle(sessionControllerToDisplayHandle),
+		_lastScreen(DISPLAY_SCREEN_IDLE),
+		_hasRendered(false)
+{
+	memset(_lastFrame.cells, ' ', sizeof(_lastFrame.cells));
+}
 
 bool LumexLCD::Init()
 {
@@ -69,7 +73,7 @@ bool LumexLCD::Init()
  void LumexLCD::Run(void)
  {
 
-	session_controller_to_lumex_lcd msg;
+	session_controller_to_display msg;
      memset(&msg, 0, sizeof(msg));
 
      while (1)
@@ -77,40 +81,83 @@ bool LumexLCD::Init()
          // Block until a message arrives
          if (osMessageQueueGet(_fromSCqHandle, &msg, 0, osWaitForever) == osOK)
          {
-             // Drain any remaining messages to ensure we process all pending commands
-             do
-             {
-                 switch (msg.op)
-                 {
-                     case CLEAR_DISPLAY:
-                         ClearDisplay();
-                         break;
-
-                     case WRITE_TO_DISPLAY:
-                         if (!DisplayString(msg.row, msg.column, (const char*) msg.display_string, msg.size))
-						 {
-							return;
-						 }
-                         break;
-
-                     default:
-                         break;
-                 }
-             }
+             // Drain to the newest state before drawing anything. Each message is the whole of
+             // what should be on screen, so the ones behind it are already stale -- rendering
+             // them in turn would only paint values the user is not going to see.
              while (osMessageQueueGet(_fromSCqHandle, &msg, 0, 0) == osOK);
+
+             if (!Render(msg))
+             {
+                return;
+             }
          }
 
 		 osDelay(sysconfig_get_u32(SYSCFG_LCD_TASK_OSDELAY));
      }
  }
 
-//void LumexLCD::Run()
-//{
-//	while(1)
-//	{
-//		DisplayString(0, 0, "hi");
-//	}
-//}
+bool LumexLCD::Clear()
+{
+	if (!ClearDisplay())
+	{
+		return false;
+	}
+
+	memset(_lastFrame.cells, ' ', sizeof(_lastFrame.cells));
+
+	return true;
+}
+
+bool LumexLCD::Render(const session_controller_to_display& state)
+{
+	lumex_frame frame;
+	lumex_render(&state, &frame);
+
+	// Every Show*Screen used to open with a ClearDisplay, and the one redraw that deliberately
+	// did not -- a tick inside the RPM editor -- is also the one that does not change screen.
+	// So "clear when the screen id moves" is the same rule, derived rather than passed along.
+	if (!_hasRendered || state.screen != _lastScreen)
+	{
+		if (!Clear())
+		{
+			return false;
+		}
+	}
+
+	// Write each run of changed cells in one go. Runs rather than whole rows because the
+	// common case in a session is one field moving: five cells out of thirty-two.
+	for (uint8_t row = 0; row < LUMEX_LCD_ROWS; row++)
+	{
+		uint8_t column = 0;
+
+		while (column < LUMEX_LCD_COLUMNS)
+		{
+			if (frame.cells[row][column] == _lastFrame.cells[row][column])
+			{
+				column++;
+				continue;
+			}
+
+			const uint8_t start = column;
+			while (column < LUMEX_LCD_COLUMNS
+			       && frame.cells[row][column] != _lastFrame.cells[row][column])
+			{
+				column++;
+			}
+
+			if (!DisplayString(row, start, &frame.cells[row][start], column - start))
+			{
+				return false;
+			}
+		}
+	}
+
+	_lastFrame = frame;
+	_lastScreen = state.screen;
+	_hasRendered = true;
+
+	return true;
+}
 
 
 bool LumexLCD::StartTimer(uint8_t microseconds)
@@ -231,10 +278,17 @@ bool LumexLCD::DisplayChar(uint8_t row, uint8_t column, uint8_t character)
 
 bool LumexLCD::DisplayString(uint8_t row, uint8_t column, const char* string, size_t size)
 {
-	assert_param(size < SESSION_CONTROLLER_TO_LUMEX_LCD_MSG_STRING_SIZE);
-	
+	assert_param(row < LUMEX_LCD_ROWS);
+
 	for (uint8_t i = 0; i < size; i++)
 	{
+		// Clamp instead of wrapping: drop any chars past the last column so an
+		// overflow fails visibly in one cell rather than corrupting another row.
+		if (column >= LUMEX_LCD_COLUMNS)
+		{
+			break;
+		}
+
 		if (!SetCursor(row, column))
 		{
 			return false;
@@ -246,13 +300,6 @@ bool LumexLCD::DisplayString(uint8_t row, uint8_t column, const char* string, si
 		}
 
 		column++;
-
-		// Clamp instead of wrapping: drop any chars past the last column so an
-		// overflow fails visibly in one cell rather than corrupting another row.
-		if (column >= 16)
-		{
-			break;
-		}
 	}
 
 	return true;
@@ -292,9 +339,9 @@ extern "C" void lumex_lcd_timer_interrupt()
 
 }
 
-extern "C" void lumex_lcd_main(osMessageQueueId_t sessionControllerToLumexLcdHandle)
+extern "C" void lumex_lcd_main(osMessageQueueId_t sessionControllerToDisplayHandle)
 {
-	LumexLCD lcd = LumexLCD(sessionControllerToLumexLcdHandle);
+	LumexLCD lcd = LumexLCD(sessionControllerToDisplayHandle);
 
 	if (!lcd.Init())
 	{
