@@ -158,13 +158,13 @@ TEST(LumexLayout, DesiredRpmEditorShowsTheStepBesideTheValue)
     EXPECT_EQ(Row(Render(state), 1), "   5000   100   ");
 }
 
-TEST(LumexLayout, EveryCursorPositionMapsToItsStep)
+TEST(DisplayCommon, EveryCursorPositionMapsToItsStep)
 {
-    EXPECT_EQ(lumex_rpm_digit_increment(DISPLAY_RPM_DIGIT_TEN_THOUSAND), 10000u);
-    EXPECT_EQ(lumex_rpm_digit_increment(DISPLAY_RPM_DIGIT_THOUSAND), 1000u);
-    EXPECT_EQ(lumex_rpm_digit_increment(DISPLAY_RPM_DIGIT_HUNDRED), 100u);
-    EXPECT_EQ(lumex_rpm_digit_increment(DISPLAY_RPM_DIGIT_TEN), 10u);
-    EXPECT_EQ(lumex_rpm_digit_increment(DISPLAY_RPM_DIGIT_ONE), 1u);
+    EXPECT_EQ(display_rpm_digit_increment(DISPLAY_RPM_DIGIT_TEN_THOUSAND), 10000u);
+    EXPECT_EQ(display_rpm_digit_increment(DISPLAY_RPM_DIGIT_THOUSAND), 1000u);
+    EXPECT_EQ(display_rpm_digit_increment(DISPLAY_RPM_DIGIT_HUNDRED), 100u);
+    EXPECT_EQ(display_rpm_digit_increment(DISPLAY_RPM_DIGIT_TEN), 10u);
+    EXPECT_EQ(display_rpm_digit_increment(DISPLAY_RPM_DIGIT_ONE), 1u);
 }
 
 // --------------------------------------------------------------------------- session

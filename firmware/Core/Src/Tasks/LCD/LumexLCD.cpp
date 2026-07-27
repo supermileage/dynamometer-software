@@ -2,6 +2,8 @@
 #include <Tasks/LCD/lumexlcd_main.h>
 #include <Config/sysconfig.h>
 
+#include "Tasks/Display/DisplayDriver.hpp"
+
 extern TIM_HandleTypeDef* lumexLcdTimer;
 
 extern size_t task_error_circular_buffer_index_writer;
@@ -9,9 +11,8 @@ extern task_error_data task_error_circular_buffer[TASK_ERROR_CIRCULAR_BUFFER_SIZ
 
 static volatile bool timerCallbackFlag = false;
 
-LumexLCD::LumexLCD(osMessageQueueId_t sessionControllerToDisplayHandle) :
+LumexLCD::LumexLCD() :
 		_task_error_buffer_writer(task_error_circular_buffer, &task_error_circular_buffer_index_writer, TASK_ERROR_CIRCULAR_BUFFER_SIZE),
-		_fromSCqHandle(sessionControllerToDisplayHandle),
 		_lastScreen(DISPLAY_SCREEN_IDLE),
 		_hasRendered(false)
 {
@@ -69,32 +70,6 @@ bool LumexLCD::Init()
 
     return true;
 }
-
- void LumexLCD::Run(void)
- {
-
-	session_controller_to_display msg;
-     memset(&msg, 0, sizeof(msg));
-
-     while (1)
-     {
-         // Block until a message arrives
-         if (osMessageQueueGet(_fromSCqHandle, &msg, 0, osWaitForever) == osOK)
-         {
-             // Drain to the newest state before drawing anything. Each message is the whole of
-             // what should be on screen, so the ones behind it are already stale -- rendering
-             // them in turn would only paint values the user is not going to see.
-             while (osMessageQueueGet(_fromSCqHandle, &msg, 0, 0) == osOK);
-
-             if (!Render(msg))
-             {
-                return;
-             }
-         }
-
-		 osDelay(sysconfig_get_u32(SYSCFG_LCD_TASK_OSDELAY));
-     }
- }
 
 bool LumexLCD::Clear()
 {
@@ -168,7 +143,7 @@ bool LumexLCD::StartTimer(uint8_t microseconds)
 	{
 		task_error_data error_data = PopulateTaskErrorDataStruct(
 			get_timestamp(),
-			TASK_OFFSET_LUMEX_LCD,
+			TASK_OFFSET_DISPLAY,
 			static_cast<uint32_t>(ERROR_LUMEX_LCD_TIMER_START_FAILURE)
 		);
 		
@@ -339,17 +314,19 @@ extern "C" void lumex_lcd_timer_interrupt()
 
 }
 
+static_assert(DisplayDriver<LumexLCD>,
+              "LumexLCD must satisfy DisplayDriver -- see Tasks/Display/DisplayDriver.hpp");
+
 extern "C" void lumex_lcd_main(osMessageQueueId_t sessionControllerToDisplayHandle)
 {
-	LumexLCD lcd = LumexLCD(sessionControllerToDisplayHandle);
+	LumexLCD lcd;
 
 	if (!lcd.Init())
 	{
-		 osThreadSuspend(osThreadGetId());;
+		 osThreadSuspend(osThreadGetId());
 	}
 
-
-	lcd.Run();
+	RunDisplayTask(lcd, sessionControllerToDisplayHandle);
 }
 
 

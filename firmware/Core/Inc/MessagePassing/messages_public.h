@@ -56,7 +56,7 @@ typedef enum : uint32_t
     TASK_OFFSET_FORCE_SENSOR_ADS1115 = 6u  << TASK_OFFSET_SHIFT,
     TASK_OFFSET_BPM_CONTROLLER = 7u  << TASK_OFFSET_SHIFT,
     TASK_OFFSET_PID_CONTROLLER = 8u  << TASK_OFFSET_SHIFT,
-    TASK_OFFSET_LUMEX_LCD = 9u  << TASK_OFFSET_SHIFT
+    TASK_OFFSET_DISPLAY = 9u  << TASK_OFFSET_SHIFT
 } task_offset_t;
 
 typedef struct __attribute__((packed)) {
@@ -94,10 +94,12 @@ DYNO_STATIC_ASSERT(sizeof(bpm_task_error_ids) == 4, "Size of bpm_task_error_ids 
 
 typedef enum : uint32_t
 {
-    ERROR_LUMEX_LCD_TIMER_START_FAILURE = 0
-} lumex_lcd_task_error_ids;
+    ERROR_LUMEX_LCD_TIMER_START_FAILURE = 0,
+    ERROR_DISPLAY_INIT_FAILURE,
+    ERROR_DISPLAY_SPI_TRANSMIT_FAILURE
+} display_task_error_ids;
 
-DYNO_STATIC_ASSERT(sizeof(lumex_lcd_task_error_ids) == 4, "Size of lumex_lcd_task_error_ids must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(display_task_error_ids) == 4, "Size of display_task_error_ids must be 4 bytes");
 
 typedef enum : uint32_t
 {

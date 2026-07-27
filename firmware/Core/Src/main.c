@@ -27,6 +27,7 @@
 #include <Tasks/ForceSensor/ADC/forcesensor_adc_main.h>
 #include <Tasks/ForceSensor/ADS1115/forcesensor_ads1115_main.h>
 #include <Tasks/LCD/lumexlcd_main.h>
+#include <Tasks/Display/ili9341_main.h>
 #include <Tasks/PID/pid_main.h>
 #include <Tasks/OpticalSensor/opticalsensor_main.h>
 
@@ -124,7 +125,7 @@ const osThreadAttr_t sessionControllerTask_attributes = {
 osThreadId_t lcdDisplayTaskHandle;
 const osThreadAttr_t lcdDisplayTask_attributes = {
   .name = "lcdDisplayTask",
-  .stack_size = 128 * 4,
+  .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityBelowNormal,
 };
 /* Definitions for ledBlinkTask */
@@ -738,11 +739,11 @@ static void MX_SPI1_Init(void)
   hspi1.Instance = SPI1;
   hspi1.Init.Mode = SPI_MODE_MASTER;
   hspi1.Init.Direction = SPI_DIRECTION_2LINES;
-  hspi1.Init.DataSize = SPI_DATASIZE_4BIT;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -1095,10 +1096,13 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOH, ILI_SPI2_TOUCH_CS_Pin|ILI_SPI2_SD_CS_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOD, ILI_LCD_DC_Pin|ILI_LCD_RST_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(ILI_LCD_DC_GPIO_Port, ILI_LCD_DC_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(ILI_SPI1_LCD_CS_GPIO_Port, ILI_SPI1_LCD_CS_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(ILI_LCD_RST_GPIO_Port, ILI_LCD_RST_Pin, GPIO_PIN_SET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(ILI_SPI1_LCD_CS_GPIO_Port, ILI_SPI1_LCD_CS_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOI, LED_BACK_Pin|LED_SELECT_Pin|LED_BRAKE_Pin, GPIO_PIN_SET);
@@ -1300,12 +1304,12 @@ void pidControllerTaskEntryFunction(void *argument)
 
 void sessionControllerTaskEntryFunction(void* argument)
 {
-  #if (!defined(SESSION_CONTROLLER_TASK_ENABLE) || !defined(LUMEX_LCD_TASK_ENABLE))
-  #error "SESSION_CONTROLLER_TASK_ENABLE or LUMEX_LCD_TASK_ENABLE is not defined. Please define it as 0 or 1 in the configuration header."
+  #if (!defined(SESSION_CONTROLLER_TASK_ENABLE) || !defined(LUMEX_LCD_TASK_ENABLE) || !defined(ILI9341_LCD_TASK_ENABLE))
+  #error "SESSION_CONTROLLER_TASK_ENABLE or the display driver enables are not defined. Please define them as 0 or 1 in the configuration header."
   #elif SESSION_CONTROLLER_TASK_ENABLE == 0
     osThreadSuspend(osThreadGetId());
-  #elif LUMEX_LCD_TASK_ENABLE == 0
-    #error "Lumex LCD is a hard dependency of the Session Controller task. Please enable LUMEX_LCD_TASK_ENABLE."
+  #elif (LUMEX_LCD_TASK_ENABLE + ILI9341_LCD_TASK_ENABLE) == 0
+    #error "A display is a hard dependency of the Session Controller task. Enable one display driver."
   #else
         session_controller_os_task_queues tasks = {
             .usb_controller = sessionControllertoUsbControllerHandle,
@@ -1335,10 +1339,12 @@ void opticalSensorTaskEntryFunction(void *argument)
 
 void lcdDisplayTaskEntryFunction(void *argument)
 {
-  #if (!defined(LUMEX_LCD_TASK_ENABLE))
-  #error "LUMEX_LCD_TASK_ENABLE is not defined. Please define it as 0 or 1 in the configuration header."
-  #elif LUMEX_LCD_TASK_ENABLE == 0
-     osThreadSuspend(osThreadGetId());
+  /* Config/debug.h enforces that exactly one of these is 1, so there is no "neither" case
+     here -- both panels read the same queue and the same message. */
+  #if (!defined(LUMEX_LCD_TASK_ENABLE) || !defined(ILI9341_LCD_TASK_ENABLE))
+  #error "LUMEX_LCD_TASK_ENABLE / ILI9341_LCD_TASK_ENABLE are not defined. Please define them in the configuration header."
+  #elif ILI9341_LCD_TASK_ENABLE == 1
+    ili9341_lcd_main(sessionControllerToDisplayHandle);
   #else
     lumex_lcd_main(sessionControllerToDisplayHandle);
   #endif

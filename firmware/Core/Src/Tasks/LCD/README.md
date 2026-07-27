@@ -8,10 +8,10 @@ code:
   - Core/Inc/Tasks/LCD/lumex_layout.h
   - Core/Inc/Tasks/LCD/lumexlcd_main.h
 entry_point: lumex_lcd_main()
-task_offset: TASK_OFFSET_LUMEX_LCD
+task_offset: TASK_OFFSET_DISPLAY
 consumes: [session_controller_to_display (SessionController)]
 produces: [task_error_circular_buffer]
-related: [SessionController, MessagePassing]
+related: [Display, SessionController, MessagePassing]
 ---
 
 # LumexLCD — character display task
@@ -20,16 +20,10 @@ Bit-bangs a Lumex parallel LCD over GPIO and renders the screen state the
 [[SessionController]] FSM sends.
 
 ## The display seam
-
 The FSM sends **what it is showing**, not how to draw it: `session_controller_to_display`
 carries a `display_screen_id` plus every value any screen displays. Turning that into
-characters is this task's job.
-
-That split exists because a 16x2 character LCD and a 320x240 TFT have no useful common
-drawing API — the intersection caps the TFT at 16x2, the union is meaningless here — so the
-seam sits at what the values *mean* instead. `AddToLumexLCDMessageQueue(op, row, column,
-string)` was the old protocol; it also left a driver unable to tell *which* quantity had
-changed, since all it received was `("  1234", row 0, col 3)`.
+characters is this task's job. See [[Display]] for why the seam sits there, and for the
+`DisplayDriver` concept this class satisfies.
 
 ## Flow
 1. `lumex_lcd_main()` → construct, `Init()`, `Run()`.
@@ -65,4 +59,4 @@ number it is given and no panel repeats the conversion.
 - `SYSCFG_LCD_TASK_OSDELAY` (sysconfig), `LUMEX_LCD_ROWS` / `LUMEX_LCD_COLUMNS` (config.h)
 
 ## Related
-[[SessionController]] · [[MessagePassing]]
+[[Display]] · [[SessionController]] · [[MessagePassing]]

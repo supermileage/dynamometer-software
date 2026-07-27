@@ -48,8 +48,17 @@
 // BPM Controller Task
 #define BPM_CONTROLLER_TASK_ENABLE 1
 
-// Lumex LCD Task
-#define LUMEX_LCD_TASK_ENABLE 1
+// Display task -- exactly one driver, chosen here and flashed.
+//
+// Both panels consume the same session_controller_to_display message, so the SessionController
+// and its FSM are identical either way; only the driver linked in changes. There is no runtime
+// switch because there is no runtime question: a board has one panel soldered to it.
+#define LUMEX_LCD_TASK_ENABLE   1
+#define ILI9341_LCD_TASK_ENABLE 0
+
+#if (LUMEX_LCD_TASK_ENABLE + ILI9341_LCD_TASK_ENABLE) != 1
+#error "Exactly one display driver must be enabled: set one of LUMEX_LCD_TASK_ENABLE / ILI9341_LCD_TASK_ENABLE to 1 and the other to 0."
+#endif
 
 // USB Controller task settings
 // The mock-message stream used to live here as DEBUG_USB_CONTROLLER_MOCK_MESSAGES. It is now the

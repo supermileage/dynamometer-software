@@ -36,19 +36,24 @@ add_executable(fw_tests
   ${FIRMWARE_DIR}/Core/Src/Tasks/USB/usb_framer.cpp
   ${FIRMWARE_DIR}/Core/Src/Tasks/OpticalSensor/encoder_math.c
   ${FIRMWARE_DIR}/Core/Src/Tasks/LCD/lumex_layout.c
+  ${FIRMWARE_DIR}/Core/Src/Tasks/Display/display_common.c
+  ${FIRMWARE_DIR}/Core/Src/Tasks/Display/ili9341_layout.c
+  ${FIRMWARE_DIR}/Drivers/ILI9341/ILI9341_font.c
   usb_rx_ring_tests.cpp
   usb_framer_tests.cpp
   sysconfig_tests.cpp
   circular_buffer_tests.cpp
   encoder_math_tests.cpp
   lumex_layout_tests.cpp
+  ili9341_layout_tests.cpp
 )
 
 target_include_directories(fw_tests PRIVATE
   ${FIRMWARE_DIR}/Core/Inc
   ${FIRMWARE_DIR}/Drivers/ADS1115   # config.h includes ADS1115_main.h (register-code macros)
+  ${FIRMWARE_DIR}/Drivers/ILI9341   # command codes and the vendored font, both HAL-free
   ${FIRMWARE_DIR}/Middlewares/CircularBuffer/Inc
-  stubs                             # no-op FreeRTOS critical-section macros for the buffer headers
+  stubs                             # no-op FreeRTOS/CMSIS shims for the headers under test
 )
 
 target_compile_options(fw_tests PRIVATE -Wall -Wextra)

@@ -13,6 +13,7 @@
 
 #include "Config/config.h"
 #include "MessagePassing/messages_private.h"
+#include "Tasks/Display/display_common.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,9 +30,6 @@ typedef struct
 // the result depends only on `state` and never on what was on screen before. The driver is
 // what turns two of these into the minimal set of writes.
 void lumex_render(const session_controller_to_display *state, lumex_frame *out);
-
-// The step size the encoder applies at a given cursor position: 10000 down to 1.
-uint32_t lumex_rpm_digit_increment(display_rpm_digit digit);
 
 #ifdef __cplusplus
 }

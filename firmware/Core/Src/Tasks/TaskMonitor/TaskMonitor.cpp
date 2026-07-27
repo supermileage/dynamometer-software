@@ -95,7 +95,7 @@ void TaskMonitor::Run()
 		GetTaskDataAndSendToUsbController(TASK_OFFSET_PID_CONTROLLER, _osThreadIdPtrs->pid_controller);
 		#endif
 		#if LUMEX_LCD_TASK_ENABLE
-		GetTaskDataAndSendToUsbController(TASK_OFFSET_LUMEX_LCD, _osThreadIdPtrs->display);
+		GetTaskDataAndSendToUsbController(TASK_OFFSET_DISPLAY, _osThreadIdPtrs->display);
 		#endif
 
 		GetTaskDataAndSendToUsbController(TASK_OFFSET_TASK_MONITOR, osThreadGetId());

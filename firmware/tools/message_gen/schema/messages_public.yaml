@@ -75,7 +75,7 @@ sections:
       - { name: TASK_OFFSET_FORCE_SENSOR_ADS1115, value: "6u  << TASK_OFFSET_SHIFT" }
       - { name: TASK_OFFSET_BPM_CONTROLLER,       value: "7u  << TASK_OFFSET_SHIFT" }
       - { name: TASK_OFFSET_PID_CONTROLLER,       value: "8u  << TASK_OFFSET_SHIFT" }
-      - { name: TASK_OFFSET_LUMEX_LCD,            value: "9u  << TASK_OFFSET_SHIFT" }
+      - { name: TASK_OFFSET_DISPLAY,               value: "9u  << TASK_OFFSET_SHIFT" }
 
   - kind: struct
     name: task_error_data
@@ -136,17 +136,26 @@ sections:
   - { kind: static_assert, expr: "sizeof(bpm_task_error_ids) == 4", message: "Size of bpm_task_error_ids must be 4 bytes" }
 
   - kind: enum
-    name: lumex_lcd_task_error_ids
+    name: display_task_error_ids
     base: uint32_t
-    task: TASK_OFFSET_LUMEX_LCD
+    task: TASK_OFFSET_DISPLAY
     values:
       - name: ERROR_LUMEX_LCD_TIMER_START_FAILURE
         value: "0"
         description: >-
-          the timer that clocks the on-board LCD would not start, so the display is blank or
-          frozen. Nothing streamed to this app is affected — only the readout on the rig itself
+          the timer that clocks the on-board character LCD would not start, so the display is
+          blank or frozen. Nothing streamed to this app is affected — only the readout on the
+          rig itself
+      - name: ERROR_DISPLAY_INIT_FAILURE
+        description: >-
+          the on-board display would not initialise, so the rig has no local readout. Nothing
+          streamed to this app is affected. Usually the display's wiring or its SPI settings
+      - name: ERROR_DISPLAY_SPI_TRANSMIT_FAILURE
+        description: >-
+          a write to the on-board display failed, so its readout has stopped updating and is
+          showing stale values. Nothing streamed to this app is affected
 
-  - { kind: static_assert, expr: "sizeof(lumex_lcd_task_error_ids) == 4", message: "Size of lumex_lcd_task_error_ids must be 4 bytes" }
+  - { kind: static_assert, expr: "sizeof(display_task_error_ids) == 4", message: "Size of display_task_error_ids must be 4 bytes" }
 
   - kind: enum
     name: task_monitor_task_error_ids

@@ -34,19 +34,6 @@ static void put_field(lumex_frame *out, unsigned row, unsigned column, size_t wi
     put(out, row, column, scratch, width);
 }
 
-uint32_t lumex_rpm_digit_increment(display_rpm_digit digit)
-{
-    switch (digit)
-    {
-        case DISPLAY_RPM_DIGIT_TEN_THOUSAND: return 10000;
-        case DISPLAY_RPM_DIGIT_THOUSAND:     return 1000;
-        case DISPLAY_RPM_DIGIT_HUNDRED:      return 100;
-        case DISPLAY_RPM_DIGIT_TEN:          return 10;
-        case DISPLAY_RPM_DIGIT_ONE:          return 1;
-        default:                             return 0;
-    }
-}
-
 // The second row shared by both toggle pages.
 static void render_enabled_disabled(lumex_frame *out, bool enabled)
 {
@@ -134,7 +121,7 @@ void lumex_render(const session_controller_to_display *state, lumex_frame *out)
             char scratch[SCRATCH_SIZE];
             snprintf(scratch, sizeof(scratch), "%5lu %5lu",
                      (unsigned long)state->desired_rpm,
-                     (unsigned long)lumex_rpm_digit_increment(state->cursor_digit));
+                     (unsigned long)display_rpm_digit_increment(state->cursor_digit));
             put_field(out, 1, 2, 11, scratch);
             break;
         }

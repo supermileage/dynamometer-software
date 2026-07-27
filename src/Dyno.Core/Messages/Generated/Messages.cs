@@ -51,7 +51,7 @@ public enum task_offset_t : uint
     TASK_OFFSET_FORCE_SENSOR_ADS1115 = 0x60000,
     TASK_OFFSET_BPM_CONTROLLER = 0x70000,
     TASK_OFFSET_PID_CONTROLLER = 0x80000,
-    TASK_OFFSET_LUMEX_LCD = 0x90000,
+    TASK_OFFSET_DISPLAY = 0x90000,
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -73,9 +73,11 @@ public enum bpm_task_error_ids : uint
     ERROR_BPM_PWM_STOP_FAILURE = 1,
 }
 
-public enum lumex_lcd_task_error_ids : uint
+public enum display_task_error_ids : uint
 {
     ERROR_LUMEX_LCD_TIMER_START_FAILURE = 0,
+    ERROR_DISPLAY_INIT_FAILURE = 1,
+    ERROR_DISPLAY_SPI_TRANSMIT_FAILURE = 2,
 }
 
 public enum task_monitor_task_error_ids : uint
@@ -417,7 +419,7 @@ public static class MessageContract
         (typeof(task_offset_t), 4),
         (typeof(session_controller_task_error_ids), 4),
         (typeof(bpm_task_error_ids), 4),
-        (typeof(lumex_lcd_task_error_ids), 4),
+        (typeof(display_task_error_ids), 4),
         (typeof(task_monitor_task_error_ids), 4),
         (typeof(pid_controller_task_error_ids), 4),
         (typeof(usb_controller_task_error_ids), 4),

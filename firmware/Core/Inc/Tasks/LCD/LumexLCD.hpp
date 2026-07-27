@@ -7,9 +7,7 @@
 
 #include "string.h"
 
-
 #include "Config/config.h"
-
 
 #include "CircularBufferWriter.hpp"
 
@@ -21,18 +19,18 @@
 
 #include "TimeKeeping/timestamps.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
+// Lumex 16x2 character LCD, bit-banged over GPIO.
+//
+// Satisfies the DisplayDriver concept (Tasks/Display/DisplayDriver.hpp) without inheriting
+// anything: the panel choice is fixed at link time, so the contract is checked at compile time
+// and there is no vtable. See Core/Src/Tasks/LCD/README.md for the display split.
 class LumexLCD
 {
 	public:
-		LumexLCD(osMessageQueueId_t sessionControllerToDisplayqHandle);
+		LumexLCD();
 		~LumexLCD() = default;
 
 		bool Init();
-		void Run();
 
 		// Blanks the panel and forgets what was on it, so the next Render redraws in full.
 		bool Clear();
@@ -57,8 +55,6 @@ class LumexLCD
 
 		CircularBufferWriter<task_error_data> _task_error_buffer_writer;
 
-		osMessageQueueId_t _fromSCqHandle;
-
 		// What is currently on the panel, and which screen put it there. A change of screen
 		// forces a physical clear -- the old code cleared inside every Show*Screen, and this
 		// reproduces exactly that, including not clearing on a redraw of the same screen.
@@ -66,12 +62,5 @@ class LumexLCD
 		display_screen_id _lastScreen;
 		bool _hasRendered;
 };
-
-
-#ifdef __cplusplus
-}
-#endif
-
-
 
 #endif /* INC_TASKS_LCD_LUMEXLCD_HPP_ */
