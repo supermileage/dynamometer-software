@@ -12,6 +12,12 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
 
+# Pinned rather than left to the compiler default, which was gnu++17 and would drift with
+# the toolchain. C++20 is needed for the concept that both display drivers are checked
+# against; firmware/tests/CMakeLists.txt is already on 20.
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 
 # Define the build type
 if(NOT CMAKE_BUILD_TYPE)
