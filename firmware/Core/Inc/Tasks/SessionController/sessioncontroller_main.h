@@ -21,7 +21,7 @@ typedef struct
 } session_controller_os_task_queues;
 
 
-void sessioncontroller_main(session_controller_os_task_queues* task_queues, osMutexId_t usart1Mutex);
+void sessioncontroller_main(session_controller_os_task_queues* task_queues);
 
 #ifdef __cplusplus
 }

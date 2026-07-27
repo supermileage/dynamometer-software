@@ -48,14 +48,6 @@ public static class ErrorCatalog
                 false,
                 "one of the queues the session controller drives its tasks through was missing at startup, so it parked itself and commands from this app reach nothing. A firmware build fault, not something a run can cause"
             ),
-            // session_controller_task_error_ids.ERROR_SESSION_CONTROLLER_INVALID_UART1_MUTEX_POINTER
-            new(
-                0x10002u,
-                task_offset_t.TASK_OFFSET_SESSION_CONTROLLER,
-                "SESSION_CONTROLLER_INVALID_UART1_MUTEX_POINTER",
-                false,
-                "the UART1 mutex was missing at startup and the session controller parked itself. A firmware build fault, not something a run can cause"
-            ),
             // bpm_task_error_ids.ERROR_BPM_PWM_START_FAILURE
             new(
                 0x70000u,

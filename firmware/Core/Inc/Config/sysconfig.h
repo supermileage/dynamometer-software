@@ -40,6 +40,16 @@ uint32_t sysconfig_get_u32(sysconfig_param_t id);
  * it. False -- and no store -- for an unknown id or an out-of-range value. */
 bool sysconfig_set_raw(sysconfig_param_t id, uint32_t raw_value);
 
+/* The brake duty-cycle envelope, as an ordered pair.
+ *
+ * SYSCFG_MIN_DUTY_CYCLE_PERCENT and SYSCFG_MAX_DUTY_CYCLE_PERCENT are written
+ * independently over USB and each is range-checked against [0,1] but not against the
+ * other, so a host can leave min > max. Every consumer wants the same reading of that
+ * case -- the lower of the two is the floor, the higher is the ceiling -- and this is the
+ * one place that decides it, so the UI cannot disagree with the actuator about what the
+ * envelope is. Neither output is ever NaN, so the result is always safe to clamp with. */
+void sysconfig_get_duty_cycle_limits(float *min_out, float *max_out);
+
 #ifdef __cplusplus
 }
 #endif

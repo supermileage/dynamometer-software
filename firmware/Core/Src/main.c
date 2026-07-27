@@ -78,8 +78,6 @@ TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim13;
 TIM_HandleTypeDef htim16;
 
-UART_HandleTypeDef huart1;
-
 /* Definitions for usbTask */
 osThreadId_t usbTaskHandle;
 const osThreadAttr_t usbTask_attributes = {
@@ -203,11 +201,6 @@ osMessageQueueId_t pidControllerToSessionControllerAckHandle;
 const osMessageQueueAttr_t pidControllerToSessionControllerAck_attributes = {
   .name = "pidControllerToSessionControllerAck"
 };
-/* Definitions for usart1Mutex */
-osMutexId_t usart1MutexHandle;
-const osMutexAttr_t usart1Mutex_attributes = {
-  .name = "usart1Mutex"
-};
 /* USER CODE BEGIN PV */
 // Force sensor ADC Handle
 ADC_HandleTypeDef* forceSensorADCHandle = &hadc2;
@@ -236,7 +229,6 @@ static void MPU_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_TIM16_Init(void);
 static void MX_SDMMC1_SD_Init(void);
-static void MX_USART1_UART_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_SPI2_Init(void);
 static void MX_TIM1_Init(void);
@@ -302,7 +294,6 @@ int main(void)
   MX_GPIO_Init();
   MX_TIM16_Init();
   MX_SDMMC1_SD_Init();
-  MX_USART1_UART_Init();
   MX_SPI1_Init();
   MX_SPI2_Init();
   MX_TIM1_Init();
@@ -325,9 +316,6 @@ int main(void)
 
   /* Init scheduler */
   osKernelInitialize();
-  /* Create the mutex(es) */
-  /* creation of usart1Mutex */
-  usart1MutexHandle = osMutexNew(&usart1Mutex_attributes);
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
@@ -1072,56 +1060,6 @@ static void MX_TIM16_Init(void)
 }
 
 /**
-  * @brief USART1 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_USART1_UART_Init(void)
-{
-
-  /* USER CODE BEGIN USART1_Init 0 */
-  #if STM32_PERIPHERAL_USART1_ENABLE == 0
-    return;
-  #endif
-  /* USER CODE END USART1_Init 0 */
-
-  /* USER CODE BEGIN USART1_Init 1 */
-
-  /* USER CODE END USART1_Init 1 */
-  huart1.Instance = USART1;
-  huart1.Init.BaudRate = 115200;
-  huart1.Init.WordLength = UART_WORDLENGTH_8B;
-  huart1.Init.StopBits = UART_STOPBITS_1;
-  huart1.Init.Parity = UART_PARITY_NONE;
-  huart1.Init.Mode = UART_MODE_TX_RX;
-  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
-  huart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
-  huart1.Init.ClockPrescaler = UART_PRESCALER_DIV1;
-  huart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
-  if (HAL_UART_Init(&huart1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_UARTEx_SetTxFifoThreshold(&huart1, UART_TXFIFO_THRESHOLD_1_8) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_UARTEx_SetRxFifoThreshold(&huart1, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_UARTEx_DisableFifoMode(&huart1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN USART1_Init 2 */
-
-  /* USER CODE END USART1_Init 2 */
-
-}
-
-/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -1379,7 +1317,7 @@ void sessionControllerTaskEntryFunction(void* argument)
             .pid_controller_ack = pidControllerToSessionControllerAckHandle,
             .lumex_lcd = sessionControllerToLumexLcdHandle
         };
-        sessioncontroller_main(&tasks, usart1MutexHandle);
+        sessioncontroller_main(&tasks);
   #endif
 }
 

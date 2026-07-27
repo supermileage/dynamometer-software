@@ -65,7 +65,6 @@ public enum session_controller_task_error_ids : uint
 {
     ERROR_SESSION_CONTROLLER_TIMESTAMP_TIMER_START_FAILURE = 0,
     ERROR_SESSION_CONTROLLER_INVALID_TASK_QUEUE_POINTER = 1,
-    ERROR_SESSION_CONTROLLER_INVALID_UART1_MUTEX_POINTER = 2,
 }
 
 public enum bpm_task_error_ids : uint

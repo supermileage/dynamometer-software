@@ -107,4 +107,79 @@ TEST_F(SysConfigTest, EnumCodedParametersRejectCodesPastTheirLastOption)
     EXPECT_EQ(sysconfig_get_u32(SYSCFG_ADS1115_MODE), 1u);
 }
 
+// The brake duty-cycle envelope. Both the BPM task and the UI clamp against it, so it has to
+// come back ordered whatever the host left in the store -- a crossed pair reaching std::clamp
+// is undefined behaviour, and a UI clamping against an inverted pair would show a duty cycle
+// the timer never drives.
+
+TEST_F(SysConfigTest, DutyCycleLimitsAreTheConfiguredDefaults)
+{
+    float min = NAN;
+    float max = NAN;
+    sysconfig_get_duty_cycle_limits(&min, &max);
+
+    EXPECT_FLOAT_EQ(min, static_cast<float>(MIN_DUTY_CYCLE_PERCENT));
+    EXPECT_FLOAT_EQ(max, static_cast<float>(MAX_DUTY_CYCLE_PERCENT));
+}
+
+TEST_F(SysConfigTest, DutyCycleLimitsComeBackOrderedWhenTheHostCrossesThem)
+{
+    // Each write is individually valid -- the store range-checks against [0,1], not against
+    // the other bound -- so this state is reachable, and is also unavoidable transiently
+    // whenever a host raises both bounds and the low one lands first.
+    ASSERT_TRUE(sysconfig_set_raw(SYSCFG_MIN_DUTY_CYCLE_PERCENT, Bits(0.9f)));
+    ASSERT_TRUE(sysconfig_set_raw(SYSCFG_MAX_DUTY_CYCLE_PERCENT, Bits(0.2f)));
+
+    float min = NAN;
+    float max = NAN;
+    sysconfig_get_duty_cycle_limits(&min, &max);
+
+    EXPECT_FLOAT_EQ(min, 0.2f);
+    EXPECT_FLOAT_EQ(max, 0.9f);
+    EXPECT_LE(min, max);
+}
+
+TEST_F(SysConfigTest, DutyCycleLimitsCollapseToAPointWhenBothBoundsMatch)
+{
+    ASSERT_TRUE(sysconfig_set_raw(SYSCFG_MIN_DUTY_CYCLE_PERCENT, Bits(0.4f)));
+    ASSERT_TRUE(sysconfig_set_raw(SYSCFG_MAX_DUTY_CYCLE_PERCENT, Bits(0.4f)));
+
+    float min = NAN;
+    float max = NAN;
+    sysconfig_get_duty_cycle_limits(&min, &max);
+
+    EXPECT_FLOAT_EQ(min, 0.4f);
+    EXPECT_FLOAT_EQ(max, 0.4f);
+    EXPECT_LE(min, max);
+}
+
+TEST_F(SysConfigTest, DutyCycleLimitsAcceptEitherOutputBeingUnwanted)
+{
+    ASSERT_TRUE(sysconfig_set_raw(SYSCFG_MIN_DUTY_CYCLE_PERCENT, Bits(0.9f)));
+    ASSERT_TRUE(sysconfig_set_raw(SYSCFG_MAX_DUTY_CYCLE_PERCENT, Bits(0.2f)));
+
+    float only = NAN;
+    sysconfig_get_duty_cycle_limits(&only, nullptr);
+    EXPECT_FLOAT_EQ(only, 0.2f);
+
+    only = NAN;
+    sysconfig_get_duty_cycle_limits(nullptr, &only);
+    EXPECT_FLOAT_EQ(only, 0.9f);
+
+    sysconfig_get_duty_cycle_limits(nullptr, nullptr);   // must not fault
+}
+
+TEST_F(SysConfigTest, DutyCycleBoundsStillRejectValuesOutsideZeroToOne)
+{
+    EXPECT_FALSE(sysconfig_set_raw(SYSCFG_MAX_DUTY_CYCLE_PERCENT, Bits(1.5f)));
+    EXPECT_FALSE(sysconfig_set_raw(SYSCFG_MIN_DUTY_CYCLE_PERCENT, Bits(-0.1f)));
+    EXPECT_FALSE(sysconfig_set_raw(SYSCFG_MAX_DUTY_CYCLE_PERCENT, Bits(NAN)));
+
+    float min = NAN;
+    float max = NAN;
+    sysconfig_get_duty_cycle_limits(&min, &max);
+    EXPECT_FLOAT_EQ(min, static_cast<float>(MIN_DUTY_CYCLE_PERCENT));
+    EXPECT_FLOAT_EQ(max, static_cast<float>(MAX_DUTY_CYCLE_PERCENT));
+}
+
 } // namespace

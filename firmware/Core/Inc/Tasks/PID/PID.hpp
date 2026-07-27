@@ -49,7 +49,6 @@ class PIDController
 		float GetTimeDelta();
 
 		void SendBrakeDutyCycle(float new_duty_cycle_percent);
-		void SendThrottleDutyCycle(float new_duty_cycle_percent);
 
 		void Reset();
 

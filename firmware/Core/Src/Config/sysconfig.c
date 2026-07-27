@@ -90,3 +90,22 @@ bool sysconfig_set_raw(sysconfig_param_t id, uint32_t raw_value)
     entry->raw = raw_value;
     return true;
 }
+
+void sysconfig_get_duty_cycle_limits(float *min_out, float *max_out)
+{
+    float lower = sysconfig_get_float(SYSCFG_MIN_DUTY_CYCLE_PERCENT);
+    float upper = sysconfig_get_float(SYSCFG_MAX_DUTY_CYCLE_PERCENT);
+
+    /* A host update can leave the pair inverted (see sysconfig.h). Order them rather than
+     * trusting the names: clamping against an inverted pair would force a near-off request
+     * *up* to the "min", and std::clamp is undefined outright when its bounds are crossed. */
+    if (lower > upper)
+    {
+        const float swap = lower;
+        lower = upper;
+        upper = swap;
+    }
+
+    if (min_out != NULL) *min_out = lower;
+    if (max_out != NULL) *max_out = upper;
+}

@@ -24,7 +24,6 @@
 #include "FiniteStateMachine.hpp"
 
 #include "MessagePassing/messages_public.h"
-#include "MessagePassing/messages_public.h"
 #include "MessagePassing/osqueue_helpers.h"
 
 #include "CircularBufferReader.hpp"
@@ -36,20 +35,33 @@
 #include "sessioncontroller_main.h"
 
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
+// The top-level task: runs the UI state machine and turns its state into commands for every
+// other task. Run() never returns.
 class SessionController
 {
     public:
-        SessionController(session_controller_os_task_queues* task_queues, osMutexId_t usart1Mutex);
+        SessionController(session_controller_os_task_queues* task_queues);
         ~SessionController() = default;
 
         bool Init(void);
         void Run(void);
 
     private:
+        bool CheckTaskQueuesValid();
+        void ReportError(session_controller_task_error_ids error_id);
+
+        // One-time posts that put the other tasks into their starting state.
+        void PublishStartupState();
+
+        // Each of these is one step of a Run() iteration; all of them are edge-triggered
+        // against the _prev* fields below, so a steady state produces no queue traffic.
+        void PublishSdLoggingChange();
+        void PublishSessionTransition(bool inSession);
+        void PublishPidEnableChange(bool pidEnabled);
+        void AwaitPidAck(bool pidEnabled, bool pidOptionEnabled);
+        void DriveManualBrake();
+        void UpdateMeasurementDisplay();
+
         CircularBufferWriter<task_error_data> _task_error_buffer_writer;
         CircularBufferReader<forcesensor_output_data> _forcesensor_buffer_reader;
         CircularBufferReader<optical_encoder_output_data> _optical_encoder_buffer_reader;
@@ -57,21 +69,21 @@ class SessionController
         FSM _fsm;
 
         session_controller_os_task_queues* _task_queues;
-        osMutexId_t _usart1Mutex;
 
+        // Last values posted to the other tasks. A step runs only when its value moves.
         bool _prevSDLoggingEnabled;
         bool _prevPIDEnabled;
         bool _prevInSession;
+        bool _pidAckReceived;
+        float _prevBpmDutyCycle;
 
-        bool CheckTaskQueuesValid();
+        // Newest sensor samples and what the LCD currently shows of them. The samples persist
+        // across iterations: an iteration with nothing new in the buffer keeps the last reading.
+        forcesensor_output_data _forceData;
+        optical_encoder_output_data _opticalData;
+        float _prevForce;
+        float _prevAngularVelocity;
 };
-
-#ifdef __cplusplus
-}
-#endif
-
-
-
 
 
 #endif /* INC_TASKS_SESSIONCONTROLLER_SESSIONCONTROLLER_HPP_ */

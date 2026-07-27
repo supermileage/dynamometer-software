@@ -13,35 +13,38 @@
 extern "C" {
 #endif
 
-// Allows the Finite State Machine to know what button was pressed
+// Which control produced an event.
 typedef enum
 {
     ROT_EN_TICKS,
     ROT_EN_SW,
-    BTN_BACK, 
-    BTN_SELECT, 
+    BTN_BACK,
+    BTN_SELECT,
     BTN_BRAKE
 } button_opcode;
 
-// data for each "message" in the circular buffer. opcode tells which button was pressed.
-// the 'positive' field's definition changes depending on the opcode
-// ROT_EN_TICKS tells the whether the rotary encoder tick was positive or negative
-// BTN_BRAKE tells the status of the brake button at that time (true = pressed, false = not pressed)
-// The other opcodes do not need to use this bool parameter. The only info which matters for 
-// the other buttons is WHICH button was pressed
-typedef struct 
+// One event in the circular buffer. What `positive` means depends on the opcode:
+//   ROT_EN_TICKS -- true if the encoder turned in the positive direction
+//   BTN_BRAKE    -- the state of the brake button (true = pressed), reported on both edges
+//   everything else -- unused; for those buttons the only information that matters is which
+//   button was pressed, and only the release edge is reported at all.
+typedef struct
 {
     button_opcode opcode;
     bool positive;
 } button_press_data;
 
+// Where the ISRs will write next. The FSM keeps its own read position and drains up to this
+// one in task context; it is the only handshake between the two.
 extern volatile uint32_t interrupt_input_data_index;
 
-void register_rotary_encoder_input();
-void register_rotary_encoder_sw_input();
-void register_button_back_input();
-void register_button_select_input();
-void register_button_brake_input();
+// EXTI handlers, called from HAL_GPIO_EXTI_Callback in main.c.
+void register_rotary_encoder_input(void);
+void register_rotary_encoder_sw_input(void);
+void register_button_back_input(void);
+void register_button_select_input(void);
+void register_button_brake_input(void);
+
 void add_to_circular_buffer(button_opcode opcode, bool positive);
 volatile button_press_data* get_circular_buffer_data(uint32_t index);
 
