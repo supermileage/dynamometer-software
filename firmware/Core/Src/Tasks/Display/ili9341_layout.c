@@ -102,8 +102,7 @@ static void layout_session(const session_controller_to_display *state, ili9341_f
     // Force, the same shape one row down.
     add_field(out, 12, 100, SIZE_SMALL, COLOUR_LABEL, "FORCE");
 
-    float force = roundf(state->force * 100.0f) / 100.0f;
-    snprintf(scratch, sizeof(scratch), "%6.2f", (double)force);
+    display_format_fixed2(scratch, sizeof(scratch), state->force, 6);
     add_field(out, 12, 122, SIZE_VALUE, COLOUR_VALUE, scratch);
 
     add_field(out, 200, 146, SIZE_SMALL, COLOUR_LABEL, "N");
