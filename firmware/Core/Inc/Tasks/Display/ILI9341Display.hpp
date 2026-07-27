@@ -41,11 +41,6 @@ private:
     // from a cleared panel; within a screen the layout is positionally stable, so field i can
     // be compared against field i and only the movers redrawn.
     ili9341_frame _lastFrame;
-
-    // Scratch for the frame being rendered. A member rather than a local in Render() because
-    // it is ~256 bytes and this object is a static in ili9341_lcd_main(), so it lands in .bss
-    // instead of on the display task's kilobyte of stack.
-    ili9341_frame _frame;
     display_screen_id _lastScreen;
     bool _hasRendered;
 };

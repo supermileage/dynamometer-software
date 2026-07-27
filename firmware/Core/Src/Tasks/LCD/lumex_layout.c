@@ -60,7 +60,8 @@ static void render_session(const session_controller_to_display *state, lumex_fra
 
     // Six characters at cols 2-7, clear of the "F:" label and of the drive-mode field at
     // col 12 however large the reading gets.
-    display_format_fixed2(scratch, sizeof(scratch), state->force, 6);
+    float force = roundf(state->force * 100.0f) / 100.0f;
+    snprintf(scratch, sizeof(scratch), "%6.2f", (double)force);
     put_field(out, 1, 2, 6, scratch);
 
     // The drive-mode field. Which of the two appears is the menu option, not the live PID
