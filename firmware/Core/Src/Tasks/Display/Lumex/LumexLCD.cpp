@@ -1,5 +1,5 @@
-#include <Tasks/LCD/LumexLCD.hpp>
-#include <Tasks/LCD/lumexlcd_main.h>
+#include <Tasks/Display/Lumex/LumexLCD.hpp>
+#include <Tasks/Display/Lumex/lumexlcd_main.h>
 #include <Config/sysconfig.h>
 
 #include "Tasks/Display/DisplayDriver.hpp"
@@ -221,7 +221,8 @@ bool LumexLCD::ClearDisplay()
 		return false;
 	}
 
-	HAL_Delay(20);
+	// osDelay, not HAL_Delay: this runs in a task, and HAL_Delay spins rather than yielding.
+	osDelay(20);
 
 	return true;
 }

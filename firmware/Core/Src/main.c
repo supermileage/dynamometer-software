@@ -26,8 +26,8 @@
 #include <Tasks/BPM/bpm_main.h>
 #include <Tasks/ForceSensor/ADC/forcesensor_adc_main.h>
 #include <Tasks/ForceSensor/ADS1115/forcesensor_ads1115_main.h>
-#include <Tasks/LCD/lumexlcd_main.h>
-#include <Tasks/Display/ili9341_main.h>
+#include <Tasks/Display/Lumex/lumexlcd_main.h>
+#include <Tasks/Display/ILI9341/ili9341_main.h>
 #include <Tasks/PID/pid_main.h>
 #include <Tasks/OpticalSensor/opticalsensor_main.h>
 

@@ -3,7 +3,7 @@
 
 // The ILI9341 panel's share of the display split: screen state in, positioned text fields out.
 //
-// The counterpart to Tasks/LCD/lumex_layout.h, and deliberately a different shape. Both take
+// The counterpart to Tasks/Display/Lumex/lumex_layout.h, and deliberately a different shape. Both take
 // the same session_controller_to_display and neither constrains the other -- that is the point
 // of sending screen state rather than draw commands. This one lays out a 320x240 landscape
 // panel with several text sizes; the Lumex one lays out a 2x16 character grid.

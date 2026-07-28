@@ -25,10 +25,22 @@
 class ILI9341
 {
 public:
+    // How the driver waits out the panel's reset and power-on timings (5 + 20 + 150 + 150 ms).
+    //
+    // Injected rather than hardcoded. This is a driver, not a task, so it must not reach for
+    // cmsis_os2.h -- that is what keeps it host-testable and reusable. But HAL_Delay is the
+    // wrong call under an RTOS: it spins instead of yielding, so Init() burns ~325 ms of CPU
+    // at the display task's priority, and it never returns at all inside a FreeRTOS critical
+    // section, because HAL's tick comes from a TIM at TICK_INT_PRIORITY 15 which is masked
+    // there. So the caller supplies the wait: the display task passes osDelay, and bare-metal
+    // bring-up gets HAL_Delay by default.
+    using DelayMs = void (*)(uint32_t milliseconds);
+
     ILI9341(SPI_HandleTypeDef* spi,
             GPIO_TypeDef* csPort,  uint16_t csPin,
             GPIO_TypeDef* dcPort,  uint16_t dcPin,
-            GPIO_TypeDef* rstPort, uint16_t rstPin);
+            GPIO_TypeDef* rstPort, uint16_t rstPin,
+            DelayMs delay = HAL_Delay);
     ~ILI9341() = default;
 
     // Hardware reset pulse, then the vendored power/gamma sequence, then `rotation`. Leaves
@@ -67,6 +79,8 @@ private:
     void Deselect();
 
     SPI_HandleTypeDef* _spi;
+
+    DelayMs _delay;
 
     GPIO_TypeDef* _csPort;
     GPIO_TypeDef* _dcPort;

@@ -68,8 +68,10 @@ static uint8_t ili9341_scratch[ILI9341_SCRATCH_PIXELS * 2];
 ILI9341::ILI9341(SPI_HandleTypeDef* spi,
                  GPIO_TypeDef* csPort,  uint16_t csPin,
                  GPIO_TypeDef* dcPort,  uint16_t dcPin,
-                 GPIO_TypeDef* rstPort, uint16_t rstPin) :
+                 GPIO_TypeDef* rstPort, uint16_t rstPin,
+                 DelayMs delay) :
     _spi(spi),
+    _delay(delay != nullptr ? delay : HAL_Delay),
     _csPort(csPort), _dcPort(dcPort), _rstPort(rstPort),
     _csPin(csPin), _dcPin(dcPin), _rstPin(rstPin),
     _rotation(ILI9341_ROTATION_LANDSCAPE)
@@ -143,11 +145,11 @@ bool ILI9341::Init(uint8_t rotation)
     // Reset is active low and must be held well past the controller's 10 us minimum; the panel
     // then needs time before it will accept commands.
     HAL_GPIO_WritePin(_rstPort, _rstPin, GPIO_PIN_SET);
-    HAL_Delay(5);
+    _delay(5);
     HAL_GPIO_WritePin(_rstPort, _rstPin, GPIO_PIN_RESET);
-    HAL_Delay(20);
+    _delay(20);
     HAL_GPIO_WritePin(_rstPort, _rstPin, GPIO_PIN_SET);
-    HAL_Delay(150);
+    _delay(150);
 
     const uint8_t* command = ILI9341_INIT_COMMANDS;
 
@@ -168,7 +170,7 @@ bool ILI9341::Init(uint8_t rotation)
 
         if (delayAfter)
         {
-            HAL_Delay(150);
+            _delay(150);
         }
     }
 

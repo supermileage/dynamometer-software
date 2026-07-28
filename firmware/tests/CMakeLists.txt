@@ -35,9 +35,9 @@ add_executable(fw_tests
   ${FIRMWARE_DIR}/Core/Src/Tasks/USB/usb_rx_ring.c
   ${FIRMWARE_DIR}/Core/Src/Tasks/USB/usb_framer.cpp
   ${FIRMWARE_DIR}/Core/Src/Tasks/OpticalSensor/encoder_math.c
-  ${FIRMWARE_DIR}/Core/Src/Tasks/LCD/lumex_layout.c
+  ${FIRMWARE_DIR}/Core/Src/Tasks/Display/Lumex/lumex_layout.c
   ${FIRMWARE_DIR}/Core/Src/Tasks/Display/display_common.c
-  ${FIRMWARE_DIR}/Core/Src/Tasks/Display/ili9341_layout.c
+  ${FIRMWARE_DIR}/Core/Src/Tasks/Display/ILI9341/ili9341_layout.c
   ${FIRMWARE_DIR}/Drivers/ILI9341/ILI9341_font.c
   usb_rx_ring_tests.cpp
   usb_framer_tests.cpp

@@ -1,12 +1,14 @@
-#include "Tasks/Display/ILI9341Display.hpp"
+#include "Tasks/Display/ILI9341/ILI9341Display.hpp"
 
 #include <string.h>
+
+#include "FreeRTOS.h"   // configTICK_RATE_HZ, for the static_assert below
 
 #include "Config/config.h"
 #include "Config/sysconfig.h"
 
 #include "Tasks/Display/DisplayDriver.hpp"
-#include "Tasks/Display/ili9341_main.h"
+#include "Tasks/Display/ILI9341/ili9341_main.h"
 
 #include "TimeKeeping/timestamps.h"
 
@@ -18,12 +20,28 @@ extern task_error_data task_error_circular_buffer[TASK_ERROR_CIRCULAR_BUFFER_SIZ
 // The panel is painted on black; every field carries its own foreground.
 #define ILI9341_DISPLAY_BACKGROUND ILI9341_BLACK
 
+// The wait the panel driver uses for its reset and power-on timings, ~325 ms of them. Handed
+// in so the driver itself stays free of the RTOS (see ILI9341::DelayMs): here, inside a task,
+// the right answer is to yield rather than spin, which HAL_Delay would do.
+//
+// osDelay counts ticks and returns a status; at configTICK_RATE_HZ one tick is one
+// millisecond, so the only adaptation is discarding the status. The static_assert is what
+// makes a change of tick rate a build error instead of a panel that misses its timings.
+static_assert(configTICK_RATE_HZ == 1000,
+              "osDelay is being called with milliseconds; that only holds at a 1 kHz tick.");
+
+static void DisplayDelayMs(uint32_t milliseconds)
+{
+    osDelay(milliseconds);
+}
+
 
 ILI9341Display::ILI9341Display() :
     _panel(&hspi1,
            ILI_SPI1_LCD_CS_GPIO_Port, ILI_SPI1_LCD_CS_Pin,
            ILI_LCD_DC_GPIO_Port,      ILI_LCD_DC_Pin,
-           ILI_LCD_RST_GPIO_Port,     ILI_LCD_RST_Pin),
+           ILI_LCD_RST_GPIO_Port,     ILI_LCD_RST_Pin,
+           DisplayDelayMs),
     _task_error_buffer_writer(task_error_circular_buffer,
                               &task_error_circular_buffer_index_writer,
                               TASK_ERROR_CIRCULAR_BUFFER_SIZE),

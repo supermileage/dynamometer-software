@@ -1,4 +1,4 @@
-#include "Tasks/Display/ili9341_layout.h"
+#include "Tasks/Display/ILI9341/ili9341_layout.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -116,8 +116,12 @@ static void layout_session_detail(const ili9341_session_detail *detail, ili9341_
     snprintf(scratch, sizeof(scratch), "A%6ld", accel);
     add_field(out, 12, 168, SIZE_SMALL, COLOUR_LABEL, scratch);
 
+    // Formatted straight after the label rather than through a second buffer, and through
+    // display_format_fixed2 rather than "%6.2f" -- see display_common.h for why no display
+    // path may reach newlib's float formatter.
     const float peak = clamp_float(detail->peak_force, 0.0f, 999.99f);
-    snprintf(scratch, sizeof(scratch), "P%6.2f", (double)peak);
+    scratch[0] = 'P';
+    display_format_fixed2(scratch + 1, sizeof(scratch) - 1, peak, 6);
     add_field(out, 108, 168, SIZE_SMALL, COLOUR_LABEL, scratch);
 
     const long seconds = clamp_long((long)detail->session_seconds, 0, 9999);
@@ -151,8 +155,8 @@ static void layout_session(const session_controller_to_display *state,
     // -99.99 to 999.99 is what "%6.2f" is six characters wide for; either end past that grows a
     // seventh. The lower bound keeps the sign, which a load cell sitting slightly below zero on
     // offset alone still needs to show.
-    const float force = clamp_float(roundf(state->force * 100.0f) / 100.0f, -99.99f, 999.99f);
-    snprintf(scratch, sizeof(scratch), "%6.2f", (double)force);
+    const float force = clamp_float(state->force, -99.99f, 999.99f);
+    display_format_fixed2(scratch, sizeof(scratch), force, 6);
     add_field(out, 12, 122, SIZE_VALUE, COLOUR_VALUE, scratch);
 
     add_field(out, 200, 146, SIZE_SMALL, COLOUR_LABEL, "N");

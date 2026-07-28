@@ -21,8 +21,7 @@ never by calling into another task directly.
 | PID | `Core/Src/Tasks/PID/README.md` | Closed-loop brake control from encoder feedback |
 | ForceSensor | `Core/Src/Tasks/ForceSensor/README.md` | On-board force: i2c (ADS1115) and internal ADC |
 | OpticalSensor | `Core/Src/Tasks/OpticalSensor/README.md` | Angular velocity / acceleration from an optical encoder |
-| LCD | `Core/Src/Tasks/LCD/README.md` | Lumex 16x2 character display |
-| Display | `Core/Src/Tasks/Display/README.md` | The display seam; ILI9341 320x240 TFT |
+| Display | `Core/Src/Tasks/Display/README.md` | The display seam, plus both panels: `Lumex/` 16x2 character, `ILI9341/` 320x240 TFT |
 | USB | `Core/Src/Tasks/USB/README.md` | Streams data + errors to the PC over USB CDC |
 | TaskMonitor | `Core/Src/Tasks/TaskMonitor/README.md` | Per-task state and stack usage |
 | MessagePassing | `Core/Src/MessagePassing/README.md` | Queue helpers, circular buffers, USB wire protocol |

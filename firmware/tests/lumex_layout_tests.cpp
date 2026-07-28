@@ -16,7 +16,8 @@
 #include <string>
 
 extern "C" {
-#include "Tasks/LCD/lumex_layout.h"
+#include "Tasks/Display/display_common.h"
+#include "Tasks/Display/Lumex/lumex_layout.h"
 }
 
 namespace
@@ -243,6 +244,75 @@ TEST(LumexLayout, SessionScreenShowsBrakeDutyWhenTheOptionIsNot)
 
     state.bpm_duty_cycle = 0.95f;
     EXPECT_EQ(Row(Render(state), 1).substr(12, 4), "B 95");
+}
+
+}   // namespace
+
+// --------------------------------------------------------- fixed-point force formatting
+
+// display_format_fixed2 replaced snprintf("%6.2f"). That call was the only floating-point
+// conversion in the firmware and it overflowed the display task's 1 KB stack on the session
+// screen -- newlib's float formatter needs ~400 bytes on top of the ~180 the render path
+// already used, and the overflow hook disables interrupts and spins, so the board looked dead
+// the moment the brake button was pressed.
+//
+// It was reintroduced by the revert in dacdd1f and is removed again here, this time from both
+// the force reading and the peak-force readout that was added after the original fix.
+//
+// These pin the replacement against what %6.2f produced, so the fix cannot quietly change the
+// reading. Expectations are what printf gives for the same inputs.
+namespace
+{
+
+std::string Fixed2(float value, int width = 6)
+{
+    char buffer[32];
+    display_format_fixed2(buffer, sizeof(buffer), value, width);
+    return std::string(buffer);
+}
+
+TEST(DisplayFormatFixed2, MatchesPrintfForOrdinaryValues)
+{
+    EXPECT_EQ(Fixed2(0.0f),      "  0.00");
+    EXPECT_EQ(Fixed2(12.34f),    " 12.34");
+    EXPECT_EQ(Fixed2(1.5f),      "  1.50");
+    EXPECT_EQ(Fixed2(999.99f),   "999.99");
+    EXPECT_EQ(Fixed2(100.0f),    "100.00");
+}
+
+TEST(DisplayFormatFixed2, RoundsHalfAwayFromZeroLikePrintf)
+{
+    EXPECT_EQ(Fixed2(1.005f),  "  1.01");
+    EXPECT_EQ(Fixed2(1.004f),  "  1.00");
+    EXPECT_EQ(Fixed2(-1.005f), " -1.01");
+}
+
+TEST(DisplayFormatFixed2, KeepsTheSignWhenTheWholePartIsZero)
+{
+    // Truncating toward zero makes the whole part 0 for these, so the sign has to be put back
+    // by hand -- "-0.50" must not come out as "0.50".
+    EXPECT_EQ(Fixed2(-0.5f),  " -0.50");
+    EXPECT_EQ(Fixed2(-0.01f), " -0.01");
+    EXPECT_EQ(Fixed2(-0.99f), " -0.99");
+}
+
+TEST(DisplayFormatFixed2, HandlesNegativesGenerally)
+{
+    EXPECT_EQ(Fixed2(-1.5f),   " -1.50");
+    EXPECT_EQ(Fixed2(-12.34f), "-12.34");
+}
+
+TEST(DisplayFormatFixed2, DoesNotTruncateOversizedValues)
+{
+    // printf lets a value wider than the field push past it rather than clipping; the callers
+    // clip to their own field width afterwards.
+    EXPECT_EQ(Fixed2(12345.67f), "12345.67");
+}
+
+TEST(DisplayFormatFixed2, RespectsTheRequestedWidth)
+{
+    EXPECT_EQ(Fixed2(1.5f, 8), "    1.50");
+    EXPECT_EQ(Fixed2(1.5f, 4), "1.50");
 }
 
 }   // namespace

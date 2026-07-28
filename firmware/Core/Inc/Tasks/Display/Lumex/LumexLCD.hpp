@@ -15,7 +15,7 @@
 #include "MessagePassing/messages_public.h"
 #include "MessagePassing/osqueue_helpers.h"
 
-#include "Tasks/LCD/lumex_layout.h"
+#include "Tasks/Display/Lumex/lumex_layout.h"
 
 #include "TimeKeeping/timestamps.h"
 
@@ -23,7 +23,7 @@
 //
 // Satisfies the DisplayDriver concept (Tasks/Display/DisplayDriver.hpp) without inheriting
 // anything: the panel choice is fixed at link time, so the contract is checked at compile time
-// and there is no vtable. See Core/Src/Tasks/LCD/README.md for the display split.
+// and there is no vtable. See Core/Src/Tasks/Display/README.md for the display split.
 class LumexLCD
 {
 	public:

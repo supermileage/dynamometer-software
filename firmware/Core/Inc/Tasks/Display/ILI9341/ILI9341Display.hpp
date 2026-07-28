@@ -10,7 +10,7 @@
 #include "MessagePassing/messages_private.h"
 #include "MessagePassing/messages_public.h"
 
-#include "Tasks/Display/ili9341_layout.h"
+#include "Tasks/Display/ILI9341/ili9341_layout.h"
 
 // The ILI9341's side of the display split: turns screen state into painted pixels.
 //
