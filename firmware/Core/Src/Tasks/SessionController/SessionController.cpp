@@ -60,8 +60,14 @@ bool SessionController::CheckTaskQueuesValid()
         || _task_queues->pid_controller == nullptr
         || _task_queues->pid_controller_ack == nullptr
         #endif
-        #if LUMEX_LCD_TASK_ENABLE
+        #if DISPLAY_TASK_ENABLE
         || _task_queues->display == nullptr
+        #endif
+        #if USB_CONTROLLER_TASK_ENABLE
+        // The host command route: without these the SessionController silently swallows every
+        // command the USB task forwards, rather than reporting the bad wiring.
+        || _task_queues->usb_command == nullptr
+        || _task_queues->task_completion == nullptr
         #endif
     )
     {

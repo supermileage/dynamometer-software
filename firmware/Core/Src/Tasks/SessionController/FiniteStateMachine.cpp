@@ -231,6 +231,17 @@ void FSM::HandleButtonBrakeInput(bool isEnabled)
         {
             return;
         }
+
+        // A press while a session is already running is not a request to start one -- it is a
+        // second edge from a bouncing contact, or noise coupled into the line. ShowSessionScreen
+        // is destructive (it zeroes the commanded duty cycle, wipes the peak force and restarts
+        // the session clock), so re-entering it mid-run drops the brake to 0% under the user's
+        // hand. Ignore it: only a real IDLE -> IN_SESSION transition may reset those.
+        if (_state.mainState == State::MainDynoState::IN_SESSION)
+        {
+            return;
+        }
+
         ShowSessionScreen();
     }
     else

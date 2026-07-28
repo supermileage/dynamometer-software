@@ -60,6 +60,13 @@
 #error "Exactly one display driver must be enabled: set one of LUMEX_LCD_TASK_ENABLE / ILI9341_LCD_TASK_ENABLE to 1 and the other to 0."
 #endif
 
+// "A display task exists", which is what everything outside the two drivers actually wants to
+// know: null checks on the display queue and thread id, and the task monitor's stack-usage
+// report. Those must not be gated on one panel's own enable -- selecting the other panel then
+// silently compiles them out, which is exactly what happened when this board moved to the
+// ILI9341 and took the display task's stack high-water mark off the USB stream with it.
+#define DISPLAY_TASK_ENABLE (LUMEX_LCD_TASK_ENABLE || ILI9341_LCD_TASK_ENABLE)
+
 // USB Controller task settings
 // The mock-message stream used to live here as DEBUG_USB_CONTROLLER_MOCK_MESSAGES. It is now the
 // runtime parameter SYSCFG_USB_MOCK_MESSAGES (schema: sysconfig_params), so exercising the link
