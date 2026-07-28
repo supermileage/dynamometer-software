@@ -133,7 +133,13 @@ static void layout_session(const session_controller_to_display *state,
     // Speed: label, big value, unit alongside.
     add_field(out, 12, 18, SIZE_SMALL, COLOUR_LABEL, "SPEED");
 
-    uint32_t rpm = (uint32_t)roundf(state->rpm);
+    // Clamped for the same reason the detail row is, and it matters more here: these two sit
+    // beside unit labels ("rpm", "N") that a field grown by one character paints straight over,
+    // and the overhang is stranded when the reading comes back down. Braking is what drives
+    // force up, so the encoder is the control that reaches it. The clamp also has to happen
+    // before the cast -- (uint32_t)roundf() of a negative float is undefined, and in practice
+    // wraps to a ten-digit number that swamps the whole row.
+    const uint32_t rpm = (uint32_t)clamp_float(roundf(state->rpm), 0.0f, 99999.0f);
     snprintf(scratch, sizeof(scratch), "%5lu", (unsigned long)rpm);
     add_field(out, 12, 40, SIZE_VALUE, COLOUR_VALUE, scratch);
 
@@ -142,7 +148,10 @@ static void layout_session(const session_controller_to_display *state,
     // Force, the same shape one row down.
     add_field(out, 12, 100, SIZE_SMALL, COLOUR_LABEL, "FORCE");
 
-    float force = roundf(state->force * 100.0f) / 100.0f;
+    // -99.99 to 999.99 is what "%6.2f" is six characters wide for; either end past that grows a
+    // seventh. The lower bound keeps the sign, which a load cell sitting slightly below zero on
+    // offset alone still needs to show.
+    const float force = clamp_float(roundf(state->force * 100.0f) / 100.0f, -99.99f, 999.99f);
     snprintf(scratch, sizeof(scratch), "%6.2f", (double)force);
     add_field(out, 12, 122, SIZE_VALUE, COLOUR_VALUE, scratch);
 

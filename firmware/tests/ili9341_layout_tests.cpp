@@ -325,6 +325,56 @@ TEST(Ili9341SessionDetail, ShowsAccelerationPeakForceAndElapsedTime)
     EXPECT_EQ(std::string(DetailField(frame, 2).text), "T  87s");
 }
 
+// The same invariant for the two primary readouts. They are the ones the rig actually drives to
+// extremes -- braking hard is what sends force up -- and unlike the detail row they sit beside a
+// unit label, so a field that grows a character paints straight over it and the tail is stranded
+// when the reading comes back down.
+TEST(Ili9341Session, PrimaryReadoutWidthsDoNotMoveWithTheValues)
+{
+    session_controller_to_display quiet = State(DISPLAY_SCREEN_SESSION);
+    quiet.rpm = 0.0f;
+    quiet.force = 0.0f;
+
+    session_controller_to_display extreme = State(DISPLAY_SCREEN_SESSION);
+    extreme.rpm = 1e9f;
+    extreme.force = 1e9f;
+
+    const ili9341_frame small = Layout(quiet);
+    const ili9341_frame large = Layout(extreme);
+
+    ASSERT_EQ(small.count, large.count);
+
+    // Field 1 is the rpm value, field 4 the force value.
+    for (int i : {1, 4})
+    {
+        EXPECT_EQ(small.fields[i].length, large.fields[i].length)
+            << "primary field " << i << " changed width: \"" << small.fields[i].text
+            << "\" vs \"" << large.fields[i].text << "\"";
+    }
+}
+
+// A negative reading must stay inside the format too. The load cell can sit slightly below zero
+// on offset alone, and (uint32_t)roundf() of a negative float is undefined -- in practice it
+// wraps to a ten-digit number that swamps the row.
+TEST(Ili9341Session, NegativeReadingsStayInsideTheirFormat)
+{
+    session_controller_to_display quiet = State(DISPLAY_SCREEN_SESSION);
+
+    session_controller_to_display negative = State(DISPLAY_SCREEN_SESSION);
+    negative.rpm = -5.0f;
+    negative.force = -1e9f;
+
+    const ili9341_frame small = Layout(quiet);
+    const ili9341_frame large = Layout(negative);
+
+    for (int i : {1, 4})
+    {
+        EXPECT_EQ(small.fields[i].length, large.fields[i].length)
+            << "primary field " << i << " changed width: \"" << small.fields[i].text
+            << "\" vs \"" << large.fields[i].text << "\"";
+    }
+}
+
 TEST(Ili9341SessionDetail, WidthsDoNotMoveWithTheValues)
 {
     const ili9341_frame small = Layout(State(DISPLAY_SCREEN_SESSION), Detail(0.0f, 0.0f, 0));
