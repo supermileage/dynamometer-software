@@ -32,7 +32,6 @@ sections:
       meaningless on the character LCD -- so the seam is here instead, at what the values mean.
     values:
       - { name: DISPLAY_SCREEN_IDLE,             value: "0", comment: "Attract screen; SELECT opens the settings menu" }
-      - { name: DISPLAY_SCREEN_SD_LOGGING,       comment: "Settings: SD logging on/off" }
       - { name: DISPLAY_SCREEN_PID_ENABLE,       comment: "Settings: whether the PID option may be toggled in-session" }
       - { name: DISPLAY_SCREEN_DESIRED_RPM,      comment: "Settings: the desired-RPM setpoint" }
       - { name: DISPLAY_SCREEN_DESIRED_RPM_EDIT, comment: "Settings: the same setpoint with the digit cursor showing" }
@@ -73,8 +72,7 @@ sections:
       - { type: uint32_t, name: desired_rpm,      comment: "The PID setpoint being displayed or edited" }
       - { type: display_rpm_digit, name: cursor_digit, comment: "Digit the encoder edits (DESIRED_RPM_EDIT only)" }
       - { type: bool,     name: pid_enabled,           comment: "Whether the PID loop is armed for this session" }
-      - { type: bool,     name: pid_option_toggleable, comment: "Whether the menu allows arming it; also selects the in-session drive-mode field" }
-      - { type: bool,     name: sd_logging_enabled,    comment: "Whether SD logging is switched on" }
+      - { type: bool,     name: pid_option_toggleable, comment: "SYSCFG_PID_ENABLE: whether the menu allows arming it; also selects the in-session drive-mode field" }
       # Extended session detail. Carried for every panel but only shown by one: a 2x16 character
       # grid has no room for it, so LumexLCD ignores these and the ILI9341 draws them. See the
       # Show* methods on the DisplayDriver concept.

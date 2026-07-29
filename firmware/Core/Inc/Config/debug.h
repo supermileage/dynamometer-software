@@ -41,7 +41,8 @@
 // SD Controller Task
 #define SD_CONTROLLER_TASK_ENABLE 0
 
-// PID Controller Task
+// PID Controller Task. Whether the task exists at all -- not whether the SessionController
+// arms it, which is the runtime PID_ENABLE / SYSCFG_PID_ENABLE in config.h. See the note there.
 #define PID_CONTROLLER_TASK_ENABLE 1
 
 // BPM Controller Task

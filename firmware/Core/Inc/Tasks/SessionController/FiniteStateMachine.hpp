@@ -27,9 +27,9 @@
 //
 // SETTINGS_MENU has its own ring of pages, walked with the rotary encoder:
 //
-//   SD_LOGGING_OPTION_DISPLAYED <-> PID_ENABLE_DISPLAYED <-> PID_DESIRED_RPM_DISPLAYED <-> (wraps)
+//   PID_ENABLE_DISPLAYED <-> PID_DESIRED_RPM_DISPLAYED <-> (wraps)
 //
-// SELECT on the two toggle pages flips the setting and redraws in place. SELECT on the
+// SELECT on the toggle page flips the setting and redraws in place. SELECT on the
 // desired-RPM page opens PID_DESIRED_RPM_EDIT, where a cursor (DesiredRpmUnitsState) picks
 // which decimal digit the encoder changes; walking the cursor off either end leaves the editor.
 struct State
@@ -45,12 +45,10 @@ struct State
     enum class SettingsState
     {
         INIT_STATE = 0,
-        SD_LOGGING_OPTION_DISPLAYED = 0,
-        // Nothing ever enters SD_LOGGING_OPTION_EDIT or PID_ENABLE_EDIT: a toggle is applied on
-        // the display page itself, so those two settings have no edit screen. They are kept only
-        // so the enumerators below hold their values.
-        SD_LOGGING_OPTION_EDIT,
-        PID_ENABLE_DISPLAYED,
+        PID_ENABLE_DISPLAYED = 0,
+        // Nothing ever enters PID_ENABLE_EDIT: a toggle is applied on the display page itself,
+        // so that setting has no edit screen. It is kept only so the enumerators below hold
+        // their values.
         PID_ENABLE_EDIT,
         PID_DESIRED_RPM_DISPLAYED,
         PID_DESIRED_RPM_EDIT
@@ -101,7 +99,6 @@ public:
 
     // What the SessionController acts on
     State GetState() const;
-    bool GetSDLoggingEnabledStatus() const;
     bool GetPIDEnabledModeStatus() const;
     bool GetPIDOptionToggleableEnabledStatus() const;
 
@@ -109,13 +106,12 @@ public:
 
     float GetDesiredBpmDutyCycle() const;
 
-    float GetDesiredRpm() const;
+    uint32_t GetDesiredRpm() const;
     float GetDesiredAngularVelocity() const;
 
 private:
     // --- Screens. Each sets the state it represents and reposts it.
     void ShowIdleScreen();
-    void ShowSdLoggingPage();
     void ShowPidEnablePage();
     void ShowDesiredRpmPage();
     void ShowDesiredRpmEditor();
@@ -152,10 +148,13 @@ private:
 
     State _state;
 
-    // Settings, edited from the menu.
-    bool _sdLoggingEnabled;
-    bool _pidOptionToggleableEnabled;
-    int _desiredRpm;
+    // The two settings this menu edits are NOT members: they live in the sysconfig store as
+    // SYSCFG_PID_ENABLE and SYSCFG_PID_DESIRED_RPM, because the host can write them over USB
+    // too and the two editors have to be editing the same value. A cached copy here would be
+    // the thing that goes stale -- the panel would show what the encoder last set while the
+    // PID ran on what the host last pushed. So the getters below read the store, and the
+    // handlers write it; see the note in Config/config.h for how this pairs with the
+    // compile-time PID_CONTROLLER_TASK_ENABLE.
 
     // Session state. Whether a session is running is _state.mainState and nothing else --
     // see GetInSessionStatus.

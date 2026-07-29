@@ -40,9 +40,9 @@ ili9341_frame Layout(const session_controller_to_display &state,
 }
 
 const display_screen_id kAllScreens[] = {
-    DISPLAY_SCREEN_IDLE,             DISPLAY_SCREEN_SD_LOGGING,
-    DISPLAY_SCREEN_PID_ENABLE,       DISPLAY_SCREEN_DESIRED_RPM,
-    DISPLAY_SCREEN_DESIRED_RPM_EDIT, DISPLAY_SCREEN_SESSION,
+    DISPLAY_SCREEN_IDLE,             DISPLAY_SCREEN_PID_ENABLE,
+    DISPLAY_SCREEN_DESIRED_RPM,      DISPLAY_SCREEN_DESIRED_RPM_EDIT,
+    DISPLAY_SCREEN_SESSION,
 };
 
 uint16_t FieldRight(const ili9341_field &field)
@@ -130,7 +130,6 @@ TEST(Ili9341Layout, AScreensFieldListIsPositionallyStable)
     busy.desired_rpm = 98765;
     busy.bpm_duty_cycle = 0.87f;
     busy.pid_enabled = true;
-    busy.sd_logging_enabled = true;
     busy.cursor_digit = DISPLAY_RPM_DIGIT_ONE;
 
     for (display_screen_id screen : kAllScreens)
@@ -204,15 +203,15 @@ TEST(Ili9341Layout, ColourChangeAloneCountsAsAChange)
 
 // --------------------------------------------------------------------------- content
 
-TEST(Ili9341Layout, TogglePagesUseEqualWidthLabels)
+TEST(Ili9341Layout, TogglePageUsesEqualWidthLabels)
 {
     // "ENABLED " is padded to eight so it covers "DISABLED" exactly.
-    session_controller_to_display state = State(DISPLAY_SCREEN_SD_LOGGING);
+    session_controller_to_display state = State(DISPLAY_SCREEN_PID_ENABLE);
 
-    state.sd_logging_enabled = true;
+    state.pid_option_toggleable = true;
     const ili9341_frame enabled = Layout(state);
 
-    state.sd_logging_enabled = false;
+    state.pid_option_toggleable = false;
     const ili9341_frame disabled = Layout(state);
 
     EXPECT_EQ(std::string(enabled.fields[1].text), "ENABLED ");

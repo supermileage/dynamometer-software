@@ -108,6 +108,27 @@
 #define PID_INITIAL_STATUS false
 #define PID_TASK_OSDELAY 10
 
+// The two PID enables are deliberately separate, and both have to be on for the loop to drive
+// anything:
+//
+//   PID_CONTROLLER_TASK_ENABLE (debug.h, compile-time) -- whether the task exists and runs at
+//     all. Off, the thread suspends itself at entry and no amount of runtime configuration
+//     brings it back; it is a build of the firmware without a PID controller in it.
+//   PID_ENABLE (here, runtime) -- whether the SessionController *offers* the loop. This is the
+//     "PID CONTROL" menu page and the SYSCFG_PID_ENABLE parameter, which are the same value:
+//     the encoder writes it on the board, the host writes it over USB. Off, the task is alive
+//     but never armed, and the rotary encoder drives the brake by hand instead.
+//
+// So the compile-time one decides whether the machinery is present, and this one decides
+// whether the user is given it. Default off: a board with no host attached comes up in manual
+// brake control, which is the mode that needs no setpoint to be meaningful.
+#define PID_ENABLE 0
+
+// The PID setpoint, in RPM. Also the "PID DES RPM" menu page and SYSCFG_PID_DESIRED_RPM -- one
+// value with two editors, same as PID_ENABLE above. The store accepts 0..65535 (a shaft speed
+// is a uint16_t); the on-board editor walks five digits, so it can reach all of it.
+#define PID_DESIRED_RPM 5000
+
 // USB config
 #define USB_TX_BUFFER_SIZE 512 // Buffer that is being sent to USB peripheral
 // 2ms: drain in smaller, more frequent batches. At 5ms a busy session filled the 512-byte

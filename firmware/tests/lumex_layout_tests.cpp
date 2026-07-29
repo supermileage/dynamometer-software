@@ -49,9 +49,9 @@ TEST(LumexLayout, EveryScreenFillsEveryCell)
     // No cell is left uninitialised: the driver diffs whole frames, so a stray NUL would be a
     // difference it tried to write to the panel.
     const display_screen_id screens[] = {
-        DISPLAY_SCREEN_IDLE,      DISPLAY_SCREEN_SD_LOGGING,
-        DISPLAY_SCREEN_PID_ENABLE, DISPLAY_SCREEN_DESIRED_RPM,
-        DISPLAY_SCREEN_DESIRED_RPM_EDIT, DISPLAY_SCREEN_SESSION,
+        DISPLAY_SCREEN_IDLE,       DISPLAY_SCREEN_PID_ENABLE,
+        DISPLAY_SCREEN_DESIRED_RPM, DISPLAY_SCREEN_DESIRED_RPM_EDIT,
+        DISPLAY_SCREEN_SESSION,
     };
 
     for (display_screen_id screen : screens)
@@ -97,19 +97,6 @@ TEST(LumexLayout, IdleScreen)
 
 // --------------------------------------------------------------------------- settings pages
 
-TEST(LumexLayout, SdLoggingPageShowsItsOwnFlag)
-{
-    session_controller_to_display state = State(DISPLAY_SCREEN_SD_LOGGING);
-
-    state.sd_logging_enabled = false;
-    //                                      0123456789012345
-    EXPECT_EQ(Row(Render(state), 0), "   SD LOGGING   ");
-    EXPECT_EQ(Row(Render(state), 1), "    DISABLED    ");
-
-    state.sd_logging_enabled = true;
-    EXPECT_EQ(Row(Render(state), 1), "    ENABLED     ");
-}
-
 TEST(LumexLayout, PidEnablePageShowsTheToggleableFlagNotTheLiveOne)
 {
     // The page is about whether the option may be armed at all, so it reads
@@ -119,7 +106,7 @@ TEST(LumexLayout, PidEnablePageShowsTheToggleableFlagNotTheLiveOne)
 
     state.pid_option_toggleable = false;
     //                                      0123456789012345
-    EXPECT_EQ(Row(Render(state), 0), "  PID LOGGING   ");
+    EXPECT_EQ(Row(Render(state), 0), "  PID CONTROL   ");
     EXPECT_EQ(Row(Render(state), 1), "    DISABLED    ");
 
     state.pid_option_toggleable = true;

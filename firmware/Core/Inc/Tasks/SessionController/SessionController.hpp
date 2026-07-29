@@ -63,9 +63,8 @@ class SessionController
 
         // Each of these is one step of a Run() iteration; all of them are edge-triggered
         // against the _prev* fields below, so a steady state produces no queue traffic.
-        void PublishSdLoggingChange();
         void PublishSessionTransition(bool inSession);
-        void PublishPidEnableChange(bool pidEnabled);
+        void PublishPidInstruction(bool pidEnabled);
         void AwaitPidAck(bool pidEnabled, bool pidOptionEnabled);
         void DriveManualBrake();
         void UpdateMeasurementDisplay();
@@ -79,8 +78,8 @@ class SessionController
         session_controller_os_task_queues* _task_queues;
 
         // Last values posted to the other tasks. A step runs only when its value moves.
-        bool _prevSDLoggingEnabled;
         bool _prevPIDEnabled;
+        float _prevDesiredAngularVelocity;
         bool _prevInSession;
         bool _pidAckReceived;
         float _prevBpmDutyCycle;

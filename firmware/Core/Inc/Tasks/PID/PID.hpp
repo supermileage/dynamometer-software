@@ -39,6 +39,11 @@ class PIDController
 		uint32_t _curTimestamp;
 		uint32_t _prevTimestamp;
 
+		// Whether _prevTimestamp/_prevError describe a real earlier sample of *this* enable.
+		// False after every Reset(), so the next sample sets the baseline instead of being
+		// differenced against a history that does not exist. See Run().
+		bool _havePreviousSample;
+
 		float _curAngularVelocity;
 
 		float _desiredAngularVelocity;
