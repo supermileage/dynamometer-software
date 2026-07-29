@@ -2,7 +2,7 @@
 module: Core
 summary: Firmware application — FreeRTOS tasks, message passing, and STM32H743 hardware bring-up.
 entry: Core/Src/main.c
-related: [MessagePassing, SessionController, USB, TaskMonitor, BPM, PID, LCD, Display, ForceSensor, OpticalSensor, Config, TimeKeeping]
+related: [MessagePassing, SessionController, USB, TaskMonitor, BPM, PID, Display, ForceSensor, OpticalSensor, Config, TimeKeeping]
 ---
 
 # Core — application firmware
@@ -21,7 +21,9 @@ never by calling into another task directly.
 | PID | `Core/Src/Tasks/PID/README.md` | Closed-loop brake control from encoder feedback |
 | ForceSensor | `Core/Src/Tasks/ForceSensor/README.md` | On-board force: i2c (ADS1115) and internal ADC |
 | OpticalSensor | `Core/Src/Tasks/OpticalSensor/README.md` | Angular velocity / acceleration from an optical encoder |
-| Display | `Core/Src/Tasks/Display/README.md` | The display seam, plus both panels: `Lumex/` 16x2 character, `ILI9341/` 320x240 TFT |
+| Display | `Core/Src/Tasks/Display/README.md` | The display seam: one message, either panel |
+| Lumex display | `Core/Src/Tasks/Display/Lumex/README.md` | Rendering on the 16x2 character grid |
+| ILI9341 display | `Core/Src/Tasks/Display/ILI9341/README.md` | Rendering on the 320x240 TFT |
 | USB | `Core/Src/Tasks/USB/README.md` | Streams data + errors to the PC over USB CDC |
 | TaskMonitor | `Core/Src/Tasks/TaskMonitor/README.md` | Per-task state and stack usage |
 | MessagePassing | `Core/Src/MessagePassing/README.md` | Queue helpers, circular buffers, USB wire protocol |
