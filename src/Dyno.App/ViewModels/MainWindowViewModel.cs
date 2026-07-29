@@ -229,12 +229,6 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
     [ObservableProperty]
     private string _dutyCycleInput = "0.0";
 
-    /// <summary>True while the duty-cycle box has focus. Telemetry stops writing to the box then:
-    /// the device streams a BPM sample several times a second, and without this the box would
-    /// overwrite whatever was being typed between one keystroke and the next.</summary>
-    [ObservableProperty]
-    private bool _isEditingDutyCycle;
-
     /// <summary>Set when the last duty-cycle command was refused or failed, so the box can show
     /// that the brake is not at what it says.</summary>
     [ObservableProperty]
@@ -247,12 +241,22 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
     /// <summary>How far one scroll-wheel notch moves the duty cycle, in percent.</summary>
     private const double DutyCycleWheelStepPercent = 1.0;
 
+    /// <summary>Puts the brake's current figure into the setpoint box. Called when a session
+    /// starts and when a link goes away -- never from telemetry, which is the whole point.</summary>
+    private void SyncDutyCycleInputToDevice()
+    {
+        DutyCycleInput = (DutyCycle * 100.0).ToString("F1");
+        IsDutyCycleInputInvalid = false;
+    }
+
+    /// <summary>Abandons an edit and puts the brake's actual figure back. Escape, in other
+    /// words -- the way out of a half-typed value without commanding it.</summary>
+    public void RevertDutyCycleInput() => SyncDutyCycleInputToDevice();
+
     /// <summary>Sends whatever is in the box. Called when the box loses focus or Enter is pressed --
     /// not on every keystroke, which would command the brake to "4" on the way to typing "45".</summary>
     public async Task CommitDutyCycleAsync()
     {
-        IsEditingDutyCycle = false;
-
         if (!double.TryParse(DutyCycleInput, out double percent))
         {
             IsDutyCycleInputInvalid = true;
@@ -864,6 +868,11 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
             IsSessionActive = active;
             if (active)
             {
+                // Seed the setpoint from the brake's current figure, once, at the start of a run.
+                // Only here: a setpoint that kept re-syncing to the measurement would drag
+                // whatever you had dialled in back to where the brake happened to be.
+                SyncDutyCycleInputToDevice();
+
                 // Plots keep the *finished* run on screen (unlike the readouts, a frozen trace
                 // still reads as history, not as a live value) — so the moment to drop it is when
                 // the next run starts, not when this one ends.
@@ -894,6 +903,7 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
         AngularAcceleration = 0;
         Force = 0;
         DutyCycle = 0;
+        SyncDutyCycleInputToDevice();
         // The derived three as well as the measured ones. They were missed here, so a disconnect
         // blanked the sensor readouts while leaving torque and power lit at their last values —
         // the half of the panel most likely to be read as still current.
@@ -1033,14 +1043,12 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
                 break;
             case BpmSample s:
                 DutyCycle = s.Data.duty_cycle;
-                // Follow the device only when the box is not being typed in. BPM samples arrive
-                // several times a second, so without the gate the box would rewrite itself
-                // between keystrokes and the caret would jump to the end each time.
-                if (!IsEditingDutyCycle)
-                {
-                    DutyCycleInput = (s.Data.duty_cycle * 100.0).ToString("F1");
-                    IsDutyCycleInputInvalid = false;
-                }
+                // Deliberately does NOT touch DutyCycleInput. That box is a setpoint -- what you
+                // have asked the brake for -- and this is a measurement of what it is doing. They
+                // are different numbers, and having telemetry write the box made it jump: a BPM
+                // sample lands several times a second, so every scroll notch was overwritten by
+                // the device's reading a fraction of a second later. Commanded and actual are
+                // shown side by side instead.
                 Plots.RecordDutyCycle(s.Data.timestamp, s.Data.duty_cycle);
                 break;
 

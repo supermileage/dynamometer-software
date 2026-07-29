@@ -9,22 +9,13 @@ namespace Dyno.App.Views;
 /// <summary>The live console: connection toolbar, telemetry and task monitor.
 ///
 /// Almost pure markup. The exception is the brake duty-cycle box, which needs three things XAML
-/// bindings cannot express on their own: knowing when it has focus (so incoming telemetry stops
-/// rewriting it mid-keystroke), treating Enter as "send it", and turning wheel notches into
-/// adjustments. All three delegate straight to the view model.</summary>
+/// bindings cannot express on their own: committing on Enter, committing on focus loss, and
+/// turning wheel notches into adjustments. All three delegate straight to the view model.</summary>
 public partial class HomeView : UserControl
 {
     public HomeView() => InitializeComponent();
 
     private MainWindowViewModel? ViewModel => DataContext as MainWindowViewModel;
-
-    private void OnDutyCycleGotFocus(object? sender, GotFocusEventArgs e)
-    {
-        if (ViewModel is { } vm)
-        {
-            vm.IsEditingDutyCycle = true;
-        }
-    }
 
     private async void OnDutyCycleLostFocus(object? sender, RoutedEventArgs e)
     {
@@ -48,11 +39,10 @@ public partial class HomeView : UserControl
                 await vm.CommitDutyCycleAsync();
                 break;
 
-            // Abandon the edit and let the next telemetry sample put the real figure back.
+            // Abandon the edit: put the brake's actual figure back in the box.
             case Key.Escape:
                 e.Handled = true;
-                vm.IsEditingDutyCycle = false;
-                vm.IsDutyCycleInputInvalid = false;
+                vm.RevertDutyCycleInput();
                 break;
         }
     }

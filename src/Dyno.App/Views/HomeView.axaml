@@ -263,12 +263,22 @@
                   Classes.invalid="{Binding IsDutyCycleInputInvalid}"
                   Text="{Binding DutyCycleInput}"
                   IsEnabled="{Binding CanCommandDutyCycle}"
-                  GotFocus="OnDutyCycleGotFocus"
                   LostFocus="OnDutyCycleLostFocus"
                   KeyDown="OnDutyCycleKeyDown"
                   PointerWheelChanged="OnDutyCycleWheel"
                 />
                 <TextBlock Classes="readout" VerticalAlignment="Center" Text="%" />
+                <!-- What the brake is actually at, beside what it has been asked for. The box is a
+                     setpoint and this is a measurement; showing only one of them is what made the
+                     box appear to fight the user. -->
+                <TextBlock
+                  Classes="readout"
+                  VerticalAlignment="Center"
+                  Margin="6,0,0,0"
+                  Foreground="{StaticResource TextMutedBrush}"
+                  Text="{Binding DutyCycle, StringFormat='(now {0:P1})'}"
+                  ToolTip.Tip="The duty cycle the board reports the brake is running at. The editable box beside it is what you have asked for; the two differ while a command is in flight, and stay different if the firmware clamped it."
+                />
               </StackPanel>
 
               <TextBlock Grid.Row="9" Grid.Column="0" Classes="label" Text="Last timestamp" />
