@@ -25,25 +25,25 @@ extern TIM_HandleTypeDef* timestampTimer;
 // from the live clock tree, so it survives a CubeMX clock or prescaler change that this comment
 // would not.
 
-inline uint32_t get_timestamp()
+// static inline, not plain inline, so this is callable from C and C++ alike at any optimisation
+// level. A bare `inline` in C provides only an inline definition: the compiler need not emit an
+// external one, so at -O0 a C caller links against a symbol nothing defines. It went unnoticed
+// while every caller was C++ -- where inline has vague linkage and the definition is emitted --
+// and surfaced the moment main.c called one of these in a Debug build.
+static inline uint32_t get_timestamp(void)
 {
     return __HAL_TIM_GET_COUNTER(timestampTimer);
 }
 
-// Idempotent, which HAL_TIM_Base_Start underneath it is not: that returns HAL_ERROR whenever the
-// handle is not in READY state, and a timer someone has already started is BUSY. So a second
-// caller is told "failed" when the truth is "already running, nothing to do".
+// Called once from main(), before the scheduler starts: this counter is shared by every task that
+// stamps a sample or times a wait, and no task owns it. Tasks should assume it is already running.
 //
-// Two callers legitimately need this counter: SessionController stamps samples from it, and the
-// Lumex display measures its enable pulse against it. Neither can know which initialises first,
-// and here SessionController does -- it runs at osPriorityHigh against the display's
-// osPriorityBelowNormal -- so the display got HAL_ERROR, reported ERROR_DISPLAY_INIT_FAILURE and
-// suspended itself. A blank panel, from a timer that was running perfectly.
-//
-// The fix is to ask the hardware whether the counter is running rather than asking the HAL
-// whether it was this caller who started it. A handle that was never initialised still fails
-// honestly: CEN stays clear, and HAL_ERROR comes back.
-inline HAL_StatusTypeDef start_timestamp_timer()
+// Idempotent anyway, which HAL_TIM_Base_Start underneath it is not -- that returns HAL_ERROR
+// whenever the handle is not in READY state, and a timer someone has already started is BUSY, so
+// it answers "already running" and "failed to start" with the same value. Asking the hardware
+// whether the counter is running answers the question callers are actually asking. A handle that
+// was never initialised still fails honestly: CEN stays clear, and HAL_ERROR comes back.
+static inline HAL_StatusTypeDef start_timestamp_timer(void)
 {
 	if ((timestampTimer->Instance->CR1 & TIM_CR1_CEN) == 0U)
 	{

@@ -125,15 +125,16 @@ itself:
   stretch a full repaint from ~2.6 ms to ~64 ms. [[Lumex panel driver]] explains why that 40 µs
   is not negotiable.
 
-`Init()` starts the timestamp counter itself, because `SESSION_CONTROLLER_TASK_ENABLE 0` is a
-legal configuration and would otherwise leave `PanelDelayUs` waiting on a frozen counter forever.
-The busy-wait is bounded as well as timed for the same reason.
+`PanelDelayUs` measures against the timestamp counter, which is **already running** by the time
+this task exists: `main()` starts it before the scheduler, because [[SessionController]] reads it
+too and neither task owns it. That also means the panel works with
+`SESSION_CONTROLLER_TASK_ENABLE 0`, which is a legal configuration.
 
-In every normal build this call is the **second** one — `SessionController` runs at
-`osPriorityHigh` against this task's `osPriorityBelowNormal`, so it always gets there first. That
-was a real bug for one commit: `HAL_TIM_Base_Start` reports an already-running timer as
-`HAL_ERROR`, this `Init()` treated it as fatal, and the task suspended itself with the panel
-blank. `start_timestamp_timer()` is now idempotent — see [[TimeKeeping]].
+This `Init()` used to start the counter itself, and it was a bug for one commit:
+`HAL_TIM_Base_Start` reports an already-running timer as `HAL_ERROR`, `SessionController` always
+got there first at `osPriorityHigh`, and this task took the error at face value and suspended
+itself with the panel blank. See [[TimeKeeping]]. The busy-wait is bounded as well as timed, which
+is the remaining defence if the counter is ever stopped.
 
 ---
 

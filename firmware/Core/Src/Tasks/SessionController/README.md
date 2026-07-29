@@ -18,8 +18,9 @@ related: [BPM, PID, USB, LCD, ForceSensor, OpticalSensor, TimeKeeping]
 
 # SessionController — orchestrator
 
-The top-level task. Starts the timestamp timer, validates every queue handle, runs the
-UI/FSM, dispatches commands to all other tasks, and drives the LCD readout.
+The top-level task. Validates every queue handle, runs the UI/FSM, dispatches commands to all
+other tasks, and drives the LCD readout. It stamps samples from the [[TimeKeeping]] counter but
+no longer starts it — that is shared with the display task and started in `main()`.
 
 ## Sub-modules
 - **input_manager_interrupts** (C) — button + rotary-encoder GPIO ISRs write `button_press_data`

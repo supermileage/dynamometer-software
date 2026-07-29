@@ -313,6 +313,18 @@ int main(void)
   HAL_GPIO_WritePin(LED_BRAKE_GPIO_Port, LED_BRAKE_Pin, GPIO_PIN_SET);
   /* Seed the runtime sysconfig store from the config.h defaults before any task runs. */
   sysconfig_init();
+  /* Start the free-running microsecond timestamp counter. Every task that stamps a sample or
+     times a wait reads it and no single task owns it, so it starts here rather than in whichever
+     Init() happens to run first -- which is how it used to work, and it made the display's
+     startup depend on a race it could only lose (SessionController runs at osPriorityHigh and
+     always claimed the timer first, leaving the display to read an already-started timer as a
+     failure and suspend itself).
+     The return is deliberately ignored. If TIM2 is configured, MX_TIM2_Init has already called
+     Error_Handler on anything that could go wrong, so by this line the handle is READY and the
+     start cannot fail. If STM32_PERIPHERAL_TIM2_ENABLE is 0 the timer is deliberately absent and
+     halting the board over it would defeat the point of the switch; timestamps read zero and the
+     Lumex panel falls back to its bounded spin. */
+  (void)start_timestamp_timer();
   /* USER CODE END 2 */
 
   /* Init scheduler */

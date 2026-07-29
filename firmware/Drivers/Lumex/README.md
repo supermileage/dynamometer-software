@@ -6,7 +6,7 @@ code:
   - Drivers/Lumex/LumexPanel.cpp
   - Drivers/Lumex/LumexPanel_main.h
 used_by: Display (Lumex variant)
-related: [Display, ILI9341 driver, Config]
+related: [Display, ILI9341 driver, Config, TimeKeeping]
 ---
 
 # Lumex — HD44780 character LCD driver
@@ -231,10 +231,10 @@ it cost a whole peripheral and saved no CPU. Spinning 40 µs directly is the sam
 none of the machinery, and TIM13 is now free for something else.
 
 The task's `PanelDelayUs` is bounded as well as timed. `get_timestamp()` reads a counter that
-`SessionController::Init` starts, and `SESSION_CONTROLLER_TASK_ENABLE 0` is a legal
-configuration — with the counter frozen, a purely time-based loop would never exit and would
-wedge the display task. `LumexLCD::Init` starts the counter itself for that reason, and the
-iteration bound is what turns a failure there into a mistimed panel rather than a hung task.
+`main()` starts before the scheduler — shared with the session controller, owned by neither, so
+it is running whatever else is compiled in. The iteration bound covers the case where it is not:
+with a frozen counter a purely time-based loop would never exit and would wedge the display task,
+and the bound turns that into a mistimed panel instead. See [[TimeKeeping]].
 
 ---
 
@@ -256,4 +256,4 @@ driver has, and a caller must not treat `false` as fatal. See [[Display]] for wh
 write must never take the board down.
 
 ## Related
-[[Display]] · [[ILI9341 driver]] · [[Config]]
+[[Display]] · [[ILI9341 driver]] · [[Config]] · [[TimeKeeping]]

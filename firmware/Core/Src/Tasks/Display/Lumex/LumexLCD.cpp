@@ -88,15 +88,11 @@ LumexLCD::LumexLCD() :
 
 bool LumexLCD::Init()
 {
-	// PanelDelayUs measures against this counter, so it has to be running before the panel is
-	// touched. SessionController starts it too, and here it always gets there first -- it runs
-	// at osPriorityHigh against this task's osPriorityBelowNormal. Doing it here as well is what
-	// keeps this task working when the session controller is compiled out.
-	//
-	// So this call is normally the *second* one, which is exactly what start_timestamp_timer was
-	// changed to tolerate: HAL_TIM_Base_Start underneath it reports an already-running timer as
-	// HAL_ERROR, and taking that at face value suspended this task and blanked the panel.
-	if (start_timestamp_timer() != HAL_OK)
+	// PanelDelayUs measures the enable pulse against the timestamp counter, which is already
+	// running: main() starts it before the scheduler, because SessionController reads it too and
+	// neither task owns it. This used to start it here, which meant reporting an already-started
+	// timer as an init failure and suspending the task -- a blank panel driven by a working timer.
+	if (!_panel.Init())
 	{
 		task_error_data error_data = PopulateTaskErrorDataStruct(
 			get_timestamp(),
@@ -108,7 +104,7 @@ bool LumexLCD::Init()
 		return false;
 	}
 
-	return _panel.Init();
+	return true;
 }
 
 bool LumexLCD::Clear()

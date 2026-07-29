@@ -78,14 +78,10 @@ bool SessionController::CheckTaskQueuesValid()
     return true;
 }
 
+// The timestamp counter this task stamps every sample from is started in main(), before the
+// scheduler runs -- it is shared with the display task and owned by neither, so neither starts it.
 bool SessionController::Init(void)
 {
-    if (start_timestamp_timer() != HAL_OK)
-    {
-        ReportError(ERROR_SESSION_CONTROLLER_TIMESTAMP_TIMER_START_FAILURE);
-        return false;
-    }
-
     return CheckTaskQueuesValid();
 }
 

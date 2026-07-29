@@ -12,11 +12,9 @@ Provides the monotonic timestamp stamped onto every sensor / error / monitor rec
 
 ## API (timestamps.h)
 - `uint32_t get_timestamp()` — current tick, `0 .. UINT32_MAX`.
-- `HAL_StatusTypeDef start_timestamp_timer()` — starts the hardware timer. **Idempotent**: safe to
-  call from more than one task's `Init()`, and returns `HAL_OK` if the counter is already running.
-  Called by [[SessionController]] and, when that panel is fitted, by [[Lumex display]] — whose
-  enable pulse is measured against this counter, so it cannot assume the session controller is
-  compiled in. See Behavior below for why the idempotence is not free.
+- `HAL_StatusTypeDef start_timestamp_timer()` — starts the hardware timer. **Called once from
+  `main()`**, in `USER CODE BEGIN 2`, before the scheduler starts. Tasks should assume the counter
+  is already running and must not start it themselves. Idempotent regardless — see Behavior.
 - `get_timestamp_scale()`, `get_apb1_timer_clock()`, `get_apb2_timer_clock()`, `get_timer_clock(TIMx)` — clock-rate helpers (used by OpticalSensor to convert ticks → seconds).
 
 ## Behavior
@@ -34,14 +32,23 @@ Provides the monotonic timestamp stamped onto every sensor / error / monitor rec
 
   Anything new that measures across timestamps must do the same; a signed difference is the bug
   this note exists to prevent.
-- **Starting twice:** `start_timestamp_timer()` checks `TIM2->CR1.CEN` and only calls
-  `HAL_TIM_Base_Start` if the counter is stopped. That wrapper is not decoration. The HAL call
-  returns `HAL_ERROR` whenever the handle is not in `READY` state, and a timer someone has already
-  started is `BUSY` — so it reports "already running" and "failed to start" with the same value.
-  The Lumex display took that at face value, logged `ERROR_DISPLAY_INIT_FAILURE` and suspended its
-  own task, leaving a blank panel driven by a timer that was working perfectly. Asking the hardware
-  whether the counter is running answers the question the callers are actually asking. A handle
-  that was never initialised still fails: `CEN` stays clear and `HAL_ERROR` comes back.
+- **Who starts it:** `main()`, once, before any task exists. The counter is shared by
+  [[SessionController]] (which stamps every sample) and [[Lumex display]] (whose enable pulse is
+  timed against it), and owned by neither — so neither starts it.
+
+  It used to be started by whichever task's `Init()` ran first, and that was a bug rather than a
+  tidy piece of laziness. `HAL_TIM_Base_Start` returns `HAL_ERROR` whenever the handle is not in
+  `READY` state, and a timer someone has already started is `BUSY` — it answers "already running"
+  and "failed to start" with the same value. `SessionController` runs at `osPriorityHigh` against
+  the display's `osPriorityBelowNormal`, so it always won; the display read the `HAL_ERROR`,
+  logged `ERROR_DISPLAY_INIT_FAILURE` and suspended its own task, leaving a blank panel driven by
+  a timer that was working perfectly. A shared resource started from a task's `Init()` makes
+  startup depend on a scheduling race, whatever the HAL returns.
+- **Starting twice:** still safe. `start_timestamp_timer()` checks `TIM2->CR1.CEN` and only calls
+  `HAL_TIM_Base_Start` if the counter is stopped, so it asks the hardware whether the counter is
+  running rather than asking the HAL whether this caller is the one who started it. A handle that
+  was never initialised — `STM32_PERIPHERAL_TIM2_ENABLE 0` — still fails honestly: `CEN` stays
+  clear and `HAL_ERROR` comes back.
 - Clock-rate helpers may be inaccurate if the RCC tree gets more complex; revisit if clocks change.
 
 ## Related
