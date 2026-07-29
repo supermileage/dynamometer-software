@@ -1316,8 +1316,6 @@ void sessionControllerTaskEntryFunction(void* argument)
   #error "SESSION_CONTROLLER_TASK_ENABLE or the display driver enables are not defined. Please define them as 0 or 1 in the configuration header."
   #elif SESSION_CONTROLLER_TASK_ENABLE == 0
     osThreadSuspend(osThreadGetId());
-  #elif (LUMEX_LCD_TASK_ENABLE + ILI9341_LCD_TASK_ENABLE) == 0
-    #error "A display is a hard dependency of the Session Controller task. Enable one display driver."
   #else
         session_controller_os_task_queues tasks = {
             .usb_controller = sessionControllertoUsbControllerHandle,
@@ -1349,14 +1347,19 @@ void opticalSensorTaskEntryFunction(void *argument)
 
 void lcdDisplayTaskEntryFunction(void *argument)
 {
-  /* Config/debug.h enforces that exactly one of these is 1, so there is no "neither" case
-     here -- both panels read the same queue and the same message. */
+  /* Config/debug.h allows at most one of these. Both panels read the same queue and the same
+     message; with neither enabled the task parks and nothing drives a panel. */
   #if (!defined(LUMEX_LCD_TASK_ENABLE) || !defined(ILI9341_LCD_TASK_ENABLE))
   #error "LUMEX_LCD_TASK_ENABLE / ILI9341_LCD_TASK_ENABLE are not defined. Please define them in the configuration header."
   #elif ILI9341_LCD_TASK_ENABLE == 1
     ili9341_lcd_main(sessionControllerToDisplayHandle);
-  #else
+  #elif LUMEX_LCD_TASK_ENABLE == 1
     lumex_lcd_main(sessionControllerToDisplayHandle);
+  #else
+    /* No panel compiled in. Suspend rather than return: returning from a task function lands in
+       prvTaskExitError, which disables interrupts and spins. The FSM still posts its screen
+       state; nothing drains the queue, and the non-blocking puts simply fail. */
+    osThreadSuspend(osThreadGetId());
   #endif
 }
 

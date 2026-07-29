@@ -48,16 +48,32 @@
 // BPM Controller Task
 #define BPM_CONTROLLER_TASK_ENABLE 1
 
-// Display task -- exactly one driver, chosen here and flashed.
+// Display task -- at most one driver, chosen here and flashed.
 //
 // Both panels consume the same session_controller_to_display message, so the SessionController
 // and its FSM are identical either way; only the driver linked in changes. There is no runtime
 // switch because there is no runtime question: a board has one panel soldered to it.
+//
+// TEMPORARY DIAGNOSTIC: both are 0, so no display runs and nothing drives SPI1.
+//
+// The brake misbehaves when the rotary encoder is turned, and only on this branch. Everything
+// in that path -- AdjustBrakeDutyCycle, the BPM and PID tasks, every ISR, the input manager,
+// and the encoder and brake pin configuration -- is byte-identical to main. The one functional
+// difference is that a display task now drives SPI1 at 12.5 MHz on PD7/PG9/PG10/PG11 while the
+// encoder is being turned, so this isolates that single variable: the host command path, the
+// session-detail message and the app's control all stay exactly as they are, and only the
+// panel traffic goes away.
+//
+// If the brake behaves with this build, the display's SPI activity is implicated and the next
+// step is which part of it (clock rate, edge rate, wiring). If it still misbehaves, the
+// display is exonerated and the cause is elsewhere on the branch.
+//
+// Put ILI9341_LCD_TASK_ENABLE back to 1 when the question is answered.
 #define LUMEX_LCD_TASK_ENABLE   0
-#define ILI9341_LCD_TASK_ENABLE 1
+#define ILI9341_LCD_TASK_ENABLE 0
 
-#if (LUMEX_LCD_TASK_ENABLE + ILI9341_LCD_TASK_ENABLE) != 1
-#error "Exactly one display driver must be enabled: set one of LUMEX_LCD_TASK_ENABLE / ILI9341_LCD_TASK_ENABLE to 1 and the other to 0."
+#if (LUMEX_LCD_TASK_ENABLE + ILI9341_LCD_TASK_ENABLE) > 1
+#error "At most one display driver may be enabled: set at most one of LUMEX_LCD_TASK_ENABLE / ILI9341_LCD_TASK_ENABLE to 1."
 #endif
 
 // "A display task exists", which is what everything outside the two drivers actually wants to
