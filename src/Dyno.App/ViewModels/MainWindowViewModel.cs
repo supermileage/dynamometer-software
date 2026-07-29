@@ -221,13 +221,43 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
     [ObservableProperty]
     private double _dutyCycle;
 
-    /// <summary>What is typed in the brake duty-cycle box, as a percentage (0 - 100) to match the
-    /// readout it replaced. The firmware takes a 0 - 1 fraction; the conversion happens on send.
+    /// <summary>The brake duty-cycle box, as a percentage (0 - 100). The firmware takes a 0 - 1
+    /// fraction; the conversion happens on send.
     ///
-    /// Held as text rather than a number so a half-typed value ("4", "4.") is not repeatedly
-    /// reinterpreted and rewritten under the user's cursor.</summary>
+    /// Both a readout and an editor. It follows whatever the board reports — including a change
+    /// made at the rig's own rotary encoder, or the PID driving the brake — and stops following
+    /// only while the user is part-way through an edit or a command has yet to land. Held as text
+    /// rather than a number so a half-typed value ("4", "4.") is not repeatedly reinterpreted and
+    /// rewritten under the cursor.</summary>
     [ObservableProperty]
     private string _dutyCycleInput = "0.0";
+
+    /// <summary>True while the box holds something the user typed and has not committed. Set by
+    /// <see cref="OnDutyCycleInputChanged"/> for any change this class did not make itself, and
+    /// cleared by every write that goes through <see cref="SetDutyCycleInput"/>.</summary>
+    private bool _hasUncommittedDutyCycleEdit;
+
+    /// <summary>Guards <see cref="OnDutyCycleInputChanged"/> so the app's own writes are not
+    /// mistaken for typing. Without it, mirroring the board would mark the box edited and then
+    /// refuse to mirror it again.</summary>
+    private bool _writingDutyCycleInput;
+
+    /// <summary>What was last commanded, and when. While this is set the board is still expected to
+    /// be catching up, so its readings are not mirrored — otherwise a scroll notch would be undone
+    /// by the sample that lands a fraction of a second later, which is the "jumping" this box had
+    /// before.</summary>
+    private double? _commandedDutyCyclePercent;
+    private DateTime _commandedDutyCycleAt;
+
+    /// <summary>How long a commanded figure stands before the board's own reading wins anyway.
+    /// Reaching the commanded value clears it sooner; this is the other exit, and it is what
+    /// surfaces a value the firmware clamped to its MIN/MAX envelope — the board never reports what
+    /// was asked for, so nothing else would ever end the wait.</summary>
+    private static readonly TimeSpan DutyCycleSettleWindow = TimeSpan.FromSeconds(1);
+
+    /// <summary>Half the box's display resolution: two figures that round to the same "F1" text are
+    /// the same figure as far as this is concerned.</summary>
+    private const double DutyCycleMatchTolerancePercent = 0.05;
 
     /// <summary>Set when the last duty-cycle command was refused or failed, so the box can show
     /// that the brake is not at what it says.</summary>
@@ -241,11 +271,68 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
     /// <summary>How far one scroll-wheel notch moves the duty cycle, in percent.</summary>
     private const double DutyCycleWheelStepPercent = 1.0;
 
-    /// <summary>Puts the brake's current figure into the setpoint box. Called when a session
-    /// starts and when a link goes away -- never from telemetry, which is the whole point.</summary>
+    /// <summary>Writes the box on the app's own behalf: no pending edit afterwards, and the change
+    /// is not mistaken for typing. Every programmatic write goes through here.</summary>
+    private void SetDutyCycleInput(double percent)
+    {
+        _writingDutyCycleInput = true;
+        DutyCycleInput = percent.ToString("F1");
+        _writingDutyCycleInput = false;
+        _hasUncommittedDutyCycleEdit = false;
+    }
+
+    /// <summary>Anything this class did not write is the user typing, and the box belongs to them
+    /// until they commit it or abandon it.</summary>
+    partial void OnDutyCycleInputChanged(string value)
+    {
+        if (!_writingDutyCycleInput)
+        {
+            _hasUncommittedDutyCycleEdit = true;
+        }
+    }
+
+    /// <summary>
+    /// Follows the board's reported duty cycle, which is what makes the box a live readout as well
+    /// as an editor — a change made at the rig's rotary encoder, or by the PID, shows up here.
+    /// </summary>
+    /// <remarks>Yields to the user in the two cases where the box is not the board's to write: a
+    /// half-typed value, and a command that has not landed yet.</remarks>
+    private void MirrorDeviceDutyCycle(double percent)
+    {
+        if (_hasUncommittedDutyCycleEdit)
+        {
+            return;
+        }
+
+        if (_commandedDutyCyclePercent is { } commanded)
+        {
+            if (Math.Abs(percent - commanded) < DutyCycleMatchTolerancePercent)
+            {
+                // The board is where it was asked to be; nothing is in flight any more.
+                _commandedDutyCyclePercent = null;
+            }
+            else if (DateTime.UtcNow - _commandedDutyCycleAt < DutyCycleSettleWindow)
+            {
+                return;
+            }
+            else
+            {
+                // It was never going to match -- the firmware clamped it, or refused. Show what the
+                // brake is actually doing rather than what was asked for.
+                _commandedDutyCyclePercent = null;
+            }
+        }
+
+        SetDutyCycleInput(percent);
+        IsDutyCycleInputInvalid = false;
+    }
+
+    /// <summary>Puts the brake's current figure into the box. Called when a session starts and when
+    /// a link goes away, where there is no telemetry to follow.</summary>
     private void SyncDutyCycleInputToDevice()
     {
-        DutyCycleInput = (DutyCycle * 100.0).ToString("F1");
+        _commandedDutyCyclePercent = null;
+        SetDutyCycleInput(DutyCycle * 100.0);
         IsDutyCycleInputInvalid = false;
     }
 
@@ -298,7 +385,12 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
         }
 
         percent = Math.Clamp(percent, 0.0, 100.0);
-        DutyCycleInput = percent.ToString("F1");
+        SetDutyCycleInput(percent);
+
+        // Hold off mirroring until the board reports this figure, or the window expires. Set before
+        // the await, since samples arrive while the command is still in flight.
+        _commandedDutyCyclePercent = percent;
+        _commandedDutyCycleAt = DateTime.UtcNow;
 
         try
         {
@@ -1045,12 +1137,7 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
                 break;
             case BpmSample s:
                 DutyCycle = s.Data.duty_cycle;
-                // Deliberately does NOT touch DutyCycleInput. That box is a setpoint -- what you
-                // have asked the brake for -- and this is a measurement of what it is doing. They
-                // are different numbers, and having telemetry write the box made it jump: a BPM
-                // sample lands several times a second, so every scroll notch was overwritten by
-                // the device's reading a fraction of a second later. Commanded and actual are
-                // shown side by side instead.
+                MirrorDeviceDutyCycle(s.Data.duty_cycle * 100.0);
                 Plots.RecordDutyCycle(s.Data.timestamp, s.Data.duty_cycle);
                 break;
 

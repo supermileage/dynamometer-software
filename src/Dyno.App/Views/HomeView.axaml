@@ -254,7 +254,7 @@
                 Grid.Column="0"
                 Classes="label"
                 Text="BPM duty cycle"
-                ToolTip.Tip="Commands the brake, exactly as the rig's rotary encoder does. Editable only during a session — the firmware refuses outside one — and clamped to the min/max duty cycle set on the SysConfig page. Scroll over the box to nudge it by 1%."
+                ToolTip.Tip="What the brake is running at, and the way to change it — exactly as the rig's rotary encoder does. It follows the board, so a change made at the rig shows up here. Editable only during a session — the firmware refuses outside one — and clamped to the min/max duty cycle set on the SysConfig page. Scroll over the box to nudge it by 1%."
               />
               <StackPanel
                 Grid.Row="8"
@@ -274,17 +274,6 @@
                   PointerWheelChanged="OnDutyCycleWheel"
                 />
                 <TextBlock Classes="readout" VerticalAlignment="Center" Text="%" />
-                <!-- What the brake is actually at, beside what it has been asked for. The box is a
-                     setpoint and this is a measurement; showing only one of them is what made the
-                     box appear to fight the user. -->
-                <TextBlock
-                  Classes="readout"
-                  VerticalAlignment="Center"
-                  Margin="6,0,0,0"
-                  Foreground="{StaticResource TextMutedBrush}"
-                  Text="{Binding DutyCycle, StringFormat='(now {0:P1})'}"
-                  ToolTip.Tip="The duty cycle the board reports the brake is running at. The editable box beside it is what you have asked for; the two differ while a command is in flight, and stay different if the firmware clamped it."
-                />
               </StackPanel>
 
               <TextBlock Grid.Row="9" Grid.Column="0" Classes="label" Text="Last timestamp" />
