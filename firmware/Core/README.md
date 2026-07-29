@@ -30,9 +30,10 @@ never by calling into another task directly.
 | CircularBuffer | `Middlewares/CircularBuffer/README.md` | Heap-free single-writer / multi-reader buffers |
 | ADS1115 driver | `Drivers/ADS1115/README.md` | I2C 16-bit ADC driver used by the force sensor |
 | ILI9341 driver | `Drivers/ILI9341/README.md` | SPI TFT driver used by the ILI9341 display task |
+| Lumex panel driver | `Drivers/Lumex/README.md` | HD44780 character LCD driver used by the Lumex display task |
 
 ## main.c conventions
-- Timer handles are renamed for clarity: `timestampTimer`, `lumexLcdTimer`, `bpmTimer`.
+- Timer handles are renamed for clarity: `timestampTimer`, `bpmTimer`.
 - Peripheral and queue handles are passed into task entry points; handles also needed
   by ISRs are declared `extern` in the consuming file.
 - CubeMX owns everything outside the `USER CODE BEGIN/END` markers — regenerating from

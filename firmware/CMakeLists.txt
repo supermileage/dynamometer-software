@@ -65,6 +65,7 @@ file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/Core/Src/interrupts.c
     ${CMAKE_SOURCE_DIR}/Drivers/ADS1115/ADS1115.cpp
+    ${CMAKE_SOURCE_DIR}/Drivers/Lumex/LumexPanel.cpp
     ${CMAKE_SOURCE_DIR}/Drivers/ILI9341/ILI9341.cpp
     ${CMAKE_SOURCE_DIR}/Drivers/ILI9341/ILI9341_font.c
     ${APP_SOURCES}
@@ -79,6 +80,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/Middlewares/CircularBuffer/Inc
     ${CMAKE_SOURCE_DIR}/Drivers/ADS1115
     ${CMAKE_SOURCE_DIR}/Drivers/ILI9341
+    ${CMAKE_SOURCE_DIR}/Drivers/Lumex
 )
 
 # Add project symbols (macros)

@@ -76,7 +76,6 @@ SPI_HandleTypeDef hspi2;
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim4;
-TIM_HandleTypeDef htim13;
 TIM_HandleTypeDef htim16;
 
 /* Definitions for usbTask */
@@ -220,9 +219,7 @@ TIM_HandleTypeDef* timestampTimer = &htim2;
 // runs in external clock mode 1, so CNT *is* the pulse count and no interrupt fires per edge.
 TIM_HandleTypeDef* opticalCounterTimer = &htim4;
 
-TIM_HandleTypeDef* lumexLcdTimer = &htim13;
 
-TIM_TypeDef* lumexLcdTimInstance = TIM13;
 
 TIM_HandleTypeDef* bpmTimer = &htim16;
 
@@ -238,7 +235,6 @@ static void MX_SDMMC1_SD_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_SPI2_Init(void);
 static void MX_TIM1_Init(void);
-static void MX_TIM13_Init(void);
 static void MX_ADC2_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_ADC3_Init(void);
@@ -303,7 +299,6 @@ int main(void)
   MX_SPI1_Init();
   MX_SPI2_Init();
   MX_TIM1_Init();
-  MX_TIM13_Init();
   MX_ADC2_Init();
   MX_TIM2_Init();
   MX_ADC3_Init();
@@ -971,39 +966,6 @@ static void MX_TIM4_Init(void)
 }
 
 /**
-  * @brief TIM13 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM13_Init(void)
-{
-
-  /* USER CODE BEGIN TIM13_Init 0 */
-  #if STM32_PERIPHERAL_TIM13_ENABLE == 0
-    return;
-  #endif
-  /* USER CODE END TIM13_Init 0 */
-
-  /* USER CODE BEGIN TIM13_Init 1 */
-
-  /* USER CODE END TIM13_Init 1 */
-  htim13.Instance = TIM13;
-  htim13.Init.Prescaler = 400-1;
-  htim13.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim13.Init.Period = 40-1;
-  htim13.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim13.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim13) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM13_Init 2 */
-
-  /* USER CODE END TIM13_Init 2 */
-
-}
-
-/**
   * @brief TIM16 Initialization Function
   * @param None
   * @retval None
@@ -1477,10 +1439,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     HAL_IncTick();
   }
   /* USER CODE BEGIN Callback 1 */
-  else if (htim->Instance == lumexLcdTimInstance)
-  {
-	  lumex_lcd_timer_interrupt(htim);
-  }
   else if (htim->Instance == TIM4)
   {
 	  // TIM4's counter is 16 bits, so it wraps every 65536 encoder pulses. Counting the wraps

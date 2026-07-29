@@ -10,7 +10,6 @@
 extern "C" {
 #endif
 
-void lumex_lcd_timer_interrupt();
 void lumex_lcd_main(osMessageQueueId_t sessionControllerToDisplayqHandle);
 
 #ifdef __cplusplus

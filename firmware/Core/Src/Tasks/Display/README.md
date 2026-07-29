@@ -19,7 +19,7 @@ entry_point: lumex_lcd_main() / ili9341_lcd_main()
 task_offset: TASK_OFFSET_DISPLAY
 consumes: [session_controller_to_display (SessionController)]
 produces: [task_error_circular_buffer]
-related: [SessionController, MessagePassing, ILI9341 driver]
+related: [SessionController, MessagePassing, ILI9341 driver, Lumex panel driver]
 ---
 
 # Display — from a measured value to lit pixels
@@ -326,4 +326,4 @@ was labelled "rpm" while showing rad/s, so 3000 RPM displayed as 314.
 (ili9341_layout.h) · `ILI9341_MAX_TEXT_SIZE` (ILI9341_main.h)
 
 ## Related
-[[ILI9341 driver]] · [[SessionController]] · [[OpticalSensor]] · [[MessagePassing]]
+[[ILI9341 driver]] · [[Lumex panel driver]] · [[SessionController]] · [[OpticalSensor]] · [[MessagePassing]]

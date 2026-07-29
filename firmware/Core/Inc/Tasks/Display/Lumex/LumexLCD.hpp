@@ -1,5 +1,5 @@
-#ifndef INC_TASKS_LCD_LUMEXLCD_HPP_
-#define INC_TASKS_LCD_LUMEXLCD_HPP_
+#ifndef INC_TASKS_DISPLAY_LUMEX_LUMEXLCD_HPP_
+#define INC_TASKS_DISPLAY_LUMEX_LUMEXLCD_HPP_
 
 #include "main.h"
 
@@ -11,6 +11,8 @@
 
 #include "CircularBufferWriter.hpp"
 
+#include "LumexPanel.hpp"
+
 #include "MessagePassing/messages_private.h"
 #include "MessagePassing/messages_public.h"
 #include "MessagePassing/osqueue_helpers.h"
@@ -19,7 +21,12 @@
 
 #include "TimeKeeping/timestamps.h"
 
-// Lumex 16x2 character LCD, bit-banged over GPIO.
+// The Lumex panel's side of the display split: screen state in, changed cells out.
+//
+// Owns a LumexPanel (Drivers/Lumex) and adds everything the panel itself has no business
+// knowing -- what the screens look like, which cells moved since the last frame, and the
+// FreeRTOS task around it. The same division as ILI9341Display over ILI9341, and the reason
+// this class no longer contains a line of HD44780 protocol.
 //
 // Satisfies the DisplayDriver concept (Tasks/Display/DisplayDriver.hpp) without inheriting
 // anything: the panel choice is fixed at link time, so the contract is checked at compile time
@@ -69,15 +76,7 @@ class LumexLCD
 
 
 	private:
-		bool StartTimer(uint8_t microseconds);
-		bool SendByte(uint8_t byte);
-		bool WriteData(uint8_t data);
-		bool WriteCommand(uint8_t command);
-		bool ClearDisplay();
-		bool SetCursor(uint8_t row, uint8_t column);
-		bool DisplayChar(uint8_t row, uint8_t column, uint8_t character);
-		bool DisplayString(uint8_t row, uint8_t column, const char* string, size_t size);
-		bool ToggleBlink(bool enable);
+		LumexPanel _panel;
 
 		CircularBufferWriter<task_error_data> _task_error_buffer_writer;
 
@@ -89,4 +88,4 @@ class LumexLCD
 		bool _hasRendered;
 };
 
-#endif /* INC_TASKS_LCD_LUMEXLCD_HPP_ */
+#endif /* INC_TASKS_DISPLAY_LUMEX_LUMEXLCD_HPP_ */
