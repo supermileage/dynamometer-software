@@ -18,7 +18,7 @@
     || !defined(FORCE_SENSOR_ADS1115_TASK_ENABLE) || !defined(FORCE_SENSOR_ADC_TASK_ENABLE) \
     || !defined(OPTICAL_ENCODER_TASK_ENABLE) || !defined(BPM_CONTROLLER_TASK_ENABLE) \
     || !defined(PID_CONTROLLER_TASK_ENABLE) || !defined(LUMEX_LCD_TASK_ENABLE) \
-    || !defined(ILI9341_LCD_TASK_ENABLE) || !defined(DISPLAY_TASK_ENABLE)
+    || !defined(ILI9341_LCD_TASK_ENABLE)
 #error "A *_TASK_ENABLE macro is not visible here; SessionController's #if-gated queue posts would silently compile out (include Config/debug.h)"
 #endif
 

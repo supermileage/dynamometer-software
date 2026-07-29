@@ -62,9 +62,6 @@ public class CommandOpcodeTests
             .OrderBy(n => n, StringComparer.Ordinal)
             .ToArray();
 
-        Assert.Equal(
-            ["session_controller_command_t", "usb_controller_command_t"],
-            commandEnums
-        );
+        Assert.Equal(["session_controller_command_t", "usb_controller_command_t"], commandEnums);
     }
 }

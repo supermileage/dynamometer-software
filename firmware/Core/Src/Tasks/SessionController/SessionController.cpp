@@ -60,7 +60,7 @@ bool SessionController::CheckTaskQueuesValid()
         || _task_queues->pid_controller == nullptr
         || _task_queues->pid_controller_ack == nullptr
         #endif
-        #if DISPLAY_TASK_ENABLE
+        #if (LUMEX_LCD_TASK_ENABLE || ILI9341_LCD_TASK_ENABLE)
         || _task_queues->display == nullptr
         #endif
         #if USB_CONTROLLER_TASK_ENABLE

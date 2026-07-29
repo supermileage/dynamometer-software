@@ -21,6 +21,10 @@ public partial class ConfigParameterViewModel : ObservableObject
     private readonly string _searchHaystack;
     private string _savedValue;
 
+    /// <summary>Settings that must switch off when this one comes on. Wired after every parameter
+    /// exists, since a group's members are siblings in the same list.</summary>
+    private IReadOnlyList<ConfigParameterViewModel> _exclusiveWith = [];
+
     public string Name { get; }
     public string Category { get; }
     public string FileLabel { get; }
@@ -124,7 +128,28 @@ public partial class ConfigParameterViewModel : ObservableObject
 
     partial void OnTextChanged(string value) => RefreshDirty();
 
-    partial void OnIsOnChanged(bool value) => RefreshDirty();
+    /// <summary>
+    /// Turning this on turns its group off. Turning it <em>off</em> does nothing to them, which is
+    /// what leaves "all off" reachable — see <see cref="ConfigExclusiveGroups"/> for why that has to
+    /// stay a legal state.
+    /// </summary>
+    /// <remarks>Each sibling's own handler runs on assignment, but with <c>false</c>, so it takes
+    /// this branch no further and there is no need to guard against re-entry.</remarks>
+    partial void OnIsOnChanged(bool value)
+    {
+        if (value)
+        {
+            foreach (var other in _exclusiveWith)
+            {
+                other.IsOn = false;
+            }
+        }
+        RefreshDirty();
+    }
+
+    /// <summary>Declares the settings this one excludes. Idempotent and one-way per call: the
+    /// caller wires every member of a group against the rest.</summary>
+    public void Excludes(IReadOnlyList<ConfigParameterViewModel> others) => _exclusiveWith = others;
 
     private void RefreshDirty()
     {

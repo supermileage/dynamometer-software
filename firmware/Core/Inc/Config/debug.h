@@ -47,29 +47,28 @@
 // BPM Controller Task
 #define BPM_CONTROLLER_TASK_ENABLE 1
 
-// Display task -- at most one driver, chosen here and flashed.
+// ===== Display =====
+// At most one panel, chosen here and flashed. Both consume the same
+// session_controller_to_display message, so the SessionController and its FSM are identical
+// either way -- only the driver linked in changes. There is no runtime switch because there is
+// no runtime question: a board has one panel soldered to it.
 //
-// Both panels consume the same session_controller_to_display message, so the SessionController
-// and its FSM are identical either way; only the driver linked in changes. There is no runtime
-// switch because there is no runtime question: a board has one panel soldered to it.
+// Neither enabled is legal, and useful: the display task parks and nothing drives SPI1, which is
+// how the panel gets ruled in or out of a fault elsewhere on the board.
 //
-// ROT_EN_B (PI8) had no pull resistor while every other user input had one, so the direction
-// bit the encoder ISR samples came off a floating pin. It read correctly while SPI1 was idle
-// and randomly once the panel drove it, which is why the brake random-walked to 0% only on this
-// branch and only while the encoder was turning. Fixed in the .ioc; the panel is back on.
-#define LUMEX_LCD_TASK_ENABLE   1
-#define ILI9341_LCD_TASK_ENABLE 0
+// Anything outside the two drivers that needs to know a display task exists -- the null checks on
+// the display queue and thread id, the task monitor's stack-usage report -- must test BOTH of
+// these, never one. Gating on a single panel's enable silently compiles the feature out when the
+// other panel is selected: that is how the display task's stack high-water mark fell off the USB
+// stream when this board moved to the ILI9341. There used to be a DISPLAY_TASK_ENABLE macro
+// spelling that disjunction once, but a derived value has no business in a file the desktop app
+// offers as a list of switches to override, so the disjunction is written out where it is used.
+#define LUMEX_LCD_TASK_ENABLE   0   // Lumex 16x2 character LCD, bit-banged over GPIO
+#define ILI9341_LCD_TASK_ENABLE 1   // ILI9341 320x240 SPI TFT
 
 #if (LUMEX_LCD_TASK_ENABLE + ILI9341_LCD_TASK_ENABLE) > 1
 #error "At most one display driver may be enabled: set at most one of LUMEX_LCD_TASK_ENABLE / ILI9341_LCD_TASK_ENABLE to 1."
 #endif
-
-// "A display task exists", which is what everything outside the two drivers actually wants to
-// know: null checks on the display queue and thread id, and the task monitor's stack-usage
-// report. Those must not be gated on one panel's own enable -- selecting the other panel then
-// silently compiles them out, which is exactly what happened when this board moved to the
-// ILI9341 and took the display task's stack high-water mark off the USB stream with it.
-#define DISPLAY_TASK_ENABLE (LUMEX_LCD_TASK_ENABLE || ILI9341_LCD_TASK_ENABLE)
 
 // USB Controller task settings
 // The mock-message stream used to live here as DEBUG_USB_CONTROLLER_MOCK_MESSAGES. It is now the

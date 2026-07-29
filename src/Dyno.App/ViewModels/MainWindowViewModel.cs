@@ -278,7 +278,9 @@ public partial class MainWindowViewModel : ObservableObject, IDeviceLinkGate
 
         // Start from what is in the box, so several notches in a row accumulate rather than each
         // one being applied to whatever the device last reported.
-        double percent = double.TryParse(DutyCycleInput, out double parsed) ? parsed : DutyCycle * 100.0;
+        double percent = double.TryParse(DutyCycleInput, out double parsed)
+            ? parsed
+            : DutyCycle * 100.0;
 
         await SendDutyCyclePercentAsync(percent + notches * DutyCycleWheelStepPercent)
             .ConfigureAwait(true);

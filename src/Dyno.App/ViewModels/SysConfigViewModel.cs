@@ -694,6 +694,7 @@ public partial class SysConfigViewModel : ObservableObject
                 // are quantities, where a literal 0 or 1 would be an ordinary number.
                 LoadFile(dir, "config.h", saved, binaryTogglesAreBool: false);
                 LoadFile(dir, "debug.h", saved, binaryTogglesAreBool: true);
+                WireExclusiveGroups();
                 LoadFailed = false;
                 StatusText = $"{_parameters.Count} compile-time settings";
             }
@@ -736,6 +737,29 @@ public partial class SysConfigViewModel : ObservableObject
                     Recount
                 )
             );
+        }
+    }
+
+    /// <summary>
+    /// Points each mutually exclusive switch at the others, so turning one on turns those off
+    /// rather than staging a build the firmware's <c>#error</c> would reject.
+    /// </summary>
+    /// <remarks>Runs after both headers are parsed: a group may span files, and every member has to
+    /// exist before any of them can be wired. Saved values are left exactly as loaded — normalising
+    /// a stored combination here would silently rewrite the user's settings on open, and the header
+    /// check still catches one that got in by some other route.</remarks>
+    private void WireExclusiveGroups()
+    {
+        foreach (var group in ConfigExclusiveGroups.Groups)
+        {
+            var members = _parameters
+                .Where(p => p.IsBool && group.Contains(p.Name, StringComparer.Ordinal))
+                .ToList();
+
+            foreach (var member in members)
+            {
+                member.Excludes(members.Where(other => other != member).ToList());
+            }
         }
     }
 

@@ -256,7 +256,13 @@
                 Text="BPM duty cycle"
                 ToolTip.Tip="Commands the brake, exactly as the rig's rotary encoder does. Editable only during a session — the firmware refuses outside one — and clamped to the min/max duty cycle set on the SysConfig page. Scroll over the box to nudge it by 1%."
               />
-              <StackPanel Grid.Row="8" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="4">
+              <StackPanel
+                Grid.Row="8"
+                Grid.Column="1"
+                Orientation="Horizontal"
+                HorizontalAlignment="Right"
+                Spacing="4"
+              >
                 <TextBox
                   Name="DutyCycleBox"
                   Classes="dutycycle"

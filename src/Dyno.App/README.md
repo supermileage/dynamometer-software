@@ -53,6 +53,14 @@ sits idle.
   applying are separate. Every row behaves the same way whichever section it is in: an edit is staged
   (blue dot), its default and accepted range are stated under it, Reset stages that default, and
   nothing is written until Apply.
+
+  One exception to "every row is independent": a few compile-time switches exclude each other, and
+  turning one on turns the others off in the page rather than staging a build the firmware's
+  `#error` would reject. The display panels are the case that exists —
+  `LUMEX_LCD_TASK_ENABLE` / `ILI9341_LCD_TASK_ENABLE`. They are not a radio group: **all off** is a
+  real configuration, and it is how the panel gets ruled in or out of a fault elsewhere on the
+  board. The list lives in `ConfigExclusiveGroups` ([[Dyno.Core]]), wired up once both headers are
+  parsed since a group may span `config.h` and `debug.h`.
 - **Firmware** (`FirmwareViewModel`) — build the firmware in the Docker toolchain, then flash it over
   SWD, USB DFU or UART. It runs `firmware/Scripts/` and shows their output verbatim.
 

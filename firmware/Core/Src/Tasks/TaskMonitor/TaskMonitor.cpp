@@ -36,7 +36,7 @@ bool TaskMonitor::Init()
 		#if PID_CONTROLLER_TASK_ENABLE
 		|| _osThreadIdPtrs->pid_controller == nullptr
 		#endif
-		#if DISPLAY_TASK_ENABLE
+		#if (LUMEX_LCD_TASK_ENABLE || ILI9341_LCD_TASK_ENABLE)
 		|| _osThreadIdPtrs->display == nullptr
 		#endif
 	)
@@ -94,7 +94,7 @@ void TaskMonitor::Run()
 		#if PID_CONTROLLER_TASK_ENABLE
 		GetTaskDataAndSendToUsbController(TASK_OFFSET_PID_CONTROLLER, _osThreadIdPtrs->pid_controller);
 		#endif
-		#if DISPLAY_TASK_ENABLE
+		#if (LUMEX_LCD_TASK_ENABLE || ILI9341_LCD_TASK_ENABLE)
 		GetTaskDataAndSendToUsbController(TASK_OFFSET_DISPLAY, _osThreadIdPtrs->display);
 		#endif
 

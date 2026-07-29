@@ -120,9 +120,11 @@
 // the old 5 gave up (and dropped the batch) during ordinary congestion, not just dead hosts.
 #define USB_TX_FLUSH_MAX_RETRIES 20
 
-// LCD config
+// ===== Display =====
+// Applies whichever panel is fitted. Which one that is, is a task enable in debug.h.
 #define LCD_TASK_OSDELAY 20
 
+// ===== Display: Lumex 16x2 =====
 // The Lumex panel's character grid. The display message no longer carries strings -- it
 // carries screen state, and the Lumex driver lays that out into a grid this size -- so these
 // describe the panel itself rather than a queue payload, which is what the old
@@ -130,8 +132,9 @@
 #define LUMEX_LCD_ROWS 2
 #define LUMEX_LCD_COLUMNS 16
 
-// Which way up the ILI9341 panel is fitted. Both LANDSCAPE and LANDSCAPE_FLIP are 320x240,
-// so this changes nothing but the origin corner -- the layout is unaffected either way.
+// ===== Display: ILI9341 320x240 TFT =====
+// Which way up the panel is fitted. Both LANDSCAPE and LANDSCAPE_FLIP are 320x240, so this
+// changes nothing but the origin corner -- the layout is unaffected either way.
 //
 // FLIP because the panel is mounted 180 degrees from the controller's default landscape:
 // LANDSCAPE rendered the screens upside down on the rig. This is a property of the enclosure,

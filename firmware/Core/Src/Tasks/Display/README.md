@@ -166,8 +166,14 @@ character grid and in pixels.
 #define ILI9341_LCD_TASK_ENABLE 1
 ```
 
-`DISPLAY_TASK_ENABLE` is derived from the pair and is what code outside the two drivers
-should test. Both drivers are always compiled; `--gc-sections` drops the unused one.
+Code outside the two drivers must test **both**, never one — `#if (LUMEX_LCD_TASK_ENABLE ||
+ILI9341_LCD_TASK_ENABLE)`. Gating on a single panel's enable silently compiles the feature out
+when the other panel is selected, which is how the display task's stack high-water mark fell off
+the USB stream when this board moved to the ILI9341. A `DISPLAY_TASK_ENABLE` macro used to spell
+that disjunction once, but a derived value has no business in a header the desktop app offers as
+a list of switches to override, so it is written out at the four sites that need it.
+
+Both drivers are always compiled; `--gc-sections` drops the unused one.
 
 **Neither enabled is legal**, and useful: the display task parks and nothing drives SPI1,
 which is how the panel gets ruled in or out of a fault elsewhere on the board. It is not the

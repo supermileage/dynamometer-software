@@ -37,6 +37,15 @@ public class FirmwareConfigFileTests
         // LCD config
         #define SESSION_CONTROLLER_TO_LUMEX_LCD_MSG_STRING_SIZE 16 + 1
 
+        // ===== Display: Lumex 16x2 =====
+        // The Lumex panel's character grid.
+        #define LUMEX_LCD_ROWS 2
+        #define LUMEX_LCD_COLUMNS 16
+
+        // ===== Display: ILI9341 320x240 TFT =====
+        // Which way up the panel is fitted.
+        #define ILI9341_DISPLAY_ROTATION ILI9341_ROTATION_LANDSCAPE_FLIP
+
         // User Input Config (like buttons)
         #define USER_INPUT_CIRCULAR_BUFFER_SIZE 100u
 
@@ -60,6 +69,11 @@ public class FirmwareConfigFileTests
         // Task enable/disables
         #define FORCE_SENSOR_ADS1115_TASK_ENABLE 1
 
+        // ===== Display =====
+        // At most one panel, chosen here and flashed. Neither enabled is legal.
+        #define LUMEX_LCD_TASK_ENABLE   0   // Lumex 16x2 character LCD
+        #define ILI9341_LCD_TASK_ENABLE 1   // ILI9341 320x240 SPI TFT
+
         // USB Controller task settings
         #define USB_CONTROLLER_TASK_ENABLE 1
         #define DEBUG_USB_CONTROLLER_MOCK_MESSAGES 0
@@ -81,7 +95,7 @@ public class FirmwareConfigFileTests
     {
         var file = ParseConfig();
         Assert.DoesNotContain(file.Defines, d => d.Name == "INC_CONFIG_CONFIG_H_");
-        Assert.Equal(10, file.Defines.Count);
+        Assert.Equal(13, file.Defines.Count);
     }
 
     [Fact]
@@ -154,5 +168,41 @@ public class FirmwareConfigFileTests
     {
         var file = ParseDebug();
         Assert.All(file.Defines, d => Assert.Equal(ConfigValueKind.Bool, d.Kind));
+    }
+
+    // The SysConfig page groups by category, so these assertions are what put the two panel
+    // switches on one card and each panel's own settings on a card of its own. Before the headers
+    // carried banners here, the category was the first line of the prose above the define --
+    // "The Lumex panel's character grid. The display message no longer carries strings..." was a
+    // section name on screen.
+    [Fact]
+    public void BothPanelSwitchesShareOneDisplaySection()
+    {
+        var file = ParseDebug();
+        Assert.Equal("Display", Get(file, "LUMEX_LCD_TASK_ENABLE").Category);
+        Assert.Equal("Display", Get(file, "ILI9341_LCD_TASK_ENABLE").Category);
+    }
+
+    [Fact]
+    public void PanelSpecificSettingsGetTheirOwnSection()
+    {
+        var file = ParseConfig();
+        Assert.Equal("Display: Lumex 16x2", Get(file, "LUMEX_LCD_ROWS").Category);
+        Assert.Equal("Display: Lumex 16x2", Get(file, "LUMEX_LCD_COLUMNS").Category);
+        Assert.Equal(
+            "Display: ILI9341 320x240 TFT",
+            Get(file, "ILI9341_DISPLAY_ROTATION").Category
+        );
+    }
+
+    // A banner block sets the category and is otherwise discarded, so the only way a switch gets
+    // its own description is a trailing comment. Without these the Display card is two unlabelled
+    // toggles named after C macros.
+    [Fact]
+    public void PanelSwitchesKeepTheirTrailingDescriptions()
+    {
+        var file = ParseDebug();
+        Assert.Equal("Lumex 16x2 character LCD", Get(file, "LUMEX_LCD_TASK_ENABLE").Description);
+        Assert.Equal("ILI9341 320x240 SPI TFT", Get(file, "ILI9341_LCD_TASK_ENABLE").Description);
     }
 }
