@@ -57,8 +57,8 @@
 // bit the encoder ISR samples came off a floating pin. It read correctly while SPI1 was idle
 // and randomly once the panel drove it, which is why the brake random-walked to 0% only on this
 // branch and only while the encoder was turning. Fixed in the .ioc; the panel is back on.
-#define LUMEX_LCD_TASK_ENABLE   0
-#define ILI9341_LCD_TASK_ENABLE 1
+#define LUMEX_LCD_TASK_ENABLE   1
+#define ILI9341_LCD_TASK_ENABLE 0
 
 #if (LUMEX_LCD_TASK_ENABLE + ILI9341_LCD_TASK_ENABLE) > 1
 #error "At most one display driver may be enabled: set at most one of LUMEX_LCD_TASK_ENABLE / ILI9341_LCD_TASK_ENABLE to 1."

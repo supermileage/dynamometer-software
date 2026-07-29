@@ -57,7 +57,17 @@
 //
 // ENABLE_PULSE_US doubles as the instruction-execution wait. The controller needs ~37 us to
 // retire an ordinary instruction, far longer than the ~450 ns the enable pulse itself must be
-// held, so holding E for 40 us covers both and lets the next byte follow immediately.
+// held. Nothing waits after E falls, so it is this hold that spaces one latch from the next and
+// it has to cover the execution time on its own. 40 us covers it and lets the next byte follow
+// immediately.
+//
+// If the panel is ever intermittent -- dropped or garbled characters, worse when warm -- raise
+// this first. When TIM13 timed the pulse it counted at 500 kHz (200 MHz APB1 timer clock / 400),
+// so the ARR of 40 it was handed was 41 ticks of 2 us: the wire saw ~82 us, and the 40 in that
+// code was ticks wearing the units of microseconds. This is the value the datasheet asks for and
+// the value the code always appeared to use, but it is half of what the board actually ran on
+// for years, and the ~37 us it has to cover moves 20-30% with the controller's internal RC
+// oscillator. With no R/W pin there is no busy flag to ask whether it was long enough.
 #define LUMEX_ENABLE_PULSE_US       40u
 
 // CLEAR and HOME are the two slow instructions, ~1.52 ms; 20 ms is generous and only ever

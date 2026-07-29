@@ -8,7 +8,7 @@ code:
   - Core/Src/Tasks/Display/Lumex/lumex_layout.c
   - Core/Inc/Tasks/Display/Lumex/lumexlcd_main.h
 entry_point: lumex_lcd_main()
-related: [Display, Lumex panel driver]
+related: [Display, Lumex panel driver, TimeKeeping]
 ---
 
 # Lumex display — rendering on a 2x16 character grid
@@ -125,10 +125,15 @@ itself:
   stretch a full repaint from ~2.6 ms to ~64 ms. [[Lumex panel driver]] explains why that 40 µs
   is not negotiable.
 
-`Init()` starts the timestamp counter itself. `SessionController` also starts it, and starting
-twice is harmless — doing it here is what keeps this task working when
-`SESSION_CONTROLLER_TASK_ENABLE` is 0, which would otherwise leave `PanelDelayUs` waiting on a
-frozen counter forever. The busy-wait is bounded as well as timed for the same reason.
+`Init()` starts the timestamp counter itself, because `SESSION_CONTROLLER_TASK_ENABLE 0` is a
+legal configuration and would otherwise leave `PanelDelayUs` waiting on a frozen counter forever.
+The busy-wait is bounded as well as timed for the same reason.
+
+In every normal build this call is the **second** one — `SessionController` runs at
+`osPriorityHigh` against this task's `osPriorityBelowNormal`, so it always gets there first. That
+was a real bug for one commit: `HAL_TIM_Base_Start` reports an already-running timer as
+`HAL_ERROR`, this `Init()` treated it as fatal, and the task suspended itself with the panel
+blank. `start_timestamp_timer()` is now idempotent — see [[TimeKeeping]].
 
 ---
 
@@ -157,4 +162,4 @@ full repaint is ~197 ms and diffing is what makes the panel usable at all.
 Timing constants are in `Drivers/Lumex/LumexPanel_main.h`.
 
 ## Related
-[[Display]] · [[Lumex panel driver]] · [[SessionController]]
+[[Display]] · [[Lumex panel driver]] · [[SessionController]] · [[TimeKeeping]]

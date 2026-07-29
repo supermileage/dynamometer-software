@@ -30,9 +30,27 @@ inline uint32_t get_timestamp()
     return __HAL_TIM_GET_COUNTER(timestampTimer);
 }
 
+// Idempotent, which HAL_TIM_Base_Start underneath it is not: that returns HAL_ERROR whenever the
+// handle is not in READY state, and a timer someone has already started is BUSY. So a second
+// caller is told "failed" when the truth is "already running, nothing to do".
+//
+// Two callers legitimately need this counter: SessionController stamps samples from it, and the
+// Lumex display measures its enable pulse against it. Neither can know which initialises first,
+// and here SessionController does -- it runs at osPriorityHigh against the display's
+// osPriorityBelowNormal -- so the display got HAL_ERROR, reported ERROR_DISPLAY_INIT_FAILURE and
+// suspended itself. A blank panel, from a timer that was running perfectly.
+//
+// The fix is to ask the hardware whether the counter is running rather than asking the HAL
+// whether it was this caller who started it. A handle that was never initialised still fails
+// honestly: CEN stays clear, and HAL_ERROR comes back.
 inline HAL_StatusTypeDef start_timestamp_timer()
 {
-	return HAL_TIM_Base_Start(timestampTimer);
+	if ((timestampTimer->Instance->CR1 & TIM_CR1_CEN) == 0U)
+	{
+		(void)HAL_TIM_Base_Start(timestampTimer);
+	}
+
+	return ((timestampTimer->Instance->CR1 & TIM_CR1_CEN) != 0U) ? HAL_OK : HAL_ERROR;
 }
 
 uint32_t get_timestamp_scale(void);

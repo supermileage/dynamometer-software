@@ -12,7 +12,11 @@ Provides the monotonic timestamp stamped onto every sensor / error / monitor rec
 
 ## API (timestamps.h)
 - `uint32_t get_timestamp()` — current tick, `0 .. UINT32_MAX`.
-- `HAL_StatusTypeDef start_timestamp_timer()` — starts the hardware timer; called once by [[SessionController]] in `Init()`.
+- `HAL_StatusTypeDef start_timestamp_timer()` — starts the hardware timer. **Idempotent**: safe to
+  call from more than one task's `Init()`, and returns `HAL_OK` if the counter is already running.
+  Called by [[SessionController]] and, when that panel is fitted, by [[Lumex display]] — whose
+  enable pulse is measured against this counter, so it cannot assume the session controller is
+  compiled in. See Behavior below for why the idempotence is not free.
 - `get_timestamp_scale()`, `get_apb1_timer_clock()`, `get_apb2_timer_clock()`, `get_timer_clock(TIMx)` — clock-rate helpers (used by OpticalSensor to convert ticks → seconds).
 
 ## Behavior
@@ -30,6 +34,14 @@ Provides the monotonic timestamp stamped onto every sensor / error / monitor rec
 
   Anything new that measures across timestamps must do the same; a signed difference is the bug
   this note exists to prevent.
+- **Starting twice:** `start_timestamp_timer()` checks `TIM2->CR1.CEN` and only calls
+  `HAL_TIM_Base_Start` if the counter is stopped. That wrapper is not decoration. The HAL call
+  returns `HAL_ERROR` whenever the handle is not in `READY` state, and a timer someone has already
+  started is `BUSY` — so it reports "already running" and "failed to start" with the same value.
+  The Lumex display took that at face value, logged `ERROR_DISPLAY_INIT_FAILURE` and suspended its
+  own task, leaving a blank panel driven by a timer that was working perfectly. Asking the hardware
+  whether the counter is running answers the question the callers are actually asking. A handle
+  that was never initialised still fails: `CEN` stays clear and `HAL_ERROR` comes back.
 - Clock-rate helpers may be inaccurate if the RCC tree gets more complex; revisit if clocks change.
 
 ## Related

@@ -81,6 +81,15 @@ no further delay.
 The two exceptions are `CLEAR` and `HOME`, which take ~1.52 ms. `ClearDisplay` waits
 `LUMEX_CLEAR_DELAY_MS` (20 ms, generous) after them.
 
+**If the panel is ever intermittent, raise this first.** Dropped or garbled characters, worse
+when the board is warm, is what too short a hold looks like. When TIM13 timed this pulse it
+counted at 500 kHz — 200 MHz APB1 timer clock over a prescaler of 400 — so the `StartTimer(40)`
+in that code meant 41 ticks of 2 µs and the wire saw **~82 µs**. The `40` was ticks wearing the
+units of microseconds. 40 µs is what the datasheet asks for and what that code always appeared
+to be doing, but it is half of what the board actually ran on for years, and the ~37 µs it has
+to cover moves 20–30% with the controller's internal RC oscillator. With no R/W pin there is no
+busy flag to ask whether it was long enough.
+
 ---
 
 ## 2. The instruction set — what each command does

@@ -21,6 +21,9 @@ extern task_error_data task_error_circular_buffer[TASK_ERROR_CIRCULAR_BUFFER_SIZ
 // timer and saved no CPU, because the spin was there either way. Spinning 40 us directly is the
 // same behaviour with none of the machinery, and TIM13 is now free.
 //
+// Note that TIM13 counted at 500 kHz, so the pulse it produced was ~82 us rather than the 40 us
+// its argument implied. See LUMEX_ENABLE_PULSE_US before adjusting this.
+//
 // osDelay cannot do this job: at a 1 kHz tick its floor is 1 ms, which would stretch every byte
 // 25x and a full 32-cell repaint from ~2.6 ms to ~64 ms.
 //
@@ -33,7 +36,10 @@ static void PanelDelayUs(uint32_t microseconds)
 {
     const uint32_t start = get_timestamp();
 
-    // Generous: at 1 us per tick this is ~40x the longest wait ever asked for.
+    // Counts iterations, not microseconds -- it only exists for the case where the counter is
+    // frozen and the timed condition can never come true. Each pass is a volatile read of CNT
+    // and a compare, so a 40 us wait needs a couple of thousand of these and the limit is far
+    // enough above that to never end a healthy wait early.
     uint32_t guard = 0;
     const uint32_t guardLimit = 100000u;
 
@@ -83,8 +89,13 @@ LumexLCD::LumexLCD() :
 bool LumexLCD::Init()
 {
 	// PanelDelayUs measures against this counter, so it has to be running before the panel is
-	// touched. SessionController starts it too and starting twice is harmless -- doing it here
-	// as well is what keeps this task working when the session controller is compiled out.
+	// touched. SessionController starts it too, and here it always gets there first -- it runs
+	// at osPriorityHigh against this task's osPriorityBelowNormal. Doing it here as well is what
+	// keeps this task working when the session controller is compiled out.
+	//
+	// So this call is normally the *second* one, which is exactly what start_timestamp_timer was
+	// changed to tolerate: HAL_TIM_Base_Start underneath it reports an already-running timer as
+	// HAL_ERROR, and taking that at face value suspended this task and blanked the panel.
 	if (start_timestamp_timer() != HAL_OK)
 	{
 		task_error_data error_data = PopulateTaskErrorDataStruct(
