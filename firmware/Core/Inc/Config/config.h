@@ -32,6 +32,22 @@
 // User Input Config (like buttons)
 #define USER_INPUT_CIRCULAR_BUFFER_SIZE 100u
 
+// Rotary encoder input conditioning.
+//
+// The encoder is decoded the cheap way: an EXTI on ROT_EN_A, reading ROT_EN_B's level to get
+// the direction. That has no filtering of any kind, so a bounced contact gives extra ticks and
+// a disturbed read of B gives a tick in the wrong direction -- and a wrong direction is worse
+// than a missed tick, because the brake setpoint then random-walks instead of merely lagging.
+//
+// Two guards, both cheap enough for interrupt context:
+//   DEBOUNCE_US  -- ignore an A edge that lands within this long of the last accepted one.
+//                   A hand-turned encoder produces edges milliseconds apart; contact bounce
+//                   and coupled noise are microseconds. 0 disables.
+//   DIRECTION_SAMPLES -- read B this many times and take the majority, so a single disturbed
+//                   sample cannot decide which way the knob went. Must be odd.
+#define ROTARY_ENCODER_DEBOUNCE_US 1000u
+#define ROTARY_ENCODER_DIRECTION_SAMPLES 3u
+
 // Session Controller Config
 // 10ms = 100 Hz torque/power. Task delays below are tuned as a set: at the old rates the four
 // streams totalled ~38 kB/s, which saturated the USB TX path once a session started (rising
