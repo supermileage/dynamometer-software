@@ -56,8 +56,8 @@ static uint8_t ili9341_scratch[ILI9341_SCRATCH_PIXELS * 2];
 
 // How long HAL_SPI_Transmit may block.
 //
-// Deliberately far longer than any transfer here needs -- the largest is 96 bytes, ~61 us at
-// 12.5 MHz. The timeout is wall-clock, and it keeps counting while the caller is preempted:
+// Deliberately far longer than any transfer here needs -- the largest is 96 bytes, ~123 us at
+// 6.25 MHz. The timeout is wall-clock, and it keeps counting while the caller is preempted:
 // this runs in the lowest-priority task on the board, so a burst of sensor, PID and USB work
 // during session start can stall it for a long time between HAL's polls. A timeout tuned to
 // the transfer would fire on scheduling latency rather than on a real bus fault, which is a
