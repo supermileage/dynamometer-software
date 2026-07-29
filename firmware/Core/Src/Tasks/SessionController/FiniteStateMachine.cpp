@@ -2,8 +2,10 @@
 
 #include "Config/sysconfig.h"
 
-FSM::FSM(osMessageQueueId_t sessionControllerToLumexLcdHandle) :
-        _sessionControllerToLumexLcdHandle(sessionControllerToLumexLcdHandle),
+#include "TimeKeeping/timestamps.h"
+
+FSM::FSM(osMessageQueueId_t sessionControllerToDisplayHandle) :
+        _toDisplayHandle(sessionControllerToDisplayHandle),
         _state{
             State::MainDynoState::INIT_STATE,
             State::SettingsState::INIT_STATE,
@@ -14,6 +16,11 @@ FSM::FSM(osMessageQueueId_t sessionControllerToLumexLcdHandle) :
         _desiredRpm(5000),
         _pidEnabled(false),
         _desiredManualBpmDutyCycle(0),
+        _rpm(0.0f),
+        _force(0.0f),
+        _angularAcceleration(0.0f),
+        _peakForce(0.0f),
+        _sessionStartTimestamp(0),
         // A brake already held as we come up is not a request to start a session -- it is just how
         // the board was left, or a finger on the button during a reset. Start disarmed in that case
         // so nothing can run until the button has been released and pressed deliberately.
@@ -25,7 +32,9 @@ FSM::FSM(osMessageQueueId_t sessionControllerToLumexLcdHandle) :
         // a UI that was not yet on screen, and replaying it would act on it.
         _fsmInputDataIndex(interrupt_input_data_index)
         {
-            ClearDisplay();
+            // No explicit clear: the driver clears whenever the screen id changes, and its
+            // "nothing rendered yet" state counts as a change, so coming up on the idle
+            // screen still starts from a blank panel.
             ShowIdleScreen();
         }
 
@@ -97,7 +106,7 @@ void FSM::HandleRotaryEncoderInSettings(bool positiveTick)
         // Inside the editor a tick changes the digit under the cursor rather than the page.
         case State::SettingsState::PID_DESIRED_RPM_EDIT:
             AdjustDesiredRpm(positiveTick);
-            ShowDesiredRpmEditor(false);
+            ShowDesiredRpmEditor();
             break;
 
         // Unreachable -- the toggle settings have no edit screen (see State::SettingsState).
@@ -140,7 +149,7 @@ void FSM::HandleButtonBackInSettings()
         // In the editor, BACK walks the digit cursor left; off the left end it leaves the editor.
         case State::SettingsState::PID_DESIRED_RPM_EDIT:
             if (StepDesiredRpmDigit(-1)) ShowDesiredRpmPage();
-            else ShowDesiredRpmEditor(false);
+            else ShowDesiredRpmEditor();
             break;
 
         // Unreachable -- the toggle settings have no edit screen (see State::SettingsState).
@@ -188,13 +197,13 @@ void FSM::HandleButtonSelectInSettings()
             break;
 
         case State::SettingsState::PID_DESIRED_RPM_DISPLAYED:
-            ShowDesiredRpmEditor(true);
+            ShowDesiredRpmEditor();
             break;
 
         // In the editor, SELECT walks the digit cursor right; off the right end it leaves.
         case State::SettingsState::PID_DESIRED_RPM_EDIT:
             if (StepDesiredRpmDigit(+1)) ShowDesiredRpmPage();
-            else ShowDesiredRpmEditor(false);
+            else ShowDesiredRpmEditor();
             break;
 
         // Unreachable -- the toggle settings have no edit screen (see State::SettingsState).
@@ -222,6 +231,17 @@ void FSM::HandleButtonBrakeInput(bool isEnabled)
         {
             return;
         }
+
+        // A press while a session is already running is not a request to start one -- it is a
+        // second edge from a bouncing contact, or noise coupled into the line. ShowSessionScreen
+        // is destructive (it zeroes the commanded duty cycle, wipes the peak force and restarts
+        // the session clock), so re-entering it mid-run drops the brake to 0% under the user's
+        // hand. Ignore it: only a real IDLE -> IN_SESSION transition may reset those.
+        if (_state.mainState == State::MainDynoState::IN_SESSION)
+        {
+            return;
+        }
+
         ShowSessionScreen();
     }
     else
@@ -251,6 +271,27 @@ void FSM::AdjustBrakeDutyCycle(bool positiveTick)
 
     _desiredManualBpmDutyCycle =
         std::clamp(_desiredManualBpmDutyCycle + increment, minDutyCycle, maxDutyCycle);
+}
+
+// The host's equivalent of turning the brake knob. Deliberately routed through the same state
+// the encoder writes, so everything downstream -- the clamp, the BPM post, the on-screen
+// readout -- behaves identically whether the request came from the rig or from the PC.
+bool FSM::SetHostBrakeDutyCycle(float dutyCycle)
+{
+    if (_state.mainState != State::MainDynoState::IN_SESSION)
+    {
+        return false;
+    }
+
+    float minDutyCycle;
+    float maxDutyCycle;
+    sysconfig_get_duty_cycle_limits(&minDutyCycle, &maxDutyCycle);
+
+    _desiredManualBpmDutyCycle = std::clamp(dutyCycle, minDutyCycle, maxDutyCycle);
+
+    PostDisplayState();
+
+    return true;
 }
 
 // How much one encoder tick moves the desired RPM, given which digit the cursor is on.
@@ -295,10 +336,7 @@ void FSM::ShowIdleScreen()
 {
     _state.mainState = State::MainDynoState::IDLE;
 
-    ClearDisplay();
-
-    WriteText(0, 6, "DYNO");
-    WriteText(1, 2, "PRESS SELECT");
+    PostDisplayState();
 }
 
 void FSM::ShowSdLoggingPage()
@@ -306,10 +344,7 @@ void FSM::ShowSdLoggingPage()
     _state.mainState = State::MainDynoState::SETTINGS_MENU;
     _state.settingsState = State::SettingsState::SD_LOGGING_OPTION_DISPLAYED;
 
-    ClearDisplay();
-
-    WriteText(0, 3, "SD LOGGING");
-    ShowEnabledDisabled(_sdLoggingEnabled);
+    PostDisplayState();
 }
 
 void FSM::ShowPidEnablePage()
@@ -317,17 +352,7 @@ void FSM::ShowPidEnablePage()
     _state.mainState = State::MainDynoState::SETTINGS_MENU;
     _state.settingsState = State::SettingsState::PID_ENABLE_DISPLAYED;
 
-    ClearDisplay();
-
-    WriteText(0, 2, "PID LOGGING");
-    ShowEnabledDisabled(_pidOptionToggleableEnabled);
-}
-
-// The second row shared by both toggle pages.
-void FSM::ShowEnabledDisabled(bool enabled)
-{
-    if (enabled) WriteText(1, 4, "ENABLED");
-    else WriteText(1, 4, "DISABLED");
+    PostDisplayState();
 }
 
 void FSM::ShowDesiredRpmPage()
@@ -336,37 +361,30 @@ void FSM::ShowDesiredRpmPage()
     _state.settingsState = State::SettingsState::PID_DESIRED_RPM_DISPLAYED;
     _state.desiredRpmUnitsState = State::DesiredRpmUnitsState::INIT_STATE;
 
-    ClearDisplay();
-
-    WriteText(0, 2, "PID DES RPM");
-
-    char buffer[6];
-    snprintf(buffer, sizeof(buffer), "%5d", _desiredRpm);
-
-    WriteText(1, 5, buffer);
+    PostDisplayState();
 }
 
-// Same page with the cursor's step size alongside the value, so the user can see which digit a
-// tick will move. Entering from the display page clears first; redraws while editing do not,
-// because the layout does not change.
-void FSM::ShowDesiredRpmEditor(bool clearDisplay)
+// The same page with the cursor's step size shown alongside the value, so the user can see
+// which digit a tick will move. It no longer takes a "clear first" flag: entering from the
+// display page is a change of screen id and the driver clears on that by itself, while a
+// redraw mid-edit is not and so does not clear -- exactly the old distinction, but derived
+// rather than passed in.
+void FSM::ShowDesiredRpmEditor()
 {
     _state.mainState = State::MainDynoState::SETTINGS_MENU;
     _state.settingsState = State::SettingsState::PID_DESIRED_RPM_EDIT;
 
-    if (clearDisplay) ClearDisplay();
-
-    WriteText(0, 2, "PID DES RPM");
-
-    char buffer[12];
-    snprintf(buffer, sizeof(buffer), "%5d %5d", _desiredRpm, DesiredRpmDigitIncrement());
-
-    WriteText(1, 2, buffer);
+    PostDisplayState();
 }
 
 void FSM::ShowSessionScreen()
 {
     _state.mainState = State::MainDynoState::IN_SESSION;
+
+    // Reset the per-session figures on the way in, so a new run does not inherit the last
+    // one's peak or clock.
+    _peakForce = 0.0f;
+    _sessionStartTimestamp = get_timestamp();
 
     // Deliberately 0 rather than the envelope's floor: nothing has been commanded yet, and the
     // SessionController sends START_PWM the moment this value differs from what it last sent --
@@ -374,74 +392,107 @@ void FSM::ShowSessionScreen()
     // first encoder tick moves into the envelope.
     _desiredManualBpmDutyCycle = 0.0f;
 
-    ClearDisplay();
-
-    // The values are filled in by the SessionController through the Display* methods below.
-    // Two measured quantities and the drive mode. Torque and power used to sit here, but the
-    // device no longer derives them -- the host does, from these same measurements.
-    //        col: 0123456789012345
-    WriteText(0, 0, "n:     0 rpm    ");
-    WriteText(1, 0, "F:    0.00 N    ");
+    PostDisplayState();
 }
 
 
 // ---------------------------------------------------------------------------- display fields
 
-void FSM::DisplayRpm(float rpm)
-{
-    char buf[6];
-    uint32_t value = static_cast<uint32_t>(std::round(rpm));
-    // uint32_t is unsigned long on this target, but not everywhere the file is compiled.
-    snprintf(buf, sizeof(buf), "%5lu", static_cast<unsigned long>(value));
+// Each of these records a value and reposts everything. The SessionController already calls
+// them only when its reading has moved, and the driver diffs again on its side, so reposting
+// the whole state costs one queue message and no panel traffic.
 
-    WriteText(0, 3, buf);
+// Takes rad/s, because that is what the optical encoder measures and what every other consumer
+// of that reading wants. The panel is the only place RPM is the right unit, so the conversion
+// happens here, once, rather than in each display driver.
+void FSM::DisplayAngularVelocity(float angularVelocity)
+{
+    _rpm = encoder_rpm(angularVelocity);
+    PostDisplayState();
 }
 
 void FSM::DisplayForce(float force)
 {
-    char buf[7];
-    float value = std::round(force * 100.0) / 100.0;
-    snprintf(buf, sizeof(buf), "%6.2f", value);
+    _force = force;
 
-    // %6.2f is 6 chars wide, at cols 2-7: clear of the "F:" label and of the drive-mode
-    // field at col 12, so neither can be overwritten however large the reading gets.
-    WriteText(1, 2, buf);
+    // Track the peak by magnitude: the rig is loaded whichever way the cell is driven.
+    const float magnitude = (force < 0.0f) ? -force : force;
+    if (magnitude > _peakForce)
+    {
+        _peakForce = magnitude;
+    }
+
+    PostDisplayState();
+}
+
+void FSM::DisplayAngularAcceleration(float angularAcceleration)
+{
+    _angularAcceleration = angularAcceleration;
+    PostDisplayState();
 }
 
 void FSM::DisplayPIDEnabled()
 {
-    if (_pidEnabled) WriteText(1, 12, "PIDE");
-    else WriteText(1, 12, "PIDD");
+    PostDisplayState();
 }
 
 void FSM::DisplayManualBPMDutyCycle()
 {
-    char buf[5];
-    uint8_t value = static_cast<uint8_t>(std::round(_desiredManualBpmDutyCycle * 100.0));
-    snprintf(buf, sizeof(buf), "B%3u", value);
-
-    WriteText(1, 12, buf);
+    PostDisplayState();
 }
 
-void FSM::ClearDisplay()
+display_screen_id FSM::CurrentScreen() const
 {
-    // The LCD task ignores the string for CLEAR_DISPLAY. It is empty rather than null because
-    // AddToLumexLCDMessageQueue copies it unconditionally.
-    AddToLumexLCDMessageQueue(CLEAR_DISPLAY, 0, 0, "", 0);
+    switch (_state.mainState)
+    {
+        case State::MainDynoState::IN_SESSION:
+            return DISPLAY_SCREEN_SESSION;
+
+        case State::MainDynoState::SETTINGS_MENU:
+            switch (_state.settingsState)
+            {
+                case State::SettingsState::PID_ENABLE_DISPLAYED:
+                    return DISPLAY_SCREEN_PID_ENABLE;
+                case State::SettingsState::PID_DESIRED_RPM_DISPLAYED:
+                    return DISPLAY_SCREEN_DESIRED_RPM;
+                case State::SettingsState::PID_DESIRED_RPM_EDIT:
+                    return DISPLAY_SCREEN_DESIRED_RPM_EDIT;
+                // SD_LOGGING_OPTION_DISPLAYED, plus the two edit states nothing ever enters.
+                default:
+                    return DISPLAY_SCREEN_SD_LOGGING;
+            }
+
+        case State::MainDynoState::IDLE:
+        default:
+            return DISPLAY_SCREEN_IDLE;
+    }
 }
 
-void FSM::AddToLumexLCDMessageQueue(session_controller_to_lumex_lcd_opcode opcode, uint8_t row, uint8_t column, const char* display_string, size_t size)
+void FSM::PostDisplayState()
 {
-    session_controller_to_lumex_lcd msg;
-    msg.op = opcode;
-    msg.row = row;
-    msg.column = column;
-    msg.size = size;
+    session_controller_to_display msg;
+    memset(&msg, 0, sizeof(msg));
 
-    strncpy(msg.display_string, display_string, sizeof(msg.display_string) - 1);
-    msg.display_string[sizeof(msg.display_string) - 1] = '\0'; // Ensure null termination
+    msg.screen                = CurrentScreen();
+    msg.rpm                   = _rpm;
+    msg.force                 = _force;
+    msg.bpm_duty_cycle        = _desiredManualBpmDutyCycle;
+    msg.desired_rpm           = static_cast<uint32_t>(_desiredRpm);
+    msg.cursor_digit          = static_cast<display_rpm_digit>(_state.desiredRpmUnitsState);
+    msg.pid_enabled           = _pidEnabled;
+    msg.pid_option_toggleable = _pidOptionToggleableEnabled;
+    msg.sd_logging_enabled    = _sdLoggingEnabled;
+    msg.angular_acceleration  = _angularAcceleration;
+    msg.peak_force            = _peakForce;
 
-    osMessageQueuePut(_sessionControllerToLumexLcdHandle, &msg, 0, 0);
+    // Elapsed seconds, from the microsecond timestamp counter the rest of the board stamps
+    // samples with. Zero outside a session: _sessionStartTimestamp is only set on entry.
+    const uint32_t scale = get_timestamp_scale();
+    msg.session_seconds = (_sessionStartTimestamp != 0 && scale != 0)
+                          ? (get_timestamp() - _sessionStartTimestamp) / scale
+                          : 0;
+
+    osMessageQueuePut(_toDisplayHandle, &msg, 0, 0);
 }
 
 

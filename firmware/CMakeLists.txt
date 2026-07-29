@@ -12,6 +12,12 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
 
+# Pinned rather than left to the compiler default, which was gnu++17 and would drift with
+# the toolchain. C++20 is needed for the concept that both display drivers are checked
+# against; firmware/tests/CMakeLists.txt is already on 20.
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 
 # Define the build type
 if(NOT CMAKE_BUILD_TYPE)
@@ -59,15 +65,22 @@ file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/Core/Src/interrupts.c
     ${CMAKE_SOURCE_DIR}/Drivers/ADS1115/ADS1115.cpp
+    ${CMAKE_SOURCE_DIR}/Drivers/Lumex/LumexPanel.cpp
+    ${CMAKE_SOURCE_DIR}/Drivers/ILI9341/ILI9341.cpp
+    ${CMAKE_SOURCE_DIR}/Drivers/ILI9341/ILI9341_font.c
     ${APP_SOURCES}
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
-    # Application headers and the on-board ADS1115 force-sensor driver headers.
+    # Application headers, plus the on-board device drivers: the ADS1115 force sensor and the
+    # ILI9341 display. Both display drivers are always compiled; Config/debug.h picks which one
+    # the display task actually runs, and --gc-sections drops the other.
     ${CMAKE_SOURCE_DIR}/Core/Inc
     ${CMAKE_SOURCE_DIR}/Middlewares/CircularBuffer/Inc
     ${CMAKE_SOURCE_DIR}/Drivers/ADS1115
+    ${CMAKE_SOURCE_DIR}/Drivers/ILI9341
+    ${CMAKE_SOURCE_DIR}/Drivers/Lumex
 )
 
 # Add project symbols (macros)

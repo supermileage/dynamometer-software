@@ -2,6 +2,7 @@
 #define INC_CONFIG_CONFIG_H_
 
 #include "ADS1115_main.h"
+#include "ILI9341_main.h"
 
 // Tunable quantities below (gains, task delays, thresholds) are *boot defaults*: they
 // seed the runtime sysconfig store (Config/sysconfig.h), which the host can rewrite live
@@ -30,6 +31,22 @@
 
 // User Input Config (like buttons)
 #define USER_INPUT_CIRCULAR_BUFFER_SIZE 100u
+
+// Rotary encoder input conditioning.
+//
+// The encoder is decoded the cheap way: an EXTI on ROT_EN_A, reading ROT_EN_B's level to get
+// the direction. That has no filtering of any kind, so a bounced contact gives extra ticks and
+// a disturbed read of B gives a tick in the wrong direction -- and a wrong direction is worse
+// than a missed tick, because the brake setpoint then random-walks instead of merely lagging.
+//
+// Two guards, both cheap enough for interrupt context:
+//   DEBOUNCE_US  -- ignore an A edge that lands within this long of the last accepted one.
+//                   A hand-turned encoder produces edges milliseconds apart; contact bounce
+//                   and coupled noise are microseconds. 0 disables.
+//   DIRECTION_SAMPLES -- read B this many times and take the majority, so a single disturbed
+//                   sample cannot decide which way the knob went. Must be odd.
+#define ROTARY_ENCODER_DEBOUNCE_US 1000u
+#define ROTARY_ENCODER_DIRECTION_SAMPLES 3u
 
 // Session Controller Config
 // 10ms = 100 Hz torque/power. Task delays below are tuned as a set: at the old rates the four
@@ -103,9 +120,26 @@
 // the old 5 gave up (and dropped the batch) during ordinary congestion, not just dead hosts.
 #define USB_TX_FLUSH_MAX_RETRIES 20
 
-// LCD config
+// ===== Display =====
+// Applies whichever panel is fitted. Which one that is, is a task enable in debug.h.
 #define LCD_TASK_OSDELAY 20
-#define SESSION_CONTROLLER_TO_LUMEX_LCD_MSG_STRING_SIZE 16 + 1
+
+// ===== Display: Lumex 16x2 =====
+// The Lumex panel's character grid. The display message no longer carries strings -- it
+// carries screen state, and the Lumex driver lays that out into a grid this size -- so these
+// describe the panel itself rather than a queue payload, which is what the old
+// SESSION_CONTROLLER_TO_LUMEX_LCD_MSG_STRING_SIZE was really doing.
+#define LUMEX_LCD_ROWS 2
+#define LUMEX_LCD_COLUMNS 16
+
+// ===== Display: ILI9341 320x240 TFT =====
+// Which way up the panel is fitted. Both LANDSCAPE and LANDSCAPE_FLIP are 320x240, so this
+// changes nothing but the origin corner -- the layout is unaffected either way.
+//
+// FLIP because the panel is mounted 180 degrees from the controller's default landscape:
+// LANDSCAPE rendered the screens upside down on the rig. This is a property of the enclosure,
+// not of the driver, so it lives here rather than in ILI9341Display::Init().
+#define ILI9341_DISPLAY_ROTATION ILI9341_ROTATION_LANDSCAPE_FLIP
 
 // LED config
 #define LED_TASK_OSDELAY 500

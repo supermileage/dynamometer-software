@@ -17,7 +17,7 @@ typedef struct
     osThreadId_t bpm_controller;
     osThreadId_t pid_controller;
     osThreadId_t pid_controller_ack;
-    osThreadId_t lumex_lcd;
+    osThreadId_t display;   // Whichever display driver was compiled in
 } taskmonitor_osthreadids;
 
 

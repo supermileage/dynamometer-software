@@ -271,3 +271,34 @@ TEST(EncoderCounterTest, ConsecutiveWindowsLoseNoCounts)
     }
     EXPECT_EQ(summed, encoder_count_delta(readings[std::size(readings) - 1], readings[0]));
 }
+
+// --------------------------------------------------------------------------- unit conversion
+
+// Everything above is rad/s, which is the right unit to compute in and the wrong one to read off
+// a panel. The display used to print rad/s under an "rpm" label -- a shaft at 3000 RPM read as
+// 314 -- so the conversion is pinned here, next to the measurement it converts.
+TEST(EncoderRpmTest, ConvertsRadiansPerSecondToRevolutionsPerMinute)
+{
+    // One revolution per second is 2*pi rad/s and 60 RPM.
+    EXPECT_NEAR(encoder_rpm(2.0f * static_cast<float>(M_PI)), 60.0f, 1e-3f);
+
+    // The case that made the bug visible.
+    EXPECT_NEAR(encoder_rpm(314.159f), 3000.0f, 0.1f);
+}
+
+TEST(EncoderRpmTest, IsLinearAndSignPreserving)
+{
+    EXPECT_FLOAT_EQ(encoder_rpm(0.0f), 0.0f);
+    EXPECT_NEAR(encoder_rpm(-2.0f * static_cast<float>(M_PI)), -60.0f, 1e-3f);
+    EXPECT_NEAR(encoder_rpm(20.0f), 2.0f * encoder_rpm(10.0f), 1e-3f);
+}
+
+// The two halves of the round trip live on opposite sides of the display seam: the FSM converts
+// rad/s to RPM on the way to the panel, and back again for the PID setpoint (GetDesiredAngularVelocity).
+TEST(EncoderRpmTest, RoundTripsWithTheSetpointConversion)
+{
+    const float rpm = 4250.0f;
+    const float radiansPerSecond = rpm * 2.0f * static_cast<float>(M_PI) / 60.0f;
+
+    EXPECT_NEAR(encoder_rpm(radiansPerSecond), rpm, 1e-2f);
+}

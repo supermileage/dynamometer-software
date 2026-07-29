@@ -64,13 +64,29 @@ public static class ErrorCatalog
                 false,
                 "the brake's PWM timer refused to stop, so the brake may still be driven after the session ended. The task parks itself; treat the brake as live until the board is reset"
             ),
-            // lumex_lcd_task_error_ids.ERROR_LUMEX_LCD_TIMER_START_FAILURE
+            // display_task_error_ids.ERROR_LUMEX_LCD_TIMER_START_FAILURE
             new(
                 0x90000u,
-                task_offset_t.TASK_OFFSET_LUMEX_LCD,
+                task_offset_t.TASK_OFFSET_DISPLAY,
                 "LUMEX_LCD_TIMER_START_FAILURE",
                 false,
-                "the timer that clocks the on-board LCD would not start, so the display is blank or frozen. Nothing streamed to this app is affected — only the readout on the rig itself"
+                "the timer that clocks the on-board character LCD would not start, so the display is blank or frozen. Nothing streamed to this app is affected — only the readout on the rig itself"
+            ),
+            // display_task_error_ids.ERROR_DISPLAY_INIT_FAILURE
+            new(
+                0x90001u,
+                task_offset_t.TASK_OFFSET_DISPLAY,
+                "DISPLAY_INIT_FAILURE",
+                false,
+                "the on-board display would not initialise, so the rig has no local readout. Nothing streamed to this app is affected. Usually the display's wiring or its SPI settings"
+            ),
+            // display_task_error_ids.ERROR_DISPLAY_SPI_TRANSMIT_FAILURE
+            new(
+                0x90002u,
+                task_offset_t.TASK_OFFSET_DISPLAY,
+                "DISPLAY_SPI_TRANSMIT_FAILURE",
+                false,
+                "a write to the on-board display failed, so its readout has stopped updating and is showing stale values. Nothing streamed to this app is affected"
             ),
             // task_monitor_task_error_ids.ERROR_TASK_MONITOR_INVALID_THREAD_ID_POINTER
             new(

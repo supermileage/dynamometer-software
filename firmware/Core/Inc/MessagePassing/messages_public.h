@@ -56,7 +56,7 @@ typedef enum : uint32_t
     TASK_OFFSET_FORCE_SENSOR_ADS1115 = 6u  << TASK_OFFSET_SHIFT,
     TASK_OFFSET_BPM_CONTROLLER = 7u  << TASK_OFFSET_SHIFT,
     TASK_OFFSET_PID_CONTROLLER = 8u  << TASK_OFFSET_SHIFT,
-    TASK_OFFSET_LUMEX_LCD = 9u  << TASK_OFFSET_SHIFT
+    TASK_OFFSET_DISPLAY = 9u  << TASK_OFFSET_SHIFT
 } task_offset_t;
 
 typedef struct __attribute__((packed)) {
@@ -94,10 +94,12 @@ DYNO_STATIC_ASSERT(sizeof(bpm_task_error_ids) == 4, "Size of bpm_task_error_ids 
 
 typedef enum : uint32_t
 {
-    ERROR_LUMEX_LCD_TIMER_START_FAILURE = 0
-} lumex_lcd_task_error_ids;
+    ERROR_LUMEX_LCD_TIMER_START_FAILURE = 0,
+    ERROR_DISPLAY_INIT_FAILURE,
+    ERROR_DISPLAY_SPI_TRANSMIT_FAILURE
+} display_task_error_ids;
 
-DYNO_STATIC_ASSERT(sizeof(lumex_lcd_task_error_ids) == 4, "Size of lumex_lcd_task_error_ids must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(display_task_error_ids) == 4, "Size of display_task_error_ids must be 4 bytes");
 
 typedef enum : uint32_t
 {
@@ -248,7 +250,7 @@ DYNO_STATIC_ASSERT(sizeof(usb_msg_header_t) == 12, "Size of usb_msg_header_t mus
 // v6 host would decode the trailer as an unknown STATUS record and log it a few hundred
 // times a second.
 
-#define USB_PROTOCOL_VERSION 7u
+#define USB_PROTOCOL_VERSION 8u
 
 // Shared CRC so firmware and host compute identical checksums over a frame body.
 
@@ -313,6 +315,20 @@ typedef enum : uint16_t
     USB_CMD_ACK = 0,   // host acks the device-ready announce; body = uint32 protocol_version. Firmware replies USB_RSP_OK or USB_RSP_VERSION_MISMATCH
     USB_CMD_SET_SYSCONFIG = 1   // body = sysconfig_set_param_body; writes one runtime parameter into the sysconfig store. Applied by the USB task itself (the store is plain RAM), so the OK is still a full-path ack
 } usb_controller_command_t;
+
+// Session-controller-local commands: frames addressed to TASK_OFFSET_SESSION_CONTROLLER.
+typedef enum : uint16_t
+{
+    SESSION_CMD_SET_BRAKE_DUTY_CYCLE = 0   // body = session_set_brake_duty_body; sets the commanded brake duty cycle, exactly as a rotary-encoder tick on the rig would. Honoured only while a session is running and clamped to the MIN/MAX_DUTY_CYCLE_PERCENT envelope -- the brake is never actuated outside a session, however the request arrives. Answered USB_RSP_OK when applied and USB_RSP_NOT_SUPPORTED when no session is running
+} session_controller_command_t;
+
+// Body of SESSION_CMD_SET_BRAKE_DUTY_CYCLE. Fraction, not percent: 0.0 - 1.0, matching
+// MIN/MAX_DUTY_CYCLE_PERCENT and what the BPM task takes.
+typedef struct __attribute__((packed)) {
+    float duty_cycle;
+} session_set_brake_duty_body;
+
+DYNO_STATIC_ASSERT(sizeof(session_set_brake_duty_body) == 4, "Size of session_set_brake_duty_body must be 4 bytes");
 
 // Device-ready announcement (STM32 -> PC): emitted as USB_MSG_EVENT with task_offset
 // TASK_OFFSET_USB_CONTROLLER and repeated (~every 200ms) until the host answers with

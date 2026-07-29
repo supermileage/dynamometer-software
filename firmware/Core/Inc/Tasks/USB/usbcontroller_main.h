@@ -13,6 +13,7 @@ extern "C" {
 void usbcontroller_main(osMessageQueueId_t sessionControllerToUsbController,
                         osMessageQueueId_t taskMonitorToUsbControllerHandle,
                         osMessageQueueId_t forceSensorCommandQueue,
+                        osMessageQueueId_t sessionControllerCommandQueue,
                         osMessageQueueId_t taskCompletionQueue);
 
 #ifdef __cplusplus

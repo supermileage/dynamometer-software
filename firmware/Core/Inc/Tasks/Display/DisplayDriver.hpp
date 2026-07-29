@@ -1,0 +1,94 @@
+#ifndef INC_TASKS_DISPLAY_DISPLAYDRIVER_HPP_
+#define INC_TASKS_DISPLAY_DISPLAYDRIVER_HPP_
+
+// What every display driver has to be, and the task loop they share.
+//
+// A concept rather than a base class. Virtual dispatch would cost a vtable pointer per object
+// and an indirect call per draw for a choice that is fixed at link time -- exactly one driver
+// is compiled in -- so this checks the same contract at compile time and inlines through it.
+//
+// It also deliberately exposes no drawing primitives. A 16x2 character LCD and a 320x240 TFT
+// have wildly different capabilities, and any common *drawing* API would either cap the TFT or
+// be meaningless on the LCD. Render() takes the whole screen state and each driver does
+// whatever its panel can with it, so a richer panel needs nothing added here.
+
+#include <concepts>
+#include <cstring>
+
+#include "cmsis_os2.h"
+
+#include "Config/sysconfig.h"
+#include "MessagePassing/messages_private.h"
+
+template <typename T>
+concept DisplayDriver = requires(T driver, const session_controller_to_display& state)
+{
+    // Brings the panel up. False means the task suspends rather than spinning on dead hardware.
+    { driver.Init() } -> std::same_as<bool>;
+
+    // Blanks the panel and forgets what was on it, so the next Render repaints in full.
+    { driver.Clear() } -> std::same_as<bool>;
+
+    // Paints one screen state. Called on every message; drivers are expected to diff against
+    // what they last drew and repaint only what moved.
+    { driver.Render(state) } -> std::same_as<bool>;
+
+    // --- Extended session detail.
+    //
+    // Everything above is the common ground: values every panel can show. These are not.
+    // They are extra readouts for the in-session screen that need room a 2x16 character grid
+    // does not have, so LumexLCD implements them as one-line no-ops that discard the argument
+    // and the ILI9341 draws them.
+    //
+    // They sit here rather than only on ILI9341Display so the display task can call them
+    // without knowing which panel it has, and so a driver that quietly stopped implementing
+    // one is a compile error. The asymmetry is deliberate and is the cost of letting the TFT
+    // grow without dragging the character panel along: adding a fourth readout means one real
+    // implementation and one `(void)` line.
+    //
+    // Called before Render(), so a driver may simply record them and lay them out there.
+    { driver.ShowAngularAcceleration(float{}) } -> std::same_as<bool>;
+    { driver.ShowPeakForce(float{}) } -> std::same_as<bool>;
+    { driver.ShowSessionElapsed(uint32_t{}) } -> std::same_as<bool>;
+};
+
+// The queue-drain loop, identical for every panel.
+//
+// Drains to the newest message before drawing: each one is the whole of what should be on
+// screen, so the ones behind it are already stale and rendering them in turn would only paint
+// values the user is never going to see. That matters more the slower the panel is.
+//
+// Never returns, and that is load-bearing rather than stylistic. A FreeRTOS task function that
+// returns lands in prvTaskExitError(), which fails a configASSERT, calls
+// portDISABLE_INTERRUPTS() and spins -- so the whole rig dies, buttons and brake included, with
+// no LED and no fault report. A display is the least important thing on this board and must not
+// be able to do that: a failed write is reported through the error buffer and the loop carries
+// on. The driver repaints in full on its next pass, so a half-drawn screen corrects itself.
+// [[noreturn]] is the guard: adding a `return` here is what caused the fault above, and the
+// compiler now says so rather than leaving it to be found on the bench.
+template <DisplayDriver Display>
+[[noreturn]] void RunDisplayTask(Display& display, osMessageQueueId_t queue)
+{
+    session_controller_to_display state;
+    memset(&state, 0, sizeof(state));
+
+    for (;;)
+    {
+        if (osMessageQueueGet(queue, &state, 0, osWaitForever) == osOK)
+        {
+            while (osMessageQueueGet(queue, &state, 0, 0) == osOK);
+
+            // Detail first: a driver that renders these records them here and lays them out
+            // in Render. On the character panel all three are no-ops the optimiser deletes.
+            (void)display.ShowAngularAcceleration(state.angular_acceleration);
+            (void)display.ShowPeakForce(state.peak_force);
+            (void)display.ShowSessionElapsed(state.session_seconds);
+
+            (void)display.Render(state);
+        }
+
+        osDelay(sysconfig_get_u32(SYSCFG_LCD_TASK_OSDELAY));
+    }
+}
+
+#endif /* INC_TASKS_DISPLAY_DISPLAYDRIVER_HPP_ */

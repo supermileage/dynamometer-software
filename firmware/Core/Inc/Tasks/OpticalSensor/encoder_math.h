@@ -61,6 +61,15 @@ float encoder_velocity_upper_bound(uint32_t ticks_since_last_pulse,
                                    uint32_t ticks_per_second);
 
 /**
+ * @brief Revolutions per minute from an angular velocity in rad/s.
+ *
+ * Everything this file produces is rad/s, which is the right unit to compute in and the wrong
+ * one to read off a panel. Kept here rather than in a display driver so the conversion happens
+ * once, next to the measurement it belongs to, however many panels end up showing it.
+ */
+float encoder_rpm(float angular_velocity);
+
+/**
  * @brief Angular acceleration between two velocity samples.
  * @param delta_ticks Ticks between the instants the two velocities are attributed to.
  * @return rad/s^2, or 0 when no time separates them.

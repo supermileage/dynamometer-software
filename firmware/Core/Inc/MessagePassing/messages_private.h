@@ -27,25 +27,59 @@
 extern "C" {
 #endif
 
-// Opcodes for controlling the Lumex LCD display from the session controller
+// Which screen the session controller's FSM is showing. The message below carries screen
+// state, not draw commands: the FSM says what it is displaying and each display driver
+// renders that however its panel allows. A 16x2 character LCD and a 320x240 TFT have no
+// useful common drawing API -- the intersection caps the TFT at 16x2, the union is
+// meaningless on the character LCD -- so the seam is here instead, at what the values mean.
 typedef enum : uint32_t
 {
-    CLEAR_DISPLAY = 0,   // Clear the entire display
-    WRITE_TO_DISPLAY = 1   // Write a string to a specific location on the display
-} session_controller_to_lumex_lcd_opcode;
+    DISPLAY_SCREEN_IDLE = 0,   // Attract screen; SELECT opens the settings menu
+    DISPLAY_SCREEN_SD_LOGGING,   // Settings: SD logging on/off
+    DISPLAY_SCREEN_PID_ENABLE,   // Settings: whether the PID option may be toggled in-session
+    DISPLAY_SCREEN_DESIRED_RPM,   // Settings: the desired-RPM setpoint
+    DISPLAY_SCREEN_DESIRED_RPM_EDIT,   // Settings: the same setpoint with the digit cursor showing
+    DISPLAY_SCREEN_SESSION   // Live readout while a session runs
+} display_screen_id;
 
-DYNO_STATIC_ASSERT(sizeof(session_controller_to_lumex_lcd_opcode) == 4, "Size of session_controller_to_lumex_lcd_opcode must be 4 bytes");
+DYNO_STATIC_ASSERT(sizeof(display_screen_id) == 4, "Size of display_screen_id must be 4 bytes");
 
-// Message sent from the session controller to the Lumex LCD
+// Which decimal digit of the desired RPM the encoder is editing. Mirrors
+// State::DesiredRpmUnitsState in FiniteStateMachine.hpp. Sent as the cursor position
+// rather than as the step size it implies, so a driver can mark the digit itself
+// instead of only printing the increment.
+typedef enum : uint32_t
+{
+    DISPLAY_RPM_DIGIT_TEN_THOUSAND = 0,
+    DISPLAY_RPM_DIGIT_THOUSAND,
+    DISPLAY_RPM_DIGIT_HUNDRED,
+    DISPLAY_RPM_DIGIT_TEN,
+    DISPLAY_RPM_DIGIT_ONE
+} display_rpm_digit;
+
+DYNO_STATIC_ASSERT(sizeof(display_rpm_digit) == 4, "Size of display_rpm_digit must be 4 bytes");
+
+// Everything any screen shows, sent whole on every update. Drivers diff it against the
+// last one they rendered and repaint only what moved -- which is what makes a 320x240
+// panel viable at all, since a full frame over SPI costs ~50-100 ms but a single field
+// costs ~1-2 ms. The older protocol sent ("  1234", row 0, col 3) and left the driver
+// unable to tell which quantity had changed.
 typedef struct {
-    session_controller_to_lumex_lcd_opcode op;   // Operation to perform on the display
-    uint32_t row;   // Row number on the LCD
-    uint32_t column;   // Column number on the LCD
-    size_t size;
-    char display_string[SESSION_CONTROLLER_TO_LUMEX_LCD_MSG_STRING_SIZE];   // String to write (if WRITE_TO_DISPLAY)
-} session_controller_to_lumex_lcd;
+    display_screen_id screen;   // Which screen to render
+    float rpm;   // Measured shaft speed in RPM, already converted from the encoder's rad/s
+    float force;   // Measured force in N
+    float bpm_duty_cycle;   // Commanded brake duty cycle, 0 - 1
+    uint32_t desired_rpm;   // The PID setpoint being displayed or edited
+    display_rpm_digit cursor_digit;   // Digit the encoder edits (DESIRED_RPM_EDIT only)
+    bool pid_enabled;   // Whether the PID loop is armed for this session
+    bool pid_option_toggleable;   // Whether the menu allows arming it; also selects the in-session drive-mode field
+    bool sd_logging_enabled;   // Whether SD logging is switched on
+    float angular_acceleration;   // Measured angular acceleration in rad/s^2 (session screen detail)
+    float peak_force;   // Largest force magnitude seen this session, in N (session screen detail)
+    uint32_t session_seconds;   // Seconds since the session started (session screen detail)
+} session_controller_to_display;
 
-DYNO_STATIC_ASSERT(sizeof(session_controller_to_lumex_lcd) >= offsetof(session_controller_to_lumex_lcd, display_string) + sizeof(((session_controller_to_lumex_lcd *)0)->display_string), "Size of session_controller_to_lumex_lcd must be correct");
+DYNO_STATIC_ASSERT(sizeof(session_controller_to_display) <= 48, "session_controller_to_display is queued 25 deep -- keep it small");
 
 // Opcodes for controlling the BPM (Pulse Width Modulation) module from the session controller
 typedef enum : uint32_t

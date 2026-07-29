@@ -28,6 +28,7 @@ extern task_error_data task_error_circular_buffer[TASK_ERROR_CIRCULAR_BUFFER_SIZ
 USBController::USBController(osMessageQueueId_t sessionControllerToUsbController,
                              osMessageQueueId_t taskMonitorToUsbControllerHandle,
                              osMessageQueueId_t forceSensorCommandQueue,
+                             osMessageQueueId_t sessionControllerCommandQueue,
                              osMessageQueueId_t taskCompletionQueue)
     : _task_errors_buffer_reader(task_error_circular_buffer, &task_error_circular_buffer_index_writer, TASK_ERROR_CIRCULAR_BUFFER_SIZE),
       _buffer_reader_optical_encoder(optical_encoder_circular_buffer, &optical_encoder_circular_buffer_index_writer, OPTICAL_ENCODER_CIRCULAR_BUFFER_SIZE),
@@ -36,6 +37,7 @@ USBController::USBController(osMessageQueueId_t sessionControllerToUsbController
       _taskMonitorToUsbControllerHandle(taskMonitorToUsbControllerHandle),
       _sessionControllerToUsbController(sessionControllerToUsbController),
       _forceSensorCommandQueue(forceSensorCommandQueue),
+      _sessionControllerCommandQueue(sessionControllerCommandQueue),
       _taskCompletionQueue(taskCompletionQueue),
       _txBuffer{},
       _txBufferIndex(0),
@@ -67,6 +69,8 @@ osMessageQueueId_t USBController::QueueForTaskOffset(task_offset_t taskOffset)
     {
         case TASK_OFFSET_FORCE_SENSOR_ADS1115:
             return _forceSensorCommandQueue;
+        case TASK_OFFSET_SESSION_CONTROLLER:
+            return _sessionControllerCommandQueue;
         // Add more task_offset -> command queue routes here as tasks gain settings.
         default:
             return NULL;
@@ -807,10 +811,12 @@ bool USBController::IsBufferFull(std::size_t msgSize)
 extern "C" void usbcontroller_main(osMessageQueueId_t sessionControllerToUsbController,
                                    osMessageQueueId_t taskMonitorToUsbControllerHandle,
                                    osMessageQueueId_t forceSensorCommandQueue,
+                                   osMessageQueueId_t sessionControllerCommandQueue,
                                    osMessageQueueId_t taskCompletionQueue)
 {
 	USBController usb = USBController(sessionControllerToUsbController, taskMonitorToUsbControllerHandle,
-	                                  forceSensorCommandQueue, taskCompletionQueue);
+	                                  forceSensorCommandQueue, sessionControllerCommandQueue,
+	                                  taskCompletionQueue);
 
 	if (!usb.Init())
 	{

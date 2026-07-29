@@ -27,6 +27,7 @@ class USBController
         USBController(osMessageQueueId_t sessionControllerToUsbController,
                       osMessageQueueId_t taskMonitorToUsbControllerHandle,
                       osMessageQueueId_t forceSensorCommandQueue,
+                      osMessageQueueId_t sessionControllerCommandQueue,
                       osMessageQueueId_t taskCompletionQueue);
         ~USBController() = default; // Destructor
 
@@ -207,6 +208,7 @@ class USBController
         osMessageQueueId_t _taskMonitorToUsbControllerHandle;
         osMessageQueueId_t _sessionControllerToUsbController;  // carries the in-session flag
         osMessageQueueId_t _forceSensorCommandQueue;   // route target for force-sensor settings
+        osMessageQueueId_t _sessionControllerCommandQueue;   // route target for brake duty-cycle commands
         osMessageQueueId_t _taskCompletionQueue;       // shared: tasks post applied-command acks here
 
         uint8_t _txBuffer[USB_TX_BUFFER_SIZE];

@@ -26,7 +26,7 @@ so the two ends cannot drift apart by hand. See `tools/message_gen/README.md`.
   (`optical_encoder_output_data`, `forcesensor_output_data`, `bpm_output_data`,
   `task_monitor_output_data`).
 - **messages_private.h** — firmware-internal queue payloads:
-  `session_controller_to_lumex_lcd`, `session_controller_to_bpm`,
+  `session_controller_to_display`, `session_controller_to_bpm`,
   `session_controller_to_pid_controller` (+ their opcode enums). Includes the public header.
 - **sysconfig_table.inc** — the runtime store's parameter table ([[Config]]), from the same schema.
 

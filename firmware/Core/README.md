@@ -2,7 +2,7 @@
 module: Core
 summary: Firmware application — FreeRTOS tasks, message passing, and STM32H743 hardware bring-up.
 entry: Core/Src/main.c
-related: [MessagePassing, SessionController, USB, TaskMonitor, BPM, PID, LCD, ForceSensor, OpticalSensor, Config, TimeKeeping]
+related: [MessagePassing, SessionController, USB, TaskMonitor, BPM, PID, Display, ForceSensor, OpticalSensor, Config, TimeKeeping]
 ---
 
 # Core — application firmware
@@ -21,7 +21,9 @@ never by calling into another task directly.
 | PID | `Core/Src/Tasks/PID/README.md` | Closed-loop brake control from encoder feedback |
 | ForceSensor | `Core/Src/Tasks/ForceSensor/README.md` | On-board force: i2c (ADS1115) and internal ADC |
 | OpticalSensor | `Core/Src/Tasks/OpticalSensor/README.md` | Angular velocity / acceleration from an optical encoder |
-| LCD | `Core/Src/Tasks/LCD/README.md` | Lumex character display |
+| Display | `Core/Src/Tasks/Display/README.md` | The display seam: one message, either panel |
+| Lumex display | `Core/Src/Tasks/Display/Lumex/README.md` | Rendering on the 16x2 character grid |
+| ILI9341 display | `Core/Src/Tasks/Display/ILI9341/README.md` | Rendering on the 320x240 TFT |
 | USB | `Core/Src/Tasks/USB/README.md` | Streams data + errors to the PC over USB CDC |
 | TaskMonitor | `Core/Src/Tasks/TaskMonitor/README.md` | Per-task state and stack usage |
 | MessagePassing | `Core/Src/MessagePassing/README.md` | Queue helpers, circular buffers, USB wire protocol |
@@ -29,9 +31,11 @@ never by calling into another task directly.
 | Config | `Core/Inc/Config/README.md` | Constants (`config.h`) + task/peripheral enables (`debug.h`) |
 | CircularBuffer | `Middlewares/CircularBuffer/README.md` | Heap-free single-writer / multi-reader buffers |
 | ADS1115 driver | `Drivers/ADS1115/README.md` | I2C 16-bit ADC driver used by the force sensor |
+| ILI9341 driver | `Drivers/ILI9341/README.md` | SPI TFT driver used by the ILI9341 display task |
+| Lumex panel driver | `Drivers/Lumex/README.md` | HD44780 character LCD driver used by the Lumex display task |
 
 ## main.c conventions
-- Timer handles are renamed for clarity: `timestampTimer`, `lumexLcdTimer`, `bpmTimer`.
+- Timer handles are renamed for clarity: `timestampTimer`, `bpmTimer`.
 - Peripheral and queue handles are passed into task entry points; handles also needed
   by ISRs are declared `extern` in the consuming file.
 - CubeMX owns everything outside the `USER CODE BEGIN/END` markers — regenerating from

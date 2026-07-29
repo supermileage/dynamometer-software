@@ -17,7 +17,12 @@ typedef struct
     osMessageQueueId_t bpm_controller;
     osMessageQueueId_t pid_controller;
     osMessageQueueId_t pid_controller_ack;
-    osMessageQueueId_t lumex_lcd;
+    // Whichever display driver was compiled in -- the message is the same either way.
+    osMessageQueueId_t display;
+    // Host commands routed here by the USB task, and the shared queue their completions go back
+    // on. See session_controller_command_t.
+    osMessageQueueId_t usb_command;
+    osMessageQueueId_t task_completion;
 } session_controller_os_task_queues;
 
 

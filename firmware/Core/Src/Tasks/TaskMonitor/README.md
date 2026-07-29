@@ -24,7 +24,7 @@ mark and forwards a `task_monitor_output_data` to [[USB]].
 
 ## Inputs — `taskmonitor_osthreadids`
 Thread handles: `session_controller, usb_controller, sd_controller, force_sensor, optical_sensor,
-bpm_controller, pid_controller, lumex_lcd`. The single `force_sensor` handle is whichever variant
+bpm_controller, pid_controller, display`. The single `force_sensor` handle is whichever variant
 is enabled; it's reported with the matching offset (`TASK_OFFSET_FORCE_SENSOR_ADS1115` or `_ADC`).
 
 ## Errors

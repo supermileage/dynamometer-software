@@ -219,9 +219,21 @@ Three details the tests pin down:
 - **A value that could rewrite the header around it is refused.** The generated file is C that nobody
   reviews; a value carrying `//` or a newline could define anything it liked.
 
-Bad *combinations* are not the app's business: the firmware already enforces them itself (`#error
-"Cannot enable both ADS1115 and ADC Force Sensor modules at the same time!"` and ~19 others), and an
-override that trips one fails the build with that message, which is the right one.
+Bad *combinations* are, with one exception, not the app's business: the firmware already enforces
+them itself (`#error "Cannot enable both ADS1115 and ADC Force Sensor modules at the same time!"`
+and ~19 others), and an override that trips one fails the build with that message, which is the
+right one.
+
+The exception is `ConfigExclusiveGroups`, which names sets of switches the page keeps the user out
+of rather than letting them stage: turning one on turns the rest off. The firmware's `#error` is
+still the authority — this only decides what a click does. It earns its place where the switches
+are a *choice* rather than a mistake, which today means the two display panels: picking a panel is
+a normal thing to do on this page, and the alternative is discovering minutes later that the build
+you asked for was never going to compile.
+
+Deliberately not a radio group. Every member may be off — with no display driver enabled the
+display task parks and nothing drives SPI1, which is how the panel gets ruled in or out of a fault
+elsewhere on the board. Only turning a switch *on* touches its siblings.
 
 ## Session state
 The dyno streams sensor data **only while a session is running**, so the absence of samples means

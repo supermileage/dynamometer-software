@@ -22,7 +22,7 @@ public static class MessageConstants
     public const uint USB_FRAME_CRC_INIT = 0xFFFFu;   // 0xFFFFu
     public const uint USB_FRAME_CRC_POLY = 0x1021u;   // 0x1021u
     public const uint USB_RX_MAX_PAYLOAD = 128u;   // 128u
-    public const uint USB_PROTOCOL_VERSION = 7u;   // 7u
+    public const uint USB_PROTOCOL_VERSION = 8u;   // 8u
     public const uint SYSCFG_PARAM_COUNT = 34u;   // 34u  -- one past the highest sysconfig_param_t id; sizes the firmware store
 }
 
@@ -51,7 +51,7 @@ public enum task_offset_t : uint
     TASK_OFFSET_FORCE_SENSOR_ADS1115 = 0x60000,
     TASK_OFFSET_BPM_CONTROLLER = 0x70000,
     TASK_OFFSET_PID_CONTROLLER = 0x80000,
-    TASK_OFFSET_LUMEX_LCD = 0x90000,
+    TASK_OFFSET_DISPLAY = 0x90000,
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -73,9 +73,11 @@ public enum bpm_task_error_ids : uint
     ERROR_BPM_PWM_STOP_FAILURE = 1,
 }
 
-public enum lumex_lcd_task_error_ids : uint
+public enum display_task_error_ids : uint
 {
     ERROR_LUMEX_LCD_TIMER_START_FAILURE = 0,
+    ERROR_DISPLAY_INIT_FAILURE = 1,
+    ERROR_DISPLAY_SPI_TRANSMIT_FAILURE = 2,
 }
 
 public enum task_monitor_task_error_ids : uint
@@ -254,6 +256,20 @@ public enum usb_controller_command_t : ushort
     USB_CMD_SET_SYSCONFIG = 1,   // body = sysconfig_set_param_body; writes one runtime parameter into the sysconfig store. Applied by the USB task itself (the store is plain RAM), so the OK is still a full-path ack
 }
 
+/// Session-controller-local commands: frames addressed to TASK_OFFSET_SESSION_CONTROLLER.
+public enum session_controller_command_t : ushort
+{
+    SESSION_CMD_SET_BRAKE_DUTY_CYCLE = 0,   // body = session_set_brake_duty_body; sets the commanded brake duty cycle, exactly as a rotary-encoder tick on the rig would. Honoured only while a session is running and clamped to the MIN/MAX_DUTY_CYCLE_PERCENT envelope -- the brake is never actuated outside a session, however the request arrives. Answered USB_RSP_OK when applied and USB_RSP_NOT_SUPPORTED when no session is running
+}
+
+/// Body of SESSION_CMD_SET_BRAKE_DUTY_CYCLE. Fraction, not percent: 0.0 - 1.0, matching
+/// MIN/MAX_DUTY_CYCLE_PERCENT and what the BPM task takes.
+[StructLayout(LayoutKind.Sequential, Pack = 1)]
+public struct session_set_brake_duty_body
+{
+    public float duty_cycle;
+}
+
 // Device-ready announcement (STM32 -> PC): emitted as USB_MSG_EVENT with task_offset
 // TASK_OFFSET_USB_CONTROLLER and repeated (~every 200ms) until the host answers with
 // USB_CMD_ACK. Carries the firmware's USB_PROTOCOL_VERSION so the host can confirm the
@@ -417,7 +433,7 @@ public static class MessageContract
         (typeof(task_offset_t), 4),
         (typeof(session_controller_task_error_ids), 4),
         (typeof(bpm_task_error_ids), 4),
-        (typeof(lumex_lcd_task_error_ids), 4),
+        (typeof(display_task_error_ids), 4),
         (typeof(task_monitor_task_error_ids), 4),
         (typeof(pid_controller_task_error_ids), 4),
         (typeof(usb_controller_task_error_ids), 4),
@@ -427,6 +443,7 @@ public static class MessageContract
         (typeof(usb_msg_header_t), 12),
         (typeof(usb_cmd_header_t), 4),
         (typeof(usb_response_data_t), 8),
+        (typeof(session_set_brake_duty_body), 4),
         (typeof(usb_device_ready_event), 4),
         (typeof(session_state_event), 8),
         (typeof(usb_tx_batch_trailer), 8),

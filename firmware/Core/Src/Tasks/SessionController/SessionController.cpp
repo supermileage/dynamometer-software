@@ -15,7 +15,7 @@ SessionController::SessionController(session_controller_os_task_queues* task_que
                 _task_error_buffer_writer(task_error_circular_buffer, &task_error_circular_buffer_index_writer, TASK_ERROR_CIRCULAR_BUFFER_SIZE),
                 _forcesensor_buffer_reader(forcesensor_circular_buffer, &forcesensor_circular_buffer_index_writer, FORCESENSOR_CIRCULAR_BUFFER_SIZE),
                 _optical_encoder_buffer_reader(optical_encoder_circular_buffer, &optical_encoder_circular_buffer_index_writer, OPTICAL_ENCODER_CIRCULAR_BUFFER_SIZE),
-                _fsm(task_queues->lumex_lcd),
+                _fsm(task_queues->display),
                 _task_queues(task_queues),
                 _prevSDLoggingEnabled(false),
                 _prevPIDEnabled(false),
@@ -60,8 +60,14 @@ bool SessionController::CheckTaskQueuesValid()
         || _task_queues->pid_controller == nullptr
         || _task_queues->pid_controller_ack == nullptr
         #endif
-        #if LUMEX_LCD_TASK_ENABLE
-        || _task_queues->lumex_lcd == nullptr
+        #if (LUMEX_LCD_TASK_ENABLE || ILI9341_LCD_TASK_ENABLE)
+        || _task_queues->display == nullptr
+        #endif
+        #if USB_CONTROLLER_TASK_ENABLE
+        // The host command route: without these the SessionController silently swallows every
+        // command the USB task forwards, rather than reporting the bad wiring.
+        || _task_queues->usb_command == nullptr
+        || _task_queues->task_completion == nullptr
         #endif
     )
     {
@@ -72,14 +78,10 @@ bool SessionController::CheckTaskQueuesValid()
     return true;
 }
 
+// The timestamp counter this task stamps every sample from is started in main(), before the
+// scheduler runs -- it is shared with the display task and owned by neither, so neither starts it.
 bool SessionController::Init(void)
 {
-    if (start_timestamp_timer() != HAL_OK)
-    {
-        ReportError(ERROR_SESSION_CONTROLLER_TIMESTAMP_TIMER_START_FAILURE);
-        return false;
-    }
-
     return CheckTaskQueuesValid();
 }
 
@@ -136,7 +138,7 @@ void SessionController::PublishSessionTransition(bool inSession)
     if (inSession)
     {
         // Draw the fields of the in-session screen at their starting values.
-        _fsm.DisplayRpm(0);
+        _fsm.DisplayAngularVelocity(0);
         _fsm.DisplayForce(0);
 
         if (_fsm.GetPIDOptionToggleableEnabledStatus()) _fsm.DisplayPIDEnabled();
@@ -219,7 +221,8 @@ void SessionController::UpdateMeasurementDisplay()
 
     if (_prevAngularVelocity != _opticalData.angular_velocity)
     {
-        _fsm.DisplayRpm(_opticalData.angular_velocity);
+        _fsm.DisplayAngularVelocity(_opticalData.angular_velocity);
+        _fsm.DisplayAngularAcceleration(_opticalData.angular_acceleration);
         _prevAngularVelocity = _opticalData.angular_velocity;
     }
 
@@ -230,6 +233,59 @@ void SessionController::UpdateMeasurementDisplay()
     }
 }
 
+// The host's route into the UI state. Each command is acked through the shared completion
+// queue the USB task relays, so the app learns whether it was applied rather than assuming.
+void SessionController::DrainHostCommands()
+{
+    if (_task_queues->usb_command == nullptr)
+    {
+        return;
+    }
+
+    usb_task_command cmd;
+
+    while (osMessageQueueGet(_task_queues->usb_command, &cmd, NULL, 0) == osOK)
+    {
+        uint32_t status = USB_RSP_UNKNOWN_COMMAND;
+
+        switch (cmd.opcode)
+        {
+            case SESSION_CMD_SET_BRAKE_DUTY_CYCLE:
+            {
+                if (cmd.body_len < sizeof(session_set_brake_duty_body))
+                {
+                    status = USB_RSP_MALFORMED;
+                    break;
+                }
+
+                session_set_brake_duty_body body;
+                memcpy(&body, cmd.body, sizeof(body));
+
+                // NOT_SUPPORTED rather than OK when no session is running: the command was
+                // understood and deliberately not obeyed, and the app should say so rather
+                // than show a duty cycle the brake is not at.
+                status = _fsm.SetHostBrakeDutyCycle(body.duty_cycle)
+                         ? USB_RSP_OK : USB_RSP_NOT_SUPPORTED;
+                break;
+            }
+
+            default:
+                break;
+        }
+
+        // msg_id 0 is a firmware-internal command that wants no ack.
+        if (cmd.msg_id != 0 && _task_queues->task_completion != nullptr)
+        {
+            usb_task_completion done;
+            done.task_offset = TASK_OFFSET_SESSION_CONTROLLER;
+            done.opcode = cmd.opcode;
+            done.msg_id = cmd.msg_id;
+            done.status = status;
+            osMessageQueuePut(_task_queues->task_completion, &done, 0, 0);
+        }
+    }
+}
+
 void SessionController::Run()
 {
     PublishStartupState();
@@ -237,6 +293,7 @@ void SessionController::Run()
     while (1)
     {
         _fsm.HandleUserInputs();
+        DrainHostCommands();
 
         PublishSdLoggingChange();
 

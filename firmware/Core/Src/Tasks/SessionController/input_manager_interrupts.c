@@ -6,6 +6,9 @@
 
 #include <Tasks/SessionController/input_manager_interrupts.h>
 
+#include "Config/config.h"
+#include "TimeKeeping/timestamps.h"
+
 
 // Where the ISRs will write next; the FSM reads it to know how far to drain. Declared in the
 // header because that handshake is the FSM's business.
@@ -41,12 +44,58 @@ static void register_button(GPIO_TypeDef* button_port, uint16_t button_pin,
 }
 
 
+// How many A edges have been rejected as too close to the last accepted one, and how many
+// direction reads were not unanimous. Neither is an error -- a mechanical contact bounces --
+// but both climbing while the knob is still says something is being coupled in. Not reported
+// over USB; read them in a debugger.
+volatile uint32_t rotary_encoder_rejected_edges = 0;
+volatile uint32_t rotary_encoder_split_direction_reads = 0;
+
+// Timestamp of the last accepted edge, in the 1 us ticks get_timestamp() counts. Unsigned
+// subtraction gives the right answer across the counter's 71-minute wrap.
+static volatile uint32_t last_accepted_edge = 0;
+
+// Majority vote on ROT_EN_B. A single read is one sample of a line that has been shown to be
+// disturbed while the panel drives SPI1, and getting it wrong reverses the tick.
+static bool read_encoder_direction(void)
+{
+    uint32_t high = 0;
+
+    for (uint32_t i = 0; i < ROTARY_ENCODER_DIRECTION_SAMPLES; i++)
+    {
+        if (HAL_GPIO_ReadPin(ROT_EN_B_GPIO_Port, ROT_EN_B_Pin) != GPIO_PIN_RESET)
+        {
+            high++;
+        }
+    }
+
+    if (high != 0 && high != ROTARY_ENCODER_DIRECTION_SAMPLES)
+    {
+        rotary_encoder_split_direction_reads++;
+    }
+
+    return high * 2u > ROTARY_ENCODER_DIRECTION_SAMPLES;
+}
+
 // Called on an edge of ROT_EN_A; ROT_EN_B's level at that moment gives the direction.
 void register_rotary_encoder_input(void)
 {
-    const bool positive = (HAL_GPIO_ReadPin(ROT_EN_B_GPIO_Port, ROT_EN_B_Pin) != GPIO_PIN_RESET);
+#if ROTARY_ENCODER_DEBOUNCE_US > 0
+    // Before the timestamp timer is started (SessionController::Init) this reads a frozen
+    // counter, so every edge is rejected. That is the right answer: nothing before the FSM
+    // exists is input to it, and the FSM starts from the ISRs' current index anyway.
+    const uint32_t now = get_timestamp();
 
-    add_to_circular_buffer(ROT_EN_TICKS, positive);
+    if ((uint32_t)(now - last_accepted_edge) < ROTARY_ENCODER_DEBOUNCE_US)
+    {
+        rotary_encoder_rejected_edges++;
+        return;
+    }
+
+    last_accepted_edge = now;
+#endif
+
+    add_to_circular_buffer(ROT_EN_TICKS, read_encoder_direction());
 }
 
 // The encoder's push switch. Reported on release only, like the other buttons, and it has no

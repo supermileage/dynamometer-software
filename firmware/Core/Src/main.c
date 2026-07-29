@@ -26,7 +26,8 @@
 #include <Tasks/BPM/bpm_main.h>
 #include <Tasks/ForceSensor/ADC/forcesensor_adc_main.h>
 #include <Tasks/ForceSensor/ADS1115/forcesensor_ads1115_main.h>
-#include <Tasks/LCD/lumexlcd_main.h>
+#include <Tasks/Display/Lumex/lumexlcd_main.h>
+#include <Tasks/Display/ILI9341/ili9341_main.h>
 #include <Tasks/PID/pid_main.h>
 #include <Tasks/OpticalSensor/opticalsensor_main.h>
 
@@ -75,7 +76,6 @@ SPI_HandleTypeDef hspi2;
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim4;
-TIM_HandleTypeDef htim13;
 TIM_HandleTypeDef htim16;
 
 /* Definitions for usbTask */
@@ -124,7 +124,7 @@ const osThreadAttr_t sessionControllerTask_attributes = {
 osThreadId_t lcdDisplayTaskHandle;
 const osThreadAttr_t lcdDisplayTask_attributes = {
   .name = "lcdDisplayTask",
-  .stack_size = 128 * 4,
+  .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityBelowNormal,
 };
 /* Definitions for ledBlinkTask */
@@ -141,10 +141,10 @@ const osThreadAttr_t taskMonitorTask_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityHigh,
 };
-/* Definitions for sessionControllerToLumexLcd */
-osMessageQueueId_t sessionControllerToLumexLcdHandle;
-const osMessageQueueAttr_t sessionControllerToLumexLcd_attributes = {
-  .name = "sessionControllerToLumexLcd"
+/* Definitions for sessionControllerToDisplay */
+osMessageQueueId_t sessionControllerToDisplayHandle;
+const osMessageQueueAttr_t sessionControllerToDisplay_attributes = {
+  .name = "sessionControllerToDisplay"
 };
 /* Definitions for sessionControllerToBpm */
 osMessageQueueId_t sessionControllerToBpmHandle;
@@ -191,6 +191,11 @@ osMessageQueueId_t usbToForceSensorCommandHandle;
 const osMessageQueueAttr_t usbToForceSensorCommand_attributes = {
   .name = "usbToForceSensorCommand"
 };
+/* Definitions for usbToSessionControllerCommand */
+osMessageQueueId_t usbToSessionControllerCommandHandle;
+const osMessageQueueAttr_t usbToSessionControllerCommand_attributes = {
+  .name = "usbToSessionControllerCommand"
+};
 /* Definitions for taskToUsbControllerResponse */
 osMessageQueueId_t taskToUsbControllerResponseHandle;
 const osMessageQueueAttr_t taskToUsbControllerResponse_attributes = {
@@ -214,9 +219,7 @@ TIM_HandleTypeDef* timestampTimer = &htim2;
 // runs in external clock mode 1, so CNT *is* the pulse count and no interrupt fires per edge.
 TIM_HandleTypeDef* opticalCounterTimer = &htim4;
 
-TIM_HandleTypeDef* lumexLcdTimer = &htim13;
 
-TIM_TypeDef* lumexLcdTimInstance = TIM13;
 
 TIM_HandleTypeDef* bpmTimer = &htim16;
 
@@ -232,7 +235,6 @@ static void MX_SDMMC1_SD_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_SPI2_Init(void);
 static void MX_TIM1_Init(void);
-static void MX_TIM13_Init(void);
 static void MX_ADC2_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_ADC3_Init(void);
@@ -297,7 +299,6 @@ int main(void)
   MX_SPI1_Init();
   MX_SPI2_Init();
   MX_TIM1_Init();
-  MX_TIM13_Init();
   MX_ADC2_Init();
   MX_TIM2_Init();
   MX_ADC3_Init();
@@ -312,6 +313,18 @@ int main(void)
   HAL_GPIO_WritePin(LED_BRAKE_GPIO_Port, LED_BRAKE_Pin, GPIO_PIN_SET);
   /* Seed the runtime sysconfig store from the config.h defaults before any task runs. */
   sysconfig_init();
+  /* Start the free-running microsecond timestamp counter. Every task that stamps a sample or
+     times a wait reads it and no single task owns it, so it starts here rather than in whichever
+     Init() happens to run first -- which is how it used to work, and it made the display's
+     startup depend on a race it could only lose (SessionController runs at osPriorityHigh and
+     always claimed the timer first, leaving the display to read an already-started timer as a
+     failure and suspend itself).
+     The return is deliberately ignored. If TIM2 is configured, MX_TIM2_Init has already called
+     Error_Handler on anything that could go wrong, so by this line the handle is READY and the
+     start cannot fail. If STM32_PERIPHERAL_TIM2_ENABLE is 0 the timer is deliberately absent and
+     halting the board over it would defeat the point of the switch; timestamps read zero and the
+     Lumex panel falls back to its bounded spin. */
+  (void)start_timestamp_timer();
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -330,8 +343,8 @@ int main(void)
   /* USER CODE END RTOS_TIMERS */
 
   /* Create the queue(s) */
-  /* creation of sessionControllerToLumexLcd */
-  sessionControllerToLumexLcdHandle = osMessageQueueNew (25, sizeof(session_controller_to_lumex_lcd), &sessionControllerToLumexLcd_attributes);
+  /* creation of sessionControllerToDisplay */
+  sessionControllerToDisplayHandle = osMessageQueueNew (25, sizeof(session_controller_to_display), &sessionControllerToDisplay_attributes);
 
   /* creation of sessionControllerToBpm */
    sessionControllerToBpmHandle = osMessageQueueNew (10, sizeof(session_controller_to_bpm), & sessionControllerToBpm_attributes);
@@ -359,6 +372,9 @@ int main(void)
 
   /* creation of usbToForceSensorCommand */
   usbToForceSensorCommandHandle = osMessageQueueNew (8, sizeof(usb_task_command), &usbToForceSensorCommand_attributes);
+
+  /* creation of usbToSessionControllerCommand */
+  usbToSessionControllerCommandHandle = osMessageQueueNew (8, sizeof(usb_task_command), &usbToSessionControllerCommand_attributes);
 
   /* creation of taskToUsbControllerResponse */
   taskToUsbControllerResponseHandle = osMessageQueueNew (8, sizeof(usb_task_completion), &taskToUsbControllerResponse_attributes);
@@ -738,11 +754,11 @@ static void MX_SPI1_Init(void)
   hspi1.Instance = SPI1;
   hspi1.Init.Mode = SPI_MODE_MASTER;
   hspi1.Init.Direction = SPI_DIRECTION_2LINES;
-  hspi1.Init.DataSize = SPI_DATASIZE_4BIT;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -962,39 +978,6 @@ static void MX_TIM4_Init(void)
 }
 
 /**
-  * @brief TIM13 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM13_Init(void)
-{
-
-  /* USER CODE BEGIN TIM13_Init 0 */
-  #if STM32_PERIPHERAL_TIM13_ENABLE == 0
-    return;
-  #endif
-  /* USER CODE END TIM13_Init 0 */
-
-  /* USER CODE BEGIN TIM13_Init 1 */
-
-  /* USER CODE END TIM13_Init 1 */
-  htim13.Instance = TIM13;
-  htim13.Init.Prescaler = 400-1;
-  htim13.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim13.Init.Period = 40-1;
-  htim13.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim13.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim13) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM13_Init 2 */
-
-  /* USER CODE END TIM13_Init 2 */
-
-}
-
-/**
   * @brief TIM16 Initialization Function
   * @param None
   * @retval None
@@ -1095,10 +1078,13 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOH, ILI_SPI2_TOUCH_CS_Pin|ILI_SPI2_SD_CS_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOD, ILI_LCD_DC_Pin|ILI_LCD_RST_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(ILI_LCD_DC_GPIO_Port, ILI_LCD_DC_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(ILI_SPI1_LCD_CS_GPIO_Port, ILI_SPI1_LCD_CS_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(ILI_LCD_RST_GPIO_Port, ILI_LCD_RST_Pin, GPIO_PIN_SET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(ILI_SPI1_LCD_CS_GPIO_Port, ILI_SPI1_LCD_CS_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOI, LED_BACK_Pin|LED_SELECT_Pin|LED_BRAKE_Pin, GPIO_PIN_SET);
@@ -1118,7 +1104,7 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin : ROT_EN_B_Pin */
   GPIO_InitStruct.Pin = ROT_EN_B_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(ROT_EN_B_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : ADS1115_ALERT_Pin */
@@ -1300,12 +1286,10 @@ void pidControllerTaskEntryFunction(void *argument)
 
 void sessionControllerTaskEntryFunction(void* argument)
 {
-  #if (!defined(SESSION_CONTROLLER_TASK_ENABLE) || !defined(LUMEX_LCD_TASK_ENABLE))
-  #error "SESSION_CONTROLLER_TASK_ENABLE or LUMEX_LCD_TASK_ENABLE is not defined. Please define it as 0 or 1 in the configuration header."
+  #if (!defined(SESSION_CONTROLLER_TASK_ENABLE) || !defined(LUMEX_LCD_TASK_ENABLE) || !defined(ILI9341_LCD_TASK_ENABLE))
+  #error "SESSION_CONTROLLER_TASK_ENABLE or the display driver enables are not defined. Please define them as 0 or 1 in the configuration header."
   #elif SESSION_CONTROLLER_TASK_ENABLE == 0
     osThreadSuspend(osThreadGetId());
-  #elif LUMEX_LCD_TASK_ENABLE == 0
-    #error "Lumex LCD is a hard dependency of the Session Controller task. Please enable LUMEX_LCD_TASK_ENABLE."
   #else
         session_controller_os_task_queues tasks = {
             .usb_controller = sessionControllertoUsbControllerHandle,
@@ -1315,7 +1299,9 @@ void sessionControllerTaskEntryFunction(void* argument)
             .bpm_controller = sessionControllerToBpmHandle,
             .pid_controller = sessionControllerToPidControllerHandle,
             .pid_controller_ack = pidControllerToSessionControllerAckHandle,
-            .lumex_lcd = sessionControllerToLumexLcdHandle
+            .display = sessionControllerToDisplayHandle,
+            .usb_command = usbToSessionControllerCommandHandle,
+            .task_completion = taskToUsbControllerResponseHandle
         };
         sessioncontroller_main(&tasks);
   #endif
@@ -1335,12 +1321,19 @@ void opticalSensorTaskEntryFunction(void *argument)
 
 void lcdDisplayTaskEntryFunction(void *argument)
 {
-  #if (!defined(LUMEX_LCD_TASK_ENABLE))
-  #error "LUMEX_LCD_TASK_ENABLE is not defined. Please define it as 0 or 1 in the configuration header."
-  #elif LUMEX_LCD_TASK_ENABLE == 0
-     osThreadSuspend(osThreadGetId());
+  /* Config/debug.h allows at most one of these. Both panels read the same queue and the same
+     message; with neither enabled the task parks and nothing drives a panel. */
+  #if (!defined(LUMEX_LCD_TASK_ENABLE) || !defined(ILI9341_LCD_TASK_ENABLE))
+  #error "LUMEX_LCD_TASK_ENABLE / ILI9341_LCD_TASK_ENABLE are not defined. Please define them in the configuration header."
+  #elif ILI9341_LCD_TASK_ENABLE == 1
+    ili9341_lcd_main(sessionControllerToDisplayHandle);
+  #elif LUMEX_LCD_TASK_ENABLE == 1
+    lumex_lcd_main(sessionControllerToDisplayHandle);
   #else
-    lumex_lcd_main(sessionControllerToLumexLcdHandle);
+    /* No panel compiled in. Suspend rather than return: returning from a task function lands in
+       prvTaskExitError, which disables interrupts and spins. The FSM still posts its screen
+       state; nothing drains the queue, and the non-blocking puts simply fail. */
+    osThreadSuspend(osThreadGetId());
   #endif
 }
 
@@ -1382,7 +1375,7 @@ void taskMonitorEntryFunction(void *argument)
       .bpm_controller = bpmTaskHandle,
       .pid_controller = pidTaskHandle,
       .pid_controller_ack = pidControllerToSessionControllerAckHandle,
-      .lumex_lcd = lcdDisplayTaskHandle
+      .display = lcdDisplayTaskHandle
   } ;
   taskmonitor_main(&osthreadids, taskMonitorToUsbControllerHandle);
 #endif
@@ -1406,7 +1399,7 @@ __weak void usbTaskEntryFunction(void *argument)
   #elif USB_CONTROLLER_TASK_ENABLE == 0
      osThreadSuspend(osThreadGetId());
   #else
-    usbcontroller_main(sessionControllertoUsbControllerHandle, taskMonitorToUsbControllerHandle, usbToForceSensorCommandHandle, taskToUsbControllerResponseHandle);
+    usbcontroller_main(sessionControllertoUsbControllerHandle, taskMonitorToUsbControllerHandle, usbToForceSensorCommandHandle, usbToSessionControllerCommandHandle, taskToUsbControllerResponseHandle);
   #endif
   /* USER CODE END 5 */
 }
@@ -1458,10 +1451,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     HAL_IncTick();
   }
   /* USER CODE BEGIN Callback 1 */
-  else if (htim->Instance == lumexLcdTimInstance)
-  {
-	  lumex_lcd_timer_interrupt(htim);
-  }
   else if (htim->Instance == TIM4)
   {
 	  // TIM4's counter is 16 bits, so it wraps every 65536 encoder pulses. Counting the wraps
