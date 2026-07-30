@@ -11,6 +11,10 @@ FSM::FSM(osMessageQueueId_t sessionControllerToDisplayHandle) :
             State::SettingsState::INIT_STATE,
             State::DesiredRpmUnitsState::INIT_STATE,
           },
+        // Overwritten by the ShowIdleScreen() below before anything can read them; initialised
+        // anyway so the "what is on the panel" pair is never garbage.
+        _postedPidOptionEnabled(false),
+        _postedDesiredRpm(0),
         _pidEnabled(false),
         _desiredManualBpmDutyCycle(0),
         _rpm(0.0f),
@@ -256,6 +260,22 @@ void FSM::AdjustBrakeDutyCycle(bool positiveTick)
         std::clamp(_desiredManualBpmDutyCycle + increment, minDutyCycle, maxDutyCycle);
 }
 
+// Polled by the SessionController, because a host sysconfig write arrives with no event
+// attached -- see the declaration. Posts the whole screen state, exactly as an encoder tick
+// would: which page is showing and what belongs on it are already worked out by
+// PostDisplayState/CurrentScreen, and the display driver diffs frames, so a repost that
+// happens to change nothing visible costs one queue message and no panel traffic.
+void FSM::RefreshHostEditedSettings()
+{
+    if (_postedPidOptionEnabled == GetPIDOptionToggleableEnabledStatus()
+        && _postedDesiredRpm == GetDesiredRpm())
+    {
+        return;
+    }
+
+    PostDisplayState();
+}
+
 // The host's equivalent of turning the brake knob. Deliberately routed through the same state
 // the encoder writes, so everything downstream -- the clamp, the BPM post, the on-screen
 // readout -- behaves identically whether the request came from the rig or from the PC.
@@ -470,6 +490,12 @@ void FSM::PostDisplayState()
     msg.cursor_digit          = static_cast<display_rpm_digit>(_state.desiredRpmUnitsState);
     msg.pid_enabled           = _pidEnabled;
     msg.pid_option_toggleable = GetPIDOptionToggleableEnabledStatus();
+
+    // Remember what went out for the two the host can also write, so a change made behind this
+    // FSM's back can be spotted -- see RefreshHostEditedSettings.
+    _postedPidOptionEnabled = msg.pid_option_toggleable;
+    _postedDesiredRpm       = msg.desired_rpm;
+
     msg.angular_acceleration  = _angularAcceleration;
     msg.peak_force            = _peakForce;
 

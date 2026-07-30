@@ -311,6 +311,11 @@ void SessionController::Run()
         _fsm.HandleUserInputs();
         DrainHostCommands();
 
+        // Above the in-session gate on purpose: the settings pages are only reachable outside a
+        // session, and they are the screens a host sysconfig write can leave stale. In a session
+        // the steps below repost every pass anyway, so this finds nothing to do.
+        _fsm.RefreshHostEditedSettings();
+
         const bool inSession = _fsm.GetInSessionStatus();
         if (inSession != _prevInSession)
         {

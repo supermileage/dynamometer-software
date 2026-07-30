@@ -97,6 +97,17 @@ public:
     // the request arrives. The value is clamped to the same envelope the encoder is.
     bool SetHostBrakeDutyCycle(float dutyCycle);
 
+    // Redraws the current screen if one of the two settings it can show has been changed by
+    // somebody other than this FSM. That means the host: USB_CMD_SET_SYSCONFIG is applied by
+    // the USB task straight into the store (it is plain RAM -- no queue, no wake-up), so
+    // nothing tells this class the value moved.
+    //
+    // Every other path to the panel is an event this FSM handles, and each of those reposts on
+    // its way through, which is why a menu page drawn by the encoder is always current. A host
+    // write has no such event, so the SessionController calls this once per pass and it polls
+    // instead. Cheap: it compares two words and posts nothing when they match.
+    void RefreshHostEditedSettings();
+
     // What the SessionController acts on
     State GetState() const;
     bool GetPIDEnabledModeStatus() const;
@@ -155,6 +166,13 @@ private:
     // PID ran on what the host last pushed. So the getters below read the store, and the
     // handlers write it; see the note in Config/config.h for how this pairs with the
     // compile-time PID_CONTROLLER_TASK_ENABLE.
+    //
+    // These two are the exception that proves it, and they are not copies of the settings: they
+    // record what the last PostDisplayState *carried*, so RefreshHostEditedSettings can tell
+    // that a host write has left the panel showing something else. Nothing reads them as a
+    // setting -- every read of the settings themselves still goes to the store.
+    bool _postedPidOptionEnabled;
+    uint32_t _postedDesiredRpm;
 
     // Session state. Whether a session is running is _state.mainState and nothing else --
     // see GetInSessionStatus.
