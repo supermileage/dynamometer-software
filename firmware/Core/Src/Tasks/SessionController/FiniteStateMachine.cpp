@@ -265,7 +265,7 @@ void FSM::AdjustBrakeDutyCycle(bool positiveTick)
 // would: which page is showing and what belongs on it are already worked out by
 // PostDisplayState/CurrentScreen, and the display driver diffs frames, so a repost that
 // happens to change nothing visible costs one queue message and no panel traffic.
-void FSM::RefreshHostEditedSettings()
+void FSM::ReconcileHostEditedSettings()
 {
     if (_postedPidOptionEnabled == GetPIDOptionToggleableEnabledStatus()
         && _postedDesiredRpm == GetDesiredRpm())
@@ -490,12 +490,6 @@ void FSM::PostDisplayState()
     msg.cursor_digit          = static_cast<display_rpm_digit>(_state.desiredRpmUnitsState);
     msg.pid_enabled           = _pidEnabled;
     msg.pid_option_toggleable = GetPIDOptionToggleableEnabledStatus();
-
-    // Remember what went out for the two the host can also write, so a change made behind this
-    // FSM's back can be spotted -- see RefreshHostEditedSettings.
-    _postedPidOptionEnabled = msg.pid_option_toggleable;
-    _postedDesiredRpm       = msg.desired_rpm;
-
     msg.angular_acceleration  = _angularAcceleration;
     msg.peak_force            = _peakForce;
 
@@ -506,7 +500,19 @@ void FSM::PostDisplayState()
                           ? (get_timestamp() - _sessionStartTimestamp) / scale
                           : 0;
 
-    osMessageQueuePut(_toDisplayHandle, &msg, 0, 0);
+    // Timeout 0: a full queue drops this frame rather than stalling the SessionController. Which
+    // is why the "what is on the panel" pair below is only updated when the put actually took --
+    // a dropped frame never reached the panel, so recording it as shown would tell
+    // ReconcileHostEditedSettings there is nothing to redraw and the stale value would stick until
+    // the next unrelated event. Left stale, the next pass retries. Same discipline as the force
+    // sensor's ApplyIfChanged, which leaves _applied stale when an I2C write fails.
+    if (osMessageQueuePut(_toDisplayHandle, &msg, 0, 0) != osOK)
+    {
+        return;
+    }
+
+    _postedPidOptionEnabled = msg.pid_option_toggleable;
+    _postedDesiredRpm       = msg.desired_rpm;
 }
 
 

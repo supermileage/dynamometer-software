@@ -98,15 +98,21 @@ public:
     bool SetHostBrakeDutyCycle(float dutyCycle);
 
     // Redraws the current screen if one of the two settings it can show has been changed by
-    // somebody other than this FSM. That means the host: USB_CMD_SET_SYSCONFIG is applied by
-    // the USB task straight into the store (it is plain RAM -- no queue, no wake-up), so
-    // nothing tells this class the value moved.
+    // somebody other than this FSM. That means the host: USB_CMD_SET_SYSCONFIG is applied by the
+    // USB task straight into the store, deliberately with no queue and no task notification, so
+    // nothing tells this class the value moved. Every other route to the panel is an event this
+    // FSM handles and reposts on its way through, which is why an encoder tick always redraws.
     //
-    // Every other path to the panel is an event this FSM handles, and each of those reposts on
-    // its way through, which is why a menu page drawn by the encoder is always current. A host
-    // write has no such event, so the SessionController calls this once per pass and it polls
-    // instead. Cheap: it compares two words and posts nothing when they match.
-    void RefreshHostEditedSettings();
+    // Same shape as the force sensor's ReconcileConfig (ForceSensor_ADS1115.cpp), which is how
+    // every sysconfig consumer on the board keeps up: hold a shadow of what was last applied,
+    // compare it against the store each pass, act only on a difference -- and, importantly,
+    // leave the shadow stale when the apply fails so the next pass retries. Here the "apply" is
+    // the queue post and PostDisplayState does that bookkeeping.
+    //
+    // Called once per SessionController pass. That task never blocks indefinitely (it ends every
+    // iteration on osDelay), so it needs no equivalent of the force sensor's bounded
+    // FORCESENSOR_COMMAND_POLL_OSDELAY wait to stay awake for this.
+    void ReconcileHostEditedSettings();
 
     // What the SessionController acts on
     State GetState() const;
@@ -168,7 +174,7 @@ private:
     // compile-time PID_CONTROLLER_TASK_ENABLE.
     //
     // These two are the exception that proves it, and they are not copies of the settings: they
-    // record what the last PostDisplayState *carried*, so RefreshHostEditedSettings can tell
+    // record what the last PostDisplayState *carried*, so ReconcileHostEditedSettings can tell
     // that a host write has left the panel showing something else. Nothing reads them as a
     // setting -- every read of the settings themselves still goes to the store.
     bool _postedPidOptionEnabled;
