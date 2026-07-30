@@ -37,21 +37,23 @@ Each step below is a method of the same name; all are edge-triggered against the
 so a steady state produces no queue traffic. `PublishStartupState()` runs once before the loop.
 
 1. `_fsm.HandleUserInputs()` — process pending button/encoder events.
-2. `PublishSdLoggingChange()` — notify the SD queue only when the setting moves.
-3. `PublishSessionTransition()` on a session start/stop edge (`GetInSessionStatus`): tell [[USB]]
+2. `PublishSessionTransition()` on a session start/stop edge (`GetInSessionStatus`): tell [[USB]]
    whether a session is running (it streams sensor data only then), reset the display, and stop
    [[BPM]] (`STOP_PWM`) on the way out. Sensor sampling itself is enabled once at startup and
    never gated, so a session starts against sensors that are already warm.
 
    There is **no USB-logging option**: USB streaming follows the session, and nothing can turn it
-   off. (SD logging remains a togglable setting in the menu.)
+   off. There is no SD-logging option either — that menu page was removed, because no SD task
+   exists to receive it (`SD_CONTROLLER_TASK_ENABLE` is 0 and the queue is `NULL`).
 
    Outside a session the iteration ends here — nothing below may drive an actuator.
-4. `PublishPidEnableChange()` — send `session_controller_to_pid_controller` (enable + desired ω);
-   `AwaitPidAck()` then waits for `pid_controller_ack` before pointing the BPM at the PID output.
-5. `DriveManualBrake()` — PID option off only: brake duty cycle to the BPM queue (`START_PWM`),
+3. `PublishPidInstruction()` — send `session_controller_to_pid_controller` (enable + desired ω)
+   when **either** moves; `AwaitPidAck()` then waits for `pid_controller_ack` before pointing the
+   BPM at the PID output. The setpoint is republished because it is a runtime sysconfig parameter
+   the host can move mid-session, not only a menu value fixed before the run.
+4. `DriveManualBrake()` — PID option off only: brake duty cycle to the BPM queue (`START_PWM`),
    clamped by the FSM to the same envelope `BPM::SetDutyCycle` enforces.
-6. `UpdateMeasurementDisplay()` — drain to the newest `forcesensor_output_data` +
+5. `UpdateMeasurementDisplay()` — drain to the newest `forcesensor_output_data` +
    `optical_encoder_output_data`, then push angular velocity and force to the LCD, each only when
    its value changed. An iteration with no new samples keeps the last reading.
 

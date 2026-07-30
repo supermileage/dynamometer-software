@@ -407,6 +407,29 @@ public static class SysConfigCatalog
                 Max: 1.0,
                 Options: new SysConfigEnumOption[] { new(0u, "Disabled"), new(1u, "Enabled (fake data)") }
             ),
+            new(
+                sysconfig_param_t.SYSCFG_PID_ENABLE,
+                "PID_ENABLE",
+                "PID Controller",
+                "",
+                "Whether the session controller offers the PID loop. Enabled, SELECT arms and disarms it during a session and the brake follows the controller; disabled, the rotary encoder sets the brake duty cycle by hand. Separate from the compile-time PID_CONTROLLER_TASK_ENABLE, which decides whether the task runs at all.",
+                IsFloat: false,
+                Default: 0.0,
+                Min: 0.0,
+                Max: 1.0,
+                Options: new SysConfigEnumOption[] { new(0u, "Disabled (manual brake)"), new(1u, "Enabled (PID brake)") }
+            ),
+            new(
+                sysconfig_param_t.SYSCFG_PID_DESIRED_RPM,
+                "PID_DESIRED_RPM",
+                "PID Controller",
+                "RPM",
+                "Shaft-speed setpoint the PID loop drives the brake towards. Editable on the board from the PID DES RPM menu page, or from here.",
+                IsFloat: false,
+                Default: 5000.0,
+                Min: 0.0,
+                Max: 65535.0
+            ),
         };
 
     /// <summary>Looks up a parameter's definition by wire id.</summary>

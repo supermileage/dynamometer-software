@@ -23,7 +23,7 @@ public static class MessageConstants
     public const uint USB_FRAME_CRC_POLY = 0x1021u;   // 0x1021u
     public const uint USB_RX_MAX_PAYLOAD = 128u;   // 128u
     public const uint USB_PROTOCOL_VERSION = 8u;   // 8u
-    public const uint SYSCFG_PARAM_COUNT = 34u;   // 34u  -- one past the highest sysconfig_param_t id; sizes the firmware store
+    public const uint SYSCFG_PARAM_COUNT = 36u;   // 36u  -- one past the highest sysconfig_param_t id; sizes the firmware store
 }
 
 // A task error/warning is reported as a single 32-bit code:
@@ -376,6 +376,8 @@ public enum sysconfig_param_t : ushort
     SYSCFG_ADS1115_COMP_LAT = 31,   // enum
     SYSCFG_ADS1115_COMP_QUE = 32,   // enum
     SYSCFG_USB_MOCK_MESSAGES = 33,   // enum
+    SYSCFG_PID_ENABLE = 34,   // enum
+    SYSCFG_PID_DESIRED_RPM = 35,   // uint32, RPM
 }
 
 // Body of USB_CMD_SET_SYSCONFIG (after the usb_cmd_header_t). raw_value carries the

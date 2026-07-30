@@ -661,6 +661,22 @@ sections:
       # and a macro would only suggest that rebuilding with it changed something. Default 0 --
       # off is the only safe way for a board to come up, since anything it streams is invented.
       - { name: USB_MOCK_MESSAGES, type: enum, default: 0, category: "USB", unit: "", description: "Replace the sensor stream with synthetic counter data (and report a session as running, since the host shows sensor data only during one). For exercising the link with no sensors attached. Leave disabled for any real run: nothing it streams is a measurement.", options: [ {value: 0, label: "Disabled"}, {value: 1, label: "Enabled (fake data)"} ] }
+      # The two settings the on-board settings menu edits. They are sysconfig parameters rather
+      # than SessionController members so that the encoder and the host write the *same* value --
+      # the menu page and the host's editor are two views of one setting, and neither can show a
+      # figure the other has quietly overwritten. The FSM keeps no copy: it reads the store when
+      # it draws the page and writes it when a button moves the value.
+      #
+      # PID_ENABLE is the runtime half of a pair; debug.h's PID_CONTROLLER_TASK_ENABLE is the
+      # compile-time half, and config.h explains why both exist. This one only decides whether
+      # the SessionController offers the loop -- with the task compiled out, writing it does
+      # nothing, which is the intended reading of "the machinery is not in this build".
+      - { name: PID_ENABLE, type: enum, category: "PID Controller", unit: "", description: "Whether the session controller offers the PID loop. Enabled, SELECT arms and disarms it during a session and the brake follows the controller; disabled, the rotary encoder sets the brake duty cycle by hand. Separate from the compile-time PID_CONTROLLER_TASK_ENABLE, which decides whether the task runs at all.", options: [ {value: 0, label: "Disabled (manual brake)"}, {value: 1, label: "Enabled (PID brake)"} ] }
+      # A shaft speed in RPM is a uint16_t, so 0..65535 -- the width of the type, like every
+      # other integer here, not a judgement about how fast the rig can spin. It comfortably
+      # clears the on-board editor's five digits as well. The firmware converts to rad/s on the
+      # way to the PID task; RPM is the unit here because it is the one the panel and host show.
+      - { name: PID_DESIRED_RPM, type: uint32, min: 0, max: 65535, category: "PID Controller", unit: "RPM", description: "Shaft-speed setpoint the PID loop drives the brake towards. Editable on the board from the PID DES RPM menu page, or from here." }
       # GEAR_RATIO is deliberately NOT here: it is a compile-time config.h setting (editable via
       # the app's compile-time overrides, applied on the next build/flash), and it is not streamed
       # either -- the host reads it from its own copy of the firmware config for the geared readouts.

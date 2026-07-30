@@ -35,7 +35,6 @@ extern "C" {
 typedef enum : uint32_t
 {
     DISPLAY_SCREEN_IDLE = 0,   // Attract screen; SELECT opens the settings menu
-    DISPLAY_SCREEN_SD_LOGGING,   // Settings: SD logging on/off
     DISPLAY_SCREEN_PID_ENABLE,   // Settings: whether the PID option may be toggled in-session
     DISPLAY_SCREEN_DESIRED_RPM,   // Settings: the desired-RPM setpoint
     DISPLAY_SCREEN_DESIRED_RPM_EDIT,   // Settings: the same setpoint with the digit cursor showing
@@ -72,8 +71,7 @@ typedef struct {
     uint32_t desired_rpm;   // The PID setpoint being displayed or edited
     display_rpm_digit cursor_digit;   // Digit the encoder edits (DESIRED_RPM_EDIT only)
     bool pid_enabled;   // Whether the PID loop is armed for this session
-    bool pid_option_toggleable;   // Whether the menu allows arming it; also selects the in-session drive-mode field
-    bool sd_logging_enabled;   // Whether SD logging is switched on
+    bool pid_option_toggleable;   // SYSCFG_PID_ENABLE: whether the menu allows arming it; also selects the in-session drive-mode field
     float angular_acceleration;   // Measured angular acceleration in rad/s^2 (session screen detail)
     float peak_force;   // Largest force magnitude seen this session, in N (session screen detail)
     uint32_t session_seconds;   // Seconds since the session started (session screen detail)

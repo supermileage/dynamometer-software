@@ -77,7 +77,7 @@ bool ili9341_field_equal(const ili9341_field *a, const ili9341_field *b)
         && memcmp(a->text, b->text, a->length) == 0;
 }
 
-// The two toggle pages share a value row. Fixed at eight characters so "ENABLED " paints over
+// The toggle page's value row. Fixed at eight characters so "ENABLED " paints over
 // the whole of a previous "DISABLED".
 static void add_enabled_disabled(ili9341_frame *out, bool enabled)
 {
@@ -195,13 +195,8 @@ void ili9341_layout(const session_controller_to_display *state,
             add_centred(out, 150, SIZE_SMALL, COLOUR_LABEL, "PRESS SELECT");
             break;
 
-        case DISPLAY_SCREEN_SD_LOGGING:
-            add_centred(out, 60, SIZE_TITLE, COLOUR_LABEL, "SD LOGGING");
-            add_enabled_disabled(out, state->sd_logging_enabled);
-            break;
-
         case DISPLAY_SCREEN_PID_ENABLE:
-            add_centred(out, 60, SIZE_TITLE, COLOUR_LABEL, "PID LOGGING");
+            add_centred(out, 60, SIZE_TITLE, COLOUR_LABEL, "PID CONTROL");
             add_enabled_disabled(out, state->pid_option_toggleable);
             break;
 

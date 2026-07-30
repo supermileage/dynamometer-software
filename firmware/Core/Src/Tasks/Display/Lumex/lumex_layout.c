@@ -34,7 +34,7 @@ static void put_field(lumex_frame *out, unsigned row, unsigned column, size_t wi
     put(out, row, column, scratch, width);
 }
 
-// The second row shared by both toggle pages.
+// The second row of the toggle page.
 static void render_enabled_disabled(lumex_frame *out, bool enabled)
 {
     if (enabled) PUT_LITERAL(out, 1, 4, "ENABLED");
@@ -91,13 +91,8 @@ void lumex_render(const session_controller_to_display *state, lumex_frame *out)
             PUT_LITERAL(out, 1, 2, "PRESS SELECT");
             break;
 
-        case DISPLAY_SCREEN_SD_LOGGING:
-            PUT_LITERAL(out, 0, 3, "SD LOGGING");
-            render_enabled_disabled(out, state->sd_logging_enabled);
-            break;
-
         case DISPLAY_SCREEN_PID_ENABLE:
-            PUT_LITERAL(out, 0, 2, "PID LOGGING");
+            PUT_LITERAL(out, 0, 2, "PID CONTROL");
             render_enabled_disabled(out, state->pid_option_toggleable);
             break;
 

@@ -1,6 +1,6 @@
 ---
 module: Lumex display
-summary: Rendering for the Lumex 16x2 character LCD — the six screens, the cell diff, and what it does with the readouts it cannot show.
+summary: Rendering for the Lumex 16x2 character LCD — the five screens, the cell diff, and what it does with the readouts it cannot show.
 code:
   - Core/Inc/Tasks/Display/Lumex/LumexLCD.hpp
   - Core/Src/Tasks/Display/Lumex/LumexLCD.cpp
@@ -32,22 +32,22 @@ typedef struct { char cells[LUMEX_LCD_ROWS][LUMEX_LCD_COLUMNS]; } lumex_frame;  
 
 — with **every one of the 32 cells written on every call**, blanks as spaces. Nothing is left
 over from a previous frame, so the result depends only on `state`. That is what makes the diff
-in [5] valid, and what lets `tests/lumex_layout_tests.cpp` pin all six screens cell-for-cell on
+in [5] valid, and what lets `tests/lumex_layout_tests.cpp` pin all five screens cell-for-cell on
 the build machine.
 
-### The six screens
+### The five screens
 
 Written as whole 16-character rows in the tests, because the bugs worth catching are
 off-by-one column errors that a field-level check steps straight over.
 
 ```
-IDLE                  SD_LOGGING            PID_ENABLE
-      DYNO               SD LOGGING           PID LOGGING
-  PRESS SELECT            DISABLED             DISABLED
+IDLE                  PID_ENABLE            DESIRED_RPM
+      DYNO              PID CONTROL          PID DES RPM
+  PRESS SELECT            DISABLED                5000
 
-DESIRED_RPM           DESIRED_RPM_EDIT      SESSION
-  PID DES RPM           PID DES RPM         n:  1235 rpm
-       5000              5000   100         F: 12.34 N  B 45
+DESIRED_RPM_EDIT      SESSION
+  PID DES RPM         n:  1235 rpm
+  5000   100          F: 12.34 N  B 45
 ```
 
 ### Fixed-width fields

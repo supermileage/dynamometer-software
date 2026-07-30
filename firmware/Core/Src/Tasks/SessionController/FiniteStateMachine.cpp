@@ -11,9 +11,10 @@ FSM::FSM(osMessageQueueId_t sessionControllerToDisplayHandle) :
             State::SettingsState::INIT_STATE,
             State::DesiredRpmUnitsState::INIT_STATE,
           },
-        _sdLoggingEnabled(false),
-        _pidOptionToggleableEnabled(false),
-        _desiredRpm(5000),
+        // Overwritten by the ShowIdleScreen() below before anything can read them; initialised
+        // anyway so the "what is on the panel" pair is never garbage.
+        _postedPidOptionEnabled(false),
+        _postedDesiredRpm(0),
         _pidEnabled(false),
         _desiredManualBpmDutyCycle(0),
         _rpm(0.0f),
@@ -87,20 +88,14 @@ void FSM::HandleRotaryEncoderInSettings(bool positiveTick)
 {
     switch (_state.settingsState)
     {
-        // The three pages form a ring; a tick steps one page along it in the tick's direction.
-        case State::SettingsState::SD_LOGGING_OPTION_DISPLAYED:
-            if (positiveTick) ShowPidEnablePage();
-            else ShowDesiredRpmPage();
-            break;
-
+        // The two pages form a ring, so a tick lands on the other one whichever way it turned.
+        // Direction starts mattering again the moment a third page is added.
         case State::SettingsState::PID_ENABLE_DISPLAYED:
-            if (positiveTick) ShowDesiredRpmPage();
-            else ShowSdLoggingPage();
+            ShowDesiredRpmPage();
             break;
 
         case State::SettingsState::PID_DESIRED_RPM_DISPLAYED:
-            if (positiveTick) ShowSdLoggingPage();
-            else ShowPidEnablePage();
+            ShowPidEnablePage();
             break;
 
         // Inside the editor a tick changes the digit under the cursor rather than the page.
@@ -109,8 +104,7 @@ void FSM::HandleRotaryEncoderInSettings(bool positiveTick)
             ShowDesiredRpmEditor();
             break;
 
-        // Unreachable -- the toggle settings have no edit screen (see State::SettingsState).
-        case State::SettingsState::SD_LOGGING_OPTION_EDIT:
+        // Unreachable -- the toggle setting has no edit screen (see State::SettingsState).
         case State::SettingsState::PID_ENABLE_EDIT:
         default:
             break;
@@ -140,7 +134,6 @@ void FSM::HandleButtonBackInSettings()
     switch (_state.settingsState)
     {
         // From any settings page, BACK leaves the menu.
-        case State::SettingsState::SD_LOGGING_OPTION_DISPLAYED:
         case State::SettingsState::PID_ENABLE_DISPLAYED:
         case State::SettingsState::PID_DESIRED_RPM_DISPLAYED:
             ShowIdleScreen();
@@ -152,8 +145,7 @@ void FSM::HandleButtonBackInSettings()
             else ShowDesiredRpmEditor();
             break;
 
-        // Unreachable -- the toggle settings have no edit screen (see State::SettingsState).
-        case State::SettingsState::SD_LOGGING_OPTION_EDIT:
+        // Unreachable -- the toggle setting has no edit screen (see State::SettingsState).
         case State::SettingsState::PID_ENABLE_EDIT:
         default:
             break;
@@ -165,7 +157,7 @@ void FSM::HandleButtonSelectInput(void)
     switch (_state.mainState)
     {
         case State::MainDynoState::IDLE:
-            ShowSdLoggingPage();  // opens the settings menu on its first page
+            ShowPidEnablePage();  // opens the settings menu on its first page
             break;
 
         case State::MainDynoState::SETTINGS_MENU:
@@ -176,7 +168,7 @@ void FSM::HandleButtonSelectInput(void)
             // SELECT arms and disarms the PID loop, and only when the menu option allows it.
             // With the option off there is nothing to switch: the brake is the only actuator
             // the encoder drives.
-            if (_pidOptionToggleableEnabled) _pidEnabled = !_pidEnabled;
+            if (GetPIDOptionToggleableEnabledStatus()) _pidEnabled = !_pidEnabled;
             break;
     }
 }
@@ -186,13 +178,9 @@ void FSM::HandleButtonSelectInSettings()
     switch (_state.settingsState)
     {
         // A toggle is applied and redrawn on the page itself; there is no edit screen to enter.
-        case State::SettingsState::SD_LOGGING_OPTION_DISPLAYED:
-            _sdLoggingEnabled = !_sdLoggingEnabled;
-            ShowSdLoggingPage();
-            break;
-
         case State::SettingsState::PID_ENABLE_DISPLAYED:
-            _pidOptionToggleableEnabled = !_pidOptionToggleableEnabled;
+            sysconfig_set_raw(SYSCFG_PID_ENABLE,
+                              GetPIDOptionToggleableEnabledStatus() ? 0u : 1u);
             ShowPidEnablePage();
             break;
 
@@ -206,8 +194,7 @@ void FSM::HandleButtonSelectInSettings()
             else ShowDesiredRpmEditor();
             break;
 
-        // Unreachable -- the toggle settings have no edit screen (see State::SettingsState).
-        case State::SettingsState::SD_LOGGING_OPTION_EDIT:
+        // Unreachable -- the toggle setting has no edit screen (see State::SettingsState).
         case State::SettingsState::PID_ENABLE_EDIT:
         default:
             break;
@@ -273,6 +260,22 @@ void FSM::AdjustBrakeDutyCycle(bool positiveTick)
         std::clamp(_desiredManualBpmDutyCycle + increment, minDutyCycle, maxDutyCycle);
 }
 
+// Polled by the SessionController, because a host sysconfig write arrives with no event
+// attached -- see the declaration. Posts the whole screen state, exactly as an encoder tick
+// would: which page is showing and what belongs on it are already worked out by
+// PostDisplayState/CurrentScreen, and the display driver diffs frames, so a repost that
+// happens to change nothing visible costs one queue message and no panel traffic.
+void FSM::ReconcileHostEditedSettings()
+{
+    if (_postedPidOptionEnabled == GetPIDOptionToggleableEnabledStatus()
+        && _postedDesiredRpm == GetDesiredRpm())
+    {
+        return;
+    }
+
+    PostDisplayState();
+}
+
 // The host's equivalent of turning the brake knob. Deliberately routed through the same state
 // the encoder writes, so everything downstream -- the clamp, the BPM post, the on-screen
 // readout -- behaves identically whether the request came from the rig or from the PC.
@@ -311,8 +314,18 @@ int FSM::DesiredRpmDigitIncrement() const
 void FSM::AdjustDesiredRpm(bool positiveTick)
 {
     const int increment = DesiredRpmDigitIncrement();
+    const int candidate = static_cast<int>(GetDesiredRpm())
+                          + (positiveTick ? increment : -increment);
 
-    _desiredRpm = std::max(0, _desiredRpm + (positiveTick ? increment : -increment));
+    // A candidate outside the accepted range is simply not applied, so the value stops at
+    // either end rather than wrapping -- which is what the old std::max(0, ...) did at the
+    // bottom. The range itself is deliberately not repeated here: sysconfig_set_raw rejects
+    // anything outside the store's own bounds for this id, so the editor and a host write
+    // are held to the same limits without a second copy of them to drift. The negative case
+    // is caught before the cast, which would otherwise turn -1 into 4294967295.
+    if (candidate < 0) return;
+
+    sysconfig_set_raw(SYSCFG_PID_DESIRED_RPM, static_cast<uint32_t>(candidate));
 }
 
 // Moves the digit cursor by one place. Returns true when it wrapped past an end of the number,
@@ -335,14 +348,6 @@ bool FSM::StepDesiredRpmDigit(int direction)
 void FSM::ShowIdleScreen()
 {
     _state.mainState = State::MainDynoState::IDLE;
-
-    PostDisplayState();
-}
-
-void FSM::ShowSdLoggingPage()
-{
-    _state.mainState = State::MainDynoState::SETTINGS_MENU;
-    _state.settingsState = State::SettingsState::SD_LOGGING_OPTION_DISPLAYED;
 
     PostDisplayState();
 }
@@ -391,6 +396,12 @@ void FSM::ShowSessionScreen()
     // so starting at a non-zero floor would engage the brake on session entry, unasked. The
     // first encoder tick moves into the envelope.
     _desiredManualBpmDutyCycle = 0.0f;
+
+    // Every session starts disarmed, for the same reason the brake starts at 0: arming is a
+    // decision made during a run, and this one had not been made yet. It used to persist --
+    // nothing ever cleared it -- so a session that ended with the loop armed left it armed, and
+    // the next one came up already driving the brake from the controller without a SELECT.
+    _pidEnabled = false;
 
     PostDisplayState();
 }
@@ -451,15 +462,13 @@ display_screen_id FSM::CurrentScreen() const
         case State::MainDynoState::SETTINGS_MENU:
             switch (_state.settingsState)
             {
-                case State::SettingsState::PID_ENABLE_DISPLAYED:
-                    return DISPLAY_SCREEN_PID_ENABLE;
                 case State::SettingsState::PID_DESIRED_RPM_DISPLAYED:
                     return DISPLAY_SCREEN_DESIRED_RPM;
                 case State::SettingsState::PID_DESIRED_RPM_EDIT:
                     return DISPLAY_SCREEN_DESIRED_RPM_EDIT;
-                // SD_LOGGING_OPTION_DISPLAYED, plus the two edit states nothing ever enters.
+                // PID_ENABLE_DISPLAYED, plus the edit state nothing ever enters.
                 default:
-                    return DISPLAY_SCREEN_SD_LOGGING;
+                    return DISPLAY_SCREEN_PID_ENABLE;
             }
 
         case State::MainDynoState::IDLE:
@@ -477,11 +486,10 @@ void FSM::PostDisplayState()
     msg.rpm                   = _rpm;
     msg.force                 = _force;
     msg.bpm_duty_cycle        = _desiredManualBpmDutyCycle;
-    msg.desired_rpm           = static_cast<uint32_t>(_desiredRpm);
+    msg.desired_rpm           = GetDesiredRpm();
     msg.cursor_digit          = static_cast<display_rpm_digit>(_state.desiredRpmUnitsState);
     msg.pid_enabled           = _pidEnabled;
-    msg.pid_option_toggleable = _pidOptionToggleableEnabled;
-    msg.sd_logging_enabled    = _sdLoggingEnabled;
+    msg.pid_option_toggleable = GetPIDOptionToggleableEnabledStatus();
     msg.angular_acceleration  = _angularAcceleration;
     msg.peak_force            = _peakForce;
 
@@ -492,7 +500,19 @@ void FSM::PostDisplayState()
                           ? (get_timestamp() - _sessionStartTimestamp) / scale
                           : 0;
 
-    osMessageQueuePut(_toDisplayHandle, &msg, 0, 0);
+    // Timeout 0: a full queue drops this frame rather than stalling the SessionController. Which
+    // is why the "what is on the panel" pair below is only updated when the put actually took --
+    // a dropped frame never reached the panel, so recording it as shown would tell
+    // ReconcileHostEditedSettings there is nothing to redraw and the stale value would stick until
+    // the next unrelated event. Left stale, the next pass retries. Same discipline as the force
+    // sensor's ApplyIfChanged, which leaves _applied stale when an I2C write fails.
+    if (osMessageQueuePut(_toDisplayHandle, &msg, 0, 0) != osOK)
+    {
+        return;
+    }
+
+    _postedPidOptionEnabled = msg.pid_option_toggleable;
+    _postedDesiredRpm       = msg.desired_rpm;
 }
 
 
@@ -503,20 +523,17 @@ State FSM::GetState() const
     return _state;
 }
 
-bool FSM::GetSDLoggingEnabledStatus() const
-{
-    return _sdLoggingEnabled;
-}
-
 // The PID loop runs only when the menu option allows it and it has been switched on in-session.
 bool FSM::GetPIDEnabledModeStatus() const
 {
-    return _pidOptionToggleableEnabled && _pidEnabled;
+    return GetPIDOptionToggleableEnabledStatus() && _pidEnabled;
 }
 
+// Read straight out of the sysconfig store on every call rather than cached: the host writes
+// this id over USB as well as the menu writing it, and a copy here is what would go stale.
 bool FSM::GetPIDOptionToggleableEnabledStatus() const
 {
-    return _pidOptionToggleableEnabled;
+    return sysconfig_get_u32(SYSCFG_PID_ENABLE) != 0u;
 }
 
 bool FSM::GetInSessionStatus() const
@@ -529,12 +546,14 @@ float FSM::GetDesiredBpmDutyCycle() const
     return _desiredManualBpmDutyCycle;
 }
 
-float FSM::GetDesiredRpm() const
+uint32_t FSM::GetDesiredRpm() const
 {
-    return _desiredRpm;
+    return sysconfig_get_u32(SYSCFG_PID_DESIRED_RPM);
 }
 
+// RPM is what the panel and the host talk in; rad/s is what the encoder measures and what the
+// PID task compares against, so the conversion happens once, here, on the way out.
 float FSM::GetDesiredAngularVelocity() const
 {
-    return _desiredRpm * 2 * M_PI / 60;
+    return static_cast<float>(GetDesiredRpm()) * 2.0f * static_cast<float>(M_PI) / 60.0f;
 }

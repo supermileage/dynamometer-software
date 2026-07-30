@@ -17,8 +17,8 @@ SessionController::SessionController(session_controller_os_task_queues* task_que
                 _optical_encoder_buffer_reader(optical_encoder_circular_buffer, &optical_encoder_circular_buffer_index_writer, OPTICAL_ENCODER_CIRCULAR_BUFFER_SIZE),
                 _fsm(task_queues->display),
                 _task_queues(task_queues),
-                _prevSDLoggingEnabled(false),
                 _prevPIDEnabled(false),
+                _prevDesiredAngularVelocity(0.0f),
                 _prevInSession(false),
                 _pidAckReceived(false),
                 _prevBpmDutyCycle(0.0f),
@@ -111,18 +111,6 @@ void SessionController::PublishStartupState()
     #endif
 }
 
-void SessionController::PublishSdLoggingChange()
-{
-    const bool sdLoggingEnabled = _fsm.GetSDLoggingEnabledStatus();
-
-    if (sdLoggingEnabled == _prevSDLoggingEnabled) return;
-
-    #if SD_CONTROLLER_TASK_ENABLE
-    osMessageQueuePut(_task_queues->sd_controller, &sdLoggingEnabled, 0, osWaitForever);
-    #endif
-    _prevSDLoggingEnabled = sdLoggingEnabled;
-}
-
 // A session just started or stopped. Sensor sampling is not gated (it is enabled once at
 // startup and left on), so what changes here is what leaves the board, what the board drives,
 // and -- critically -- that the BPM stops on the way out. The brake must never be actuated
@@ -151,20 +139,48 @@ void SessionController::PublishSessionTransition(bool inSession)
         bpmSettings.new_duty_cycle_percent = 0.0f;
 
         osMessageQueuePut(_task_queues->bpm_controller, &bpmSettings, 0, osWaitForever);
+
+        // The loop stops with the session, and this is the only place that can say so: Run()
+        // publishes PID instructions below its in-session gate, so once the session is over
+        // that step never executes again. Left armed, the task went on computing against a
+        // session that had ended and filling its output queue until every pass logged a
+        // queue-full warning -- and because _prevPIDEnabled stayed true, the next session
+        // found no enable edge to publish, so the BPM was never pointed at the PID output and
+        // the screen read PIDE over a brake the controller no longer reached.
+        PublishPidInstruction(false);
     }
 }
 
-void SessionController::PublishPidEnableChange(bool pidEnabled)
+// One instruction carries both halves of what the PID task needs -- whether to run, and what
+// to aim at -- so this republishes when either moves.
+//
+// The setpoint half is new: it used to be sent only on an enable edge, which was enough while
+// the only way to change it was the menu, and the menu is unreachable during a session. It is
+// a runtime sysconfig parameter now, so the host can move it over USB mid-run, and a task
+// still chasing the previous figure would leave the app showing one setpoint while the brake
+// worked towards another.
+//
+// A setpoint change is only worth sending while the loop is enabled: disabled, the task is
+// blocked waiting for an instruction and the next enable will carry the current value anyway.
+// The task resets its integrator whenever it takes an instruction while enabled, which is the
+// behaviour a setpoint change wants in any case.
+void SessionController::PublishPidInstruction(bool pidEnabled)
 {
-    if (pidEnabled == _prevPIDEnabled) return;
+    const float desiredAngularVelocity = _fsm.GetDesiredAngularVelocity();
+
+    const bool enableMoved = (pidEnabled != _prevPIDEnabled);
+    const bool setpointMoved = pidEnabled && (desiredAngularVelocity != _prevDesiredAngularVelocity);
+
+    if (!enableMoved && !setpointMoved) return;
 
     session_controller_to_pid_controller pid_msg;
     pid_msg.enable_status = pidEnabled;
-    pid_msg.desired_angular_velocity = _fsm.GetDesiredAngularVelocity();
+    pid_msg.desired_angular_velocity = desiredAngularVelocity;
 
     _pidAckReceived = false;
     osMessageQueuePut(_task_queues->pid_controller, &pid_msg, 0, osWaitForever);
     _prevPIDEnabled = pidEnabled;
+    _prevDesiredAngularVelocity = desiredAngularVelocity;
 }
 
 // The PID task acknowledges an enable/disable, and only once it has may the BPM be pointed at
@@ -295,7 +311,10 @@ void SessionController::Run()
         _fsm.HandleUserInputs();
         DrainHostCommands();
 
-        PublishSdLoggingChange();
+        // Above the in-session gate on purpose: the settings pages are only reachable outside a
+        // session, and they are the screens a host sysconfig write can leave stale. In a session
+        // the steps below repost every pass anyway, so this finds nothing to do.
+        _fsm.ReconcileHostEditedSettings();
 
         const bool inSession = _fsm.GetInSessionStatus();
         if (inSession != _prevInSession)
@@ -315,7 +334,7 @@ void SessionController::Run()
         const bool pidEnabled = _fsm.GetPIDEnabledModeStatus();
         const bool pidOptionEnabled = _fsm.GetPIDOptionToggleableEnabledStatus();
 
-        PublishPidEnableChange(pidEnabled);
+        PublishPidInstruction(pidEnabled);
         AwaitPidAck(pidEnabled, pidOptionEnabled);
 
         if (!pidOptionEnabled)

@@ -17,6 +17,7 @@ PIDController::PIDController(osMessageQueueId_t sessionControllerToPidController
 			_enabled(initialState),
 			_curTimestamp(0),
 			_prevTimestamp(0),
+			_havePreviousSample(false),
 			_curAngularVelocity(static_cast<float>(0)),
 			_desiredAngularVelocity(static_cast<float>(0)),
 			_prevError(static_cast<float>(0)),
@@ -27,13 +28,6 @@ bool PIDController::Init()
 {
 	Reset();
 	return true;
-}
-
-static inline float Clamp(float value, float min, float max)
-{
-    if (value < min) return min;
-    if (value > max) return max;
-    return value;
 }
 
 void PIDController::Run()
@@ -91,11 +85,29 @@ void PIDController::Run()
         _curTimestamp = latestOpticalEncoderData.timestamp;
         _curAngularVelocity = latestOpticalEncoderData.angular_velocity;
 
+        _error = static_cast<float>(_desiredAngularVelocity) - _curAngularVelocity;
+
+        // The first sample after an enable only establishes the baseline; it drives nothing.
+        // There is no interval to integrate or differentiate over yet, and GetTimeDelta cannot
+        // say so -- it would answer with the whole time since boot (Reset leaves _prevTimestamp
+        // at 0 while this sample carries a live microsecond counter), or, if the sample happens
+        // to predate the reset, with a full counter period from the wrap branch. Either put a
+        // term the size of the timestamp range into the integral, which saturated the output
+        // and pinned the brake at BPM::SetDutyCycle's clamp the instant the loop was armed.
+        if (!_havePreviousSample)
+        {
+            _prevTimestamp = _curTimestamp;
+            _prevError = _error;
+            _havePreviousSample = true;
+
+            osDelay(sysconfig_get_u32(SYSCFG_PID_TASK_OSDELAY));
+            continue;
+        }
+
         // Compute time delta safely
         timeDelta = GetTimeDelta();
 
         // --- PID calculations ---
-        _error = static_cast<float>(_desiredAngularVelocity) - _curAngularVelocity;
         derivative = (_error - _prevError) / static_cast<float>(timeDelta);
         integral += _error * static_cast<float>(timeDelta);
 
@@ -155,6 +167,10 @@ void PIDController::Reset()
 
 	_error = static_cast<float>(0);
 	_prevError = static_cast<float>(0);
+
+	// Nothing above is a usable history yet -- see the baseline pass in Run(). Clearing this is
+	// what makes the zeroed timestamps safe to leave as they are.
+	_havePreviousSample = false;
 }
 
 void PIDController::SendBrakeDutyCycle(float new_duty_cycle_percent)
